@@ -3,4 +3,6 @@ apply plugin: "java-library"
 
 dependencies {
   implementation "org.codehaus.groovy:groovy:$groovyVersion"
+  // not on :app's compile classpath: Clock compiled from source inside :app's loader still needs it
+  implementation "org.apache.commons:commons-text:1.10.0"
 }

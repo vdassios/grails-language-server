@@ -29,8 +29,10 @@ import io.github.vdassios.grailsls.project.ProjectModel;
  * declaration index of all their roots. Replaced as a whole when the project model changes.
  *
  * <p>Per source set: the loader holds its compile classpath without any module's build output, the class
- * directories of sibling modules it depends on, and the compiled classes of its own {@code .java} files. Groovy
- * classes resolve from source: its own roots, then {@code main}'s (for other source sets), then the siblings'.
+ * directories of sibling modules it depends on, those siblings' own dependencies (after its own, so its versions
+ * win), and the compiled classes of its own {@code .java} files. Groovy classes resolve from source: its own roots,
+ * then {@code main}'s (for other source sets), then the siblings'. A sibling's class pulled in from source compiles
+ * in this loader, so it needs the sibling's {@code implementation} dependencies, which Gradle keeps off this classpath.
  */
 public final class Workspace implements AutoCloseable {
   private final List<CompileContext> contexts = new ArrayList<>();
@@ -125,16 +127,17 @@ public final class Workspace implements AutoCloseable {
     List<Path> buildDirs = model.modules.stream().map(m -> Path.of(m.projectDir).resolve("build")).collect(Collectors.toList());
     Set<Path> classpath = new LinkedHashSet<>();
     classpath.add(analysisJar);
-    for (String entry : sourceSet.compileClasspath) {
-      Path path = Path.of(entry);
-      if (buildDirs.stream().noneMatch(path::startsWith)) {
-        classpath.add(path);
+    addOutsideBuildDirs(classpath, sourceSet.compileClasspath, buildDirs);
+    for (ModuleRecord sibling : siblings) {
+      SourceSetRecord siblingMain = sibling.sourceSet("main");
+      if (siblingMain != null) {
+        siblingMain.classesDirs.forEach(dir -> classpath.add(Path.of(dir)));
       }
     }
     for (ModuleRecord sibling : siblings) {
       SourceSetRecord siblingMain = sibling.sourceSet("main");
       if (siblingMain != null) {
-        siblingMain.classesDirs.forEach(dir -> classpath.add(Path.of(dir)));
+        addOutsideBuildDirs(classpath, siblingMain.compileClasspath, buildDirs);
       }
     }
 
@@ -145,6 +148,15 @@ public final class Workspace implements AutoCloseable {
     }
     String name = module.path + " " + sourceSet.name;
     return new CompileContext(name, own, new ArrayList<>(search), new ArrayList<>(classpath), javaClasses, notBuilt);
+  }
+
+  private static void addOutsideBuildDirs(Set<Path> classpath, List<String> entries, List<Path> buildDirs) {
+    for (String entry : entries) {
+      Path path = Path.of(entry);
+      if (buildDirs.stream().noneMatch(path::startsWith)) {
+        classpath.add(path);
+      }
+    }
   }
 
   /** Source roots without build output and tool directories below the module. */

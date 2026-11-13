@@ -14,3 +14,5 @@ Shapes in `grails4/app` that Groovy's own per-file compile gets wrong (each need
 - A nested enum in a domain class used from a controller: `Book.Format` in `BookController`.
 - Classes in a file of another name: `TitleCase` and `Initials` in `Formatting.groovy`.
 - A package that differs from its directory: `fixture.storage.Shelf` in `fixture/misc/`.
+
+In `grails4/support`, `Clock` uses commons-text, an `implementation` dependency that `app` does not see. A compile in `app` that pulls in `Clock` from source needs it on the loader.
