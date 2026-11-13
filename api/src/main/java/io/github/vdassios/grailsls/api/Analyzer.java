@@ -17,7 +17,9 @@ public interface Analyzer extends AutoCloseable {
   String groovyVersion();
 
   /**
-   * Compiles one document to canonicalization, with the classes it uses pulled in from source through {@code lookup}.
+   * Compiles one document to canonicalization (on to instruction selection when it has {@code @CompileStatic} or
+   * {@code @GrailsCompileStatic} code, for the types the static type checker infers), with the classes it uses pulled
+   * in from source through {@code lookup}.
    * The result is kept for queries on that document until the next compile of it or {@link #forget}.
    */
   CompileResult compile(CompileRequest request);

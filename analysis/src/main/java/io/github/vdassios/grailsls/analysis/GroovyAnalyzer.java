@@ -13,8 +13,11 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import org.codehaus.groovy.GroovyBugError;
 import org.codehaus.groovy.ast.ASTNode;
+import org.codehaus.groovy.ast.AnnotatedNode;
+import org.codehaus.groovy.ast.AnnotationNode;
 import org.codehaus.groovy.ast.ClassNode;
 import org.codehaus.groovy.ast.MethodNode;
+import org.codehaus.groovy.ast.ModuleNode;
 import org.codehaus.groovy.control.CompilationFailedException;
 import org.codehaus.groovy.control.CompilationUnit;
 import org.codehaus.groovy.control.CompilerConfiguration;
@@ -79,7 +82,7 @@ public final class GroovyAnalyzer implements Analyzer {
     return new CompileResult(diagnostics, false, kept.sources, millisSince(start));
   }
 
-  /** Compiles a document to canonicalization, the next phase only if the request is not cancelled. */
+  /** Compiles a document to its last phase ({@link #lastPhase}), each phase only if the request is not cancelled. */
   private Kept run(CompileRequest request, List<Diagnostic> diagnostics) {
     try {
       return runUnit(request, diagnostics);
@@ -102,7 +105,8 @@ public final class GroovyAnalyzer implements Analyzer {
     PathResolver resolver = new PathResolver(request.lookup, document);
     unit.setClassNodeResolver(resolver);
 
-    for (int phase = Phases.INITIALIZATION; phase <= Phases.CANONICALIZATION; phase++) {
+    // the last phase is known once the document is parsed, so the condition is evaluated again each phase
+    for (int phase = Phases.INITIALIZATION; phase <= lastPhase(document); phase++) {
       if (request.cancelled.getAsBoolean()) {
         return new Kept(unit, request.text, document.getSource().getURI(), resolver.sources(), true);
       }
@@ -117,6 +121,33 @@ public final class GroovyAnalyzer implements Analyzer {
     }
     collect(unit.getErrorCollector(), request.path, diagnostics);
     return new Kept(unit, request.text, document.getSource().getURI(), resolver.sources(), false);
+  }
+
+  /**
+   * Canonicalization, where Grails's transformations have run; instruction selection when the document has statically
+   * compiled code (C2): the static type checker runs there and records the types it infers on the nodes.
+   */
+  private static int lastPhase(SourceUnit document) {
+    ModuleNode module = document.getAST();
+    if (module != null) {
+      for (ClassNode type : module.getClasses()) {
+        if (isStatic(type) || type.getMethods().stream().anyMatch(GroovyAnalyzer::isStatic)) {
+          return Phases.INSTRUCTION_SELECTION;
+        }
+      }
+    }
+    return Phases.CANONICALIZATION;
+  }
+
+  /** Marked {@code @CompileStatic} or {@code @GrailsCompileStatic}, by simple name: annotations are not resolved yet. */
+  private static boolean isStatic(AnnotatedNode node) {
+    for (AnnotationNode annotation : node.getAnnotations()) {
+      String name = annotation.getClassNode().getNameWithoutPackage();
+      if (name.equals("CompileStatic") || name.equals("GrailsCompileStatic")) {
+        return true;
+      }
+    }
+    return false;
   }
 
   @Override

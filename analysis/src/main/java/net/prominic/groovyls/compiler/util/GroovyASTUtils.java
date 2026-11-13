@@ -47,6 +47,7 @@ import org.codehaus.groovy.ast.expr.PropertyExpression;
 import org.codehaus.groovy.ast.expr.TupleExpression;
 import org.codehaus.groovy.ast.expr.VariableExpression;
 import org.codehaus.groovy.ast.stmt.ExpressionStatement;
+import org.codehaus.groovy.transform.stc.StaticTypesMarker;
 
 import net.prominic.groovyls.compiler.ast.ASTNodeVisitor;
 
@@ -194,6 +195,11 @@ public class GroovyASTUtils {
     }
 
     public static ClassNode getTypeOfNode(ASTNode node, ASTNodeVisitor astVisitor) {
+        // statically compiled code: the type the static type checker inferred
+        Object inferred = node.getNodeMetaData(StaticTypesMarker.INFERRED_TYPE);
+        if (inferred instanceof ClassNode) {
+            return (ClassNode) inferred;
+        }
         if (node instanceof BinaryExpression) {
             BinaryExpression binaryExpr = (BinaryExpression) node;
             Expression leftExpr = binaryExpr.getLeftExpression();
@@ -277,6 +283,12 @@ public class GroovyASTUtils {
     }
 
     public static MethodNode getMethodFromCallExpression(MethodCall node, ASTNodeVisitor astVisitor) {
+        // statically compiled code: the method the static type checker chose (a Groovy extension method shows as
+        // static on Groovy 2.5)
+        Object target = ((ASTNode) node).getNodeMetaData(StaticTypesMarker.DIRECT_METHOD_CALL_TARGET);
+        if (target instanceof MethodNode) {
+            return (MethodNode) target;
+        }
         return getMethodFromCallExpression(node, astVisitor, -1);
     }
 

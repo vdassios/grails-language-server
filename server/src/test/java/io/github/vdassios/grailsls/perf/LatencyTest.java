@@ -26,7 +26,9 @@ import org.junit.jupiter.api.io.TempDir;
 
 import io.github.vdassios.grailsls.api.Analyzer;
 import io.github.vdassios.grailsls.api.CompileRequest;
+import io.github.vdassios.grailsls.api.CompileResult;
 import io.github.vdassios.grailsls.api.CompletionList;
+import io.github.vdassios.grailsls.api.Diagnostic;
 import io.github.vdassios.grailsls.compile.AnalysisJar;
 import io.github.vdassios.grailsls.compile.CompileContext;
 import io.github.vdassios.grailsls.compile.Workspace;
@@ -51,6 +53,7 @@ import io.github.vdassios.grailsls.project.ProjectModel;
 class LatencyTest {
   /** A member access in code: receiver, dot, member. */
   private static final Pattern ACCESS = Pattern.compile("\\b([a-z]\\w*)\\.([a-zA-Z]\\w*)");
+  private static final Pattern STATIC = Pattern.compile("@(Grails)?CompileStatic\\b");
   private static final List<String> ARTEFACT_DIRS = List.of("controllers", "services", "domain", "taglib");
 
   @TempDir
@@ -82,6 +85,41 @@ class LatencyTest {
     System.out.println(report);
     write(report);
     assertFalse(timings.getOrDefault("completion", List.of()).isEmpty(), "nothing measured:\n" + report);
+  }
+
+  /**
+   * Compiles every source file marked {@code @CompileStatic} or {@code @GrailsCompileStatic} (C2: those compile on to
+   * instruction selection, for inferred types): time and errors on the project's own, valid code. Writes
+   * {@code server/build/perf/static.txt}.
+   */
+  @Test
+  void compileOfStaticallyCompiledFiles() throws Exception {
+    ProjectModel model = model();
+    try (Workspace workspace = new Workspace(model, AnalysisJar.extract(tmp))) {
+      workspace.index();
+      List<Path> files = new ArrayList<>();
+      for (CompileContext context : workspace.contexts()) {
+        for (Path file : workspace.declarations().sources(context.ownRoots)) {
+          if (workspace.contextOf(file) == context && STATIC.matcher(Files.readString(file)).find()) {
+            files.add(file);
+          }
+        }
+      }
+      count("files", files.size());
+      for (Path file : files) {
+        CompileContext context = workspace.contextOf(file);
+        CompileRequest request = new CompileRequest(file.toString(), Files.readString(file), workspace.lookup(context, p -> null), () -> false);
+        long start = System.nanoTime();
+        CompileResult result = context.compile(request).get(5, TimeUnit.MINUTES);
+        record("compile", start);
+        long errors = result.diagnostics.stream().filter(d -> d.severity == Diagnostic.ERROR && d.path.equals(file.toString())).count();
+        count("errors", (int) errors);
+        count("files with errors", errors > 0 ? 1 : 0);
+        context.forget(file.toString());
+        write(report(), "static.txt");
+      }
+    }
+    System.out.println(report());
   }
 
   /**
@@ -158,7 +196,11 @@ class LatencyTest {
   }
 
   private static void write(String report) throws IOException {
-    Path out = Path.of("build/perf/latency.txt");
+    write(report, "latency.txt");
+  }
+
+  private static void write(String report, String name) throws IOException {
+    Path out = Path.of("build/perf", name);
     Files.createDirectories(out.getParent());
     Files.writeString(out, report);
   }

@@ -416,6 +416,33 @@ class GroovyAnalyzerTest {
     assertTrue(labels(imports).containsAll(List.of("other", "other.Gadget")), labels(imports).toString());
   }
 
+  /**
+   * Statically compiled code goes on to instruction selection: the type checker's errors are reported, and the types
+   * it infers (closure parameters, flow typing) are what completion and hover use. The other queries still answer.
+   */
+  @Test
+  void staticallyCompiledCodeUsesTheTypesTheCheckerInfers() {
+    String path = tmp.resolve("A.groovy").toString();
+    String text = "@groovy.transform.CompileStatic\nclass A {\n  String name\n  int run(List<String> names) {\n    names.each { it.toUpperCase() }\n"
+        + "    def x\n    x = 'text'\n    x.length() + name.size()\n  }\n}\n";
+    assertEquals(List.of(), errors(compile(path, text)));
+    String hover = analyzer.hover(path, 4, 21);
+    assertNotNull(hover, "it.toUpperCase(): it is a String");
+    assertEquals("public String toUpperCase()", hover.split("\n")[1]);
+    assertEquals("public int length()", analyzer.hover(path, 7, 7).split("\n")[1], "flow typing: x holds a String");
+    // String.size() is a Groovy extension method: the checker's target shows as static on 2.5
+    assertTrue(analyzer.hover(path, 7, 22).split("\n")[1].matches("public (static )?int size\\(\\)"), analyzer.hover(path, 7, 22));
+    assertEquals(2, analyzer.definition(path, 7, 18).range.startLine, "name: the property");
+
+    String typed = text.replace("it.toUpperCase()", "it.");
+    List<String> labels = labels(complete(path, typed, 4, 20));
+    assertTrue(labels.contains("toUpperCase"), labels.toString());
+
+    CompileResult wrong = compile(path, "@groovy.transform.CompileStatic\nclass A {\n  int run() { 'x'.nope() }\n}\n");
+    assertEquals(1, errors(wrong).size(), "the static type checker ran: " + wrong.diagnostics);
+    assertTrue(errors(wrong).get(0).contains("nope"), errors(wrong).toString());
+  }
+
   /** The symbol index's parse: declarations only, no class resolved, no transformation run. */
   @Test
   void declarationsComeFromAParseOfEachFile() throws IOException {
