@@ -27,6 +27,7 @@ import org.junit.jupiter.api.io.TempDir;
 import io.github.vdassios.grailsls.api.Analyzer;
 import io.github.vdassios.grailsls.api.CompileRequest;
 import io.github.vdassios.grailsls.api.CompileResult;
+import io.github.vdassios.grailsls.api.CompiledClass;
 import io.github.vdassios.grailsls.api.CompletionList;
 import io.github.vdassios.grailsls.api.Diagnostic;
 import io.github.vdassios.grailsls.compile.AnalysisJar;
@@ -120,6 +121,103 @@ class LatencyTest {
       }
     }
     System.out.println(report());
+  }
+
+  /**
+   * Compiles every Groovy file of every source set as the open file (M2): time, errors on the project's own valid code,
+   * and whether Grails's members are there, per artefact kind and per kind of module (with or without
+   * {@code grails-app}). Writes counts to {@code server/build/perf/sweep.txt}; the errors themselves, which name project
+   * classes, only to the file in {@code GLS_PERF_DETAILS}, if set.
+   */
+  @Test
+  void artefactSweep() throws Exception {
+    ProjectModel model = model();
+    String details = System.getenv("GLS_PERF_DETAILS");
+    StringBuilder errorsOut = new StringBuilder();
+    try (Workspace workspace = new Workspace(model, AnalysisJar.extract(tmp))) {
+      workspace.index();
+      for (CompileContext context : workspace.contexts()) {
+        boolean grailsModule = context.ownRoots.stream().anyMatch(r -> r.toString().contains("/grails-app/"));
+        String sourceSet = context.name.substring(context.name.lastIndexOf(' ') + 1);
+        for (Path file : workspace.declarations().sources(context.ownRoots)) {
+          if (workspace.contextOf(file) != context) {
+            continue;
+          }
+          String text = Files.readString(file);
+          String kind = kind(file) + (grailsModule ? "" : ", module without grails-app") + (sourceSet.equals("main") ? "" : ", " + sourceSet);
+          CompileRequest request = new CompileRequest(file.toString(), text, workspace.lookup(context, p -> null), () -> false);
+          long start = System.nanoTime();
+          CompileResult result = context.compile(request).get(5, TimeUnit.MINUTES);
+          record("compile " + kind, start);
+          count("files " + kind, 1);
+          List<Diagnostic> errors = result.diagnostics.stream().filter(d -> d.severity == Diagnostic.ERROR && d.path.equals(file.toString())).collect(Collectors.toList());
+          count("errors " + kind, errors.size());
+          count("files with errors " + kind, errors.isEmpty() ? 0 : 1);
+          errors.forEach(e -> errorsOut.append(file).append(": ").append(e).append('\n'));
+          String trait = traitFound(context, file, text, kind(file));
+          if (trait != null) {
+            count(trait, 1);
+          }
+          context.forget(file.toString());
+          write(report(), "sweep.txt");
+        }
+      }
+      System.gc();
+      count("heap MB after the sweep, after GC", (int) ((Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) >> 20));
+    }
+    if (details != null) {
+      Files.writeString(Path.of(details), errorsOut);
+    }
+    write(report(), "sweep.txt");
+    System.out.println(report());
+  }
+
+  /** The artefact directory below {@code grails-app}, or {@code other}. */
+  private static String kind(Path file) {
+    String path = file.toString().replace('\\', '/');
+    int at = path.indexOf("/grails-app/");
+    if (at < 0) {
+      return "other";
+    }
+    String rest = path.substring(at + "/grails-app/".length());
+    String dir = rest.substring(0, Math.max(rest.indexOf('/'), 0));
+    return ARTEFACT_DIRS.contains(dir) ? dir : "grails-app/" + dir;
+  }
+
+  /**
+   * For an artefact file, whether the members Grails adds are on its class (named like the file) after the compile:
+   * a counter name, or null for other files.
+   */
+  private static String traitFound(CompileContext context, Path file, String text, String kind) throws Exception {
+    String expected;
+    switch (kind) {
+      case "controllers":
+        expected = "grails.artefact.Controller";
+        break;
+      case "domain":
+        expected = "org.grails.datastore.gorm.GormEntity";
+        break;
+      case "taglib":
+        expected = "grails.artefact.TagLibrary";
+        break;
+      case "services":
+        expected = text.contains("@Transactional") ? "getTransactionManager" : null;
+        break;
+      default:
+        return null;
+    }
+    if (expected == null) {
+      return "services without @Transactional";
+    }
+    Matcher packageLine = Pattern.compile("(?m)^package\\s+([\\w.]+)").matcher(text);
+    String simple = file.getFileName().toString().replace(".groovy", "");
+    String className = packageLine.find() ? packageLine.group(1) + "." + simple : simple;
+    CompiledClass compiled = context.query(a -> a.compiledClass(file.toString(), className)).get(1, TimeUnit.MINUTES);
+    if (compiled == null) {
+      return kind + ": no class named like the file";
+    }
+    boolean found = compiled.interfaces.contains(expected) || compiled.methods.contains(expected);
+    return kind + (kind.equals("services") ? " with @Transactional" : "") + (found ? ": Grails members found" : ": Grails members missing");
   }
 
   /**
