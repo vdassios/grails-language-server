@@ -24,6 +24,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Stack;
@@ -97,27 +98,6 @@ import io.github.vdassios.grailsls.analysis.NodeRanges;
 import io.github.vdassios.grailsls.api.Range;
 
 public class ASTNodeVisitor extends ClassCodeVisitorSupport {
-	private class ASTLookupKey {
-		public ASTLookupKey(ASTNode node) {
-			this.node = node;
-		}
-
-		private ASTNode node;
-
-		@Override
-		public boolean equals(Object o) {
-			// some ASTNode subclasses, like ClassNode, override equals() with
-			// comparisons that are not strict. we need strict.
-			ASTLookupKey other = (ASTLookupKey) o;
-			return node == other.node;
-		}
-
-		@Override
-		public int hashCode() {
-			return node.hashCode();
-		}
-	}
-
 	private class ASTNodeLookupData {
 		public ASTNode parent;
 		public URI uri;
@@ -133,7 +113,9 @@ public class ASTNodeVisitor extends ClassCodeVisitorSupport {
 	private Stack<ASTNode> stack = new Stack<>();
 	private Map<URI, List<ASTNode>> nodesByURI = new HashMap<>();
 	private Map<URI, List<ClassNode>> classNodesByURI = new HashMap<>();
-	private Map<ASTLookupKey, ASTNodeLookupData> lookup = new HashMap<>();
+	// By identity: ASTNode subclasses override equals() loosely, and Groovy 2.5.14's ASTNode.hashCode() hashes only the
+	// position, so every node without one (most of what AST transformations add) would share one bucket.
+	private Map<ASTNode, ASTNodeLookupData> lookup = new IdentityHashMap<>();
 
 	private void pushASTNode(ASTNode node) {
 		boolean isSynthetic = false;
@@ -150,7 +132,7 @@ public class ASTNodeVisitor extends ClassCodeVisitorSupport {
 			if (stack.size() > 0) {
 				data.parent = stack.lastElement();
 			}
-			lookup.put(new ASTLookupKey(node), data);
+			lookup.put(node, data);
 		}
 
 		stack.add(node);
@@ -240,7 +222,7 @@ public class ASTNodeVisitor extends ClassCodeVisitorSupport {
 		if (child == null) {
 			return null;
 		}
-		ASTNodeLookupData data = lookup.get(new ASTLookupKey(child));
+		ASTNodeLookupData data = lookup.get(child);
 		if (data == null) {
 			return null;
 		}
@@ -259,7 +241,7 @@ public class ASTNodeVisitor extends ClassCodeVisitorSupport {
 	}
 
 	public URI getURI(ASTNode node) {
-		ASTNodeLookupData data = lookup.get(new ASTLookupKey(node));
+		ASTNodeLookupData data = lookup.get(node);
 		if (data == null) {
 			return null;
 		}
@@ -281,7 +263,7 @@ public class ASTNodeVisitor extends ClassCodeVisitorSupport {
 			List<ASTNode> nodes = nodesByURI.remove(uri);
 			if (nodes != null) {
 				nodes.forEach(node -> {
-					lookup.remove(new ASTLookupKey(node));
+					lookup.remove(node);
 				});
 			}
 			classNodesByURI.remove(uri);
