@@ -82,7 +82,7 @@ public final class Navigation {
     return symbols;
   }
 
-  private static String signature(ASTNode node, ASTNodeVisitor ast) {
+  static String signature(ASTNode node, ASTNodeVisitor ast) {
     if (node instanceof ClassNode) {
       return GroovyNodeToStringUtils.classToString((ClassNode) node, ast);
     } else if (node instanceof MethodNode) {

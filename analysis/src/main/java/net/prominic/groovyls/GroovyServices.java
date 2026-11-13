@@ -49,6 +49,7 @@ import org.codehaus.groovy.control.messages.Message;
 import org.codehaus.groovy.control.messages.SyntaxErrorMessage;
 import org.codehaus.groovy.syntax.SyntaxException;
 import org.eclipse.lsp4j.CompletionItem;
+import org.eclipse.lsp4j.CompletionItemKind;
 import org.eclipse.lsp4j.CompletionList;
 import org.eclipse.lsp4j.CompletionParams;
 import org.eclipse.lsp4j.DefinitionParams;
@@ -67,6 +68,7 @@ import org.eclipse.lsp4j.MarkupContent;
 import org.eclipse.lsp4j.MarkupKind;
 import org.eclipse.lsp4j.HoverParams;
 import org.eclipse.lsp4j.Location;
+import org.eclipse.lsp4j.ParameterInformation;
 import org.eclipse.lsp4j.LocationLink;
 import org.eclipse.lsp4j.Position;
 import org.eclipse.lsp4j.PublishDiagnosticsParams;
@@ -75,10 +77,12 @@ import org.eclipse.lsp4j.ReferenceParams;
 import org.eclipse.lsp4j.RenameParams;
 import org.eclipse.lsp4j.SignatureHelp;
 import org.eclipse.lsp4j.SignatureHelpParams;
+import org.eclipse.lsp4j.SignatureInformation;
 import org.eclipse.lsp4j.SymbolInformation;
 import org.eclipse.lsp4j.SymbolKind;
 import org.eclipse.lsp4j.TextDocumentContentChangeEvent;
 import org.eclipse.lsp4j.TextDocumentIdentifier;
+import org.eclipse.lsp4j.TextEdit;
 import org.eclipse.lsp4j.TypeDefinitionParams;
 import org.eclipse.lsp4j.VersionedTextDocumentIdentifier;
 import org.eclipse.lsp4j.WorkspaceEdit;
@@ -92,16 +96,19 @@ import org.eclipse.lsp4j.services.WorkspaceService;
 import groovy.lang.GroovyClassLoader;
 import io.github.classgraph.ClassGraph;
 import io.github.classgraph.ClassGraphException;
+import io.github.classgraph.PackageInfo;
 import io.github.classgraph.ScanResult;
+import io.github.vdassios.grailsls.analysis.ClasspathTypes;
+import io.github.vdassios.grailsls.analysis.Completions;
 import io.github.vdassios.grailsls.analysis.Navigation;
+import io.github.vdassios.grailsls.analysis.Signatures;
+import io.github.vdassios.grailsls.api.Completion;
 import io.github.vdassios.grailsls.api.Symbol;
 import net.prominic.groovyls.compiler.ast.ASTNodeVisitor;
 import net.prominic.groovyls.compiler.control.GroovyLSCompilationUnit;
 import net.prominic.groovyls.config.ICompilationUnitFactory;
-import net.prominic.groovyls.providers.CompletionProvider;
 import net.prominic.groovyls.providers.ReferenceProvider;
 import net.prominic.groovyls.providers.RenameProvider;
-import net.prominic.groovyls.providers.SignatureHelpProvider;
 import net.prominic.groovyls.providers.TypeDefinitionProvider;
 import net.prominic.groovyls.providers.WorkspaceSymbolProvider;
 import net.prominic.groovyls.util.FileContentsTracker;
@@ -260,8 +267,9 @@ public class GroovyServices implements TextDocumentService, WorkspaceService, La
 
 		CompletableFuture<Either<List<CompletionItem>, CompletionList>> result = null;
 		try {
-			CompletionProvider provider = new CompletionProvider(astVisitor, classGraphScanResult);
-			result = provider.provideCompletion(params.getTextDocument(), params.getPosition(), params.getContext());
+			Completions completions = astVisitor == null ? null
+					: Completions.at(astVisitor, uri, classpathTypes(), position.getLine(), position.getCharacter());
+			result = CompletableFuture.completedFuture(toCompletion(completions));
 		} finally {
 			if (originalSource != null) {
 				VersionedTextDocumentIdentifier versionedTextDocument = new VersionedTextDocumentIdentifier(
@@ -319,8 +327,9 @@ public class GroovyServices implements TextDocumentService, WorkspaceService, La
 		}
 
 		try {
-			SignatureHelpProvider provider = new SignatureHelpProvider(astVisitor);
-			return provider.provideSignatureHelp(params.getTextDocument(), params.getPosition());
+			io.github.vdassios.grailsls.api.SignatureHelp help = astVisitor == null ? null
+					: Signatures.at(astVisitor, uri, position.getLine(), position.getCharacter());
+			return CompletableFuture.completedFuture(toSignatureHelp(help));
 		} finally {
 			if (originalSource != null) {
 				VersionedTextDocumentIdentifier versionedTextDocument = new VersionedTextDocumentIdentifier(
@@ -367,6 +376,89 @@ public class GroovyServices implements TextDocumentService, WorkspaceService, La
 			}
 		}
 		return CompletableFuture.completedFuture(symbols);
+	}
+
+	/** The classes of the classpath scan, for completion. */
+	private ClasspathTypes classpathTypes() {
+		ScanResult scan = classGraphScanResult;
+		if (scan == null) {
+			return null;
+		}
+		return new ClasspathTypes() {
+			@Override
+			public List<Type> types() {
+				return scan.getAllClasses().stream().map(info -> new Type(info.getName(), info.getSimpleName(), info.getPackageName(),
+						info.isInterface() ? Completion.Kind.INTERFACE : info.isEnum() ? Completion.Kind.ENUM : Completion.Kind.CLASS))
+						.collect(Collectors.toList());
+			}
+
+			@Override
+			public List<String> packages() {
+				return scan.getPackageInfo().stream().map(PackageInfo::getName).collect(Collectors.toList());
+			}
+		};
+	}
+
+	private static Either<List<CompletionItem>, CompletionList> toCompletion(Completions completions) {
+		if (completions == null) {
+			return Either.forLeft(Collections.emptyList());
+		}
+		io.github.vdassios.grailsls.api.CompletionList list = completions.list();
+		List<CompletionItem> items = new ArrayList<>();
+		for (Completion completion : list.items) {
+			CompletionItem item = new CompletionItem(completion.label);
+			item.setKind(toCompletionItemKind(completion.kind));
+			item.setDetail(completion.detail);
+			item.setSortText(completion.sortText);
+			if (completion.replace != null) {
+				item.setTextEdit(Either.forLeft(new TextEdit(toRange(completion.replace), completion.label)));
+			}
+			if (!completion.additionalEdits.isEmpty()) {
+				item.setAdditionalTextEdits(completion.additionalEdits.stream()
+						.map(edit -> new TextEdit(toRange(edit.range), edit.newText)).collect(Collectors.toList()));
+			}
+			items.add(item);
+		}
+		return list.incomplete ? Either.forRight(new CompletionList(true, items)) : Either.forLeft(items);
+	}
+
+	private static CompletionItemKind toCompletionItemKind(Completion.Kind kind) {
+		switch (kind) {
+			case CLASS:
+				return CompletionItemKind.Class;
+			case INTERFACE:
+				return CompletionItemKind.Interface;
+			case ENUM:
+				return CompletionItemKind.Enum;
+			case METHOD:
+				return CompletionItemKind.Method;
+			case FIELD:
+				return CompletionItemKind.Field;
+			case PACKAGE:
+				return CompletionItemKind.Module;
+			default:
+				return CompletionItemKind.Variable;
+		}
+	}
+
+	private static SignatureHelp toSignatureHelp(io.github.vdassios.grailsls.api.SignatureHelp help) {
+		if (help == null) {
+			return new SignatureHelp(Collections.emptyList(), -1, -1);
+		}
+		List<SignatureInformation> signatures = new ArrayList<>();
+		for (io.github.vdassios.grailsls.api.SignatureHelp.Signature signature : help.signatures) {
+			SignatureInformation information = new SignatureInformation(signature.label);
+			information.setParameters(signature.parameters.stream().map(ParameterInformation::new).collect(Collectors.toList()));
+			if (signature.documentation != null) {
+				information.setDocumentation(new MarkupContent(MarkupKind.MARKDOWN, signature.documentation));
+			}
+			signatures.add(information);
+		}
+		return new SignatureHelp(signatures, help.activeSignature, help.activeParameter);
+	}
+
+	private static Range toRange(io.github.vdassios.grailsls.api.Range range) {
+		return new Range(new Position(range.startLine, range.startColumn), new Position(range.endLine, range.endColumn));
 	}
 
 	private static Location toLocation(io.github.vdassios.grailsls.api.Location location) {

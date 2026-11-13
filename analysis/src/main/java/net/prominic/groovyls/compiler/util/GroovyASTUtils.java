@@ -19,7 +19,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 package net.prominic.groovyls.compiler.util;
 
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
@@ -30,7 +29,6 @@ import org.codehaus.groovy.ast.ClassNode;
 import org.codehaus.groovy.ast.FieldNode;
 import org.codehaus.groovy.ast.ImportNode;
 import org.codehaus.groovy.ast.MethodNode;
-import org.codehaus.groovy.ast.ModuleNode;
 import org.codehaus.groovy.ast.Parameter;
 import org.codehaus.groovy.ast.PropertyNode;
 import org.codehaus.groovy.ast.Variable;
@@ -48,11 +46,8 @@ import org.codehaus.groovy.ast.expr.PropertyExpression;
 import org.codehaus.groovy.ast.expr.TupleExpression;
 import org.codehaus.groovy.ast.expr.VariableExpression;
 import org.codehaus.groovy.ast.stmt.ExpressionStatement;
-import org.eclipse.lsp4j.Position;
-import org.eclipse.lsp4j.Range;
 
 import net.prominic.groovyls.compiler.ast.ASTNodeVisitor;
-import net.prominic.groovyls.util.GroovyLanguageServerUtils;
 
 public class GroovyASTUtils {
     public static ASTNode getEnclosingNodeOfType(ASTNode offsetNode, Class<? extends ASTNode> nodeType,
@@ -173,124 +168,6 @@ public class GroovyASTUtils {
             return classNode.getField(node.getProperty().getText());
         }
         return null;
-    }
-
-    public static List<FieldNode> getFieldsForLeftSideOfPropertyExpression(Expression node, ASTNodeVisitor astVisitor) {
-        ClassNode classNode = getTypeOfNode(node, astVisitor);
-        if (classNode != null) {
-            List<ClassNode> classNodes = new ArrayList<>();
-            classNodes.add(classNode);
-
-            boolean statics = node instanceof ClassExpression;
-
-            List<FieldNode> result = new ArrayList<>();
-            int i = 0;
-            while (i < classNodes.size()) {
-                ClassNode current = classNodes.get(i);
-
-                result.addAll(current.getFields().stream().filter(fieldNode -> {
-                    return statics ? fieldNode.isStatic() : !fieldNode.isStatic();
-                }).collect(Collectors.toList()));
-
-                if (current.isInterface()) {
-                    for (ClassNode interfaceNode : current.getInterfaces()) {
-                        classNodes.add(interfaceNode);
-                    }
-                } else {
-                    ClassNode superClassNode = null;
-                    try {
-                        superClassNode = current.getSuperClass();
-                    } catch (NoClassDefFoundError e) {
-                        // this is fine, we'll just treat it as null
-                    }
-                    if (superClassNode != null) {
-                        classNodes.add(superClassNode);
-                    }
-                }
-                i++;
-            }
-            return result;
-        }
-        return Collections.emptyList();
-    }
-
-    public static List<PropertyNode> getPropertiesForLeftSideOfPropertyExpression(Expression node,
-            ASTNodeVisitor astVisitor) {
-        ClassNode classNode = getTypeOfNode(node, astVisitor);
-        if (classNode != null) {
-            List<ClassNode> classNodes = new ArrayList<>();
-            classNodes.add(classNode);
-
-            boolean statics = node instanceof ClassExpression;
-
-            List<PropertyNode> result = new ArrayList<>();
-            int i = 0;
-            while (i < classNodes.size()) {
-                ClassNode current = classNodes.get(i);
-
-                result.addAll(current.getProperties().stream().filter(propNode -> {
-                    return statics ? propNode.isStatic() : !propNode.isStatic();
-                }).collect(Collectors.toList()));
-
-                if (current.isInterface()) {
-                    for (ClassNode interfaceNode : current.getInterfaces()) {
-                        classNodes.add(interfaceNode);
-                    }
-                } else {
-                    ClassNode superClassNode = null;
-                    try {
-                        superClassNode = current.getSuperClass();
-                    } catch (NoClassDefFoundError e) {
-                        // this is fine, we'll just treat it as null
-                    }
-                    if (superClassNode != null) {
-                        classNodes.add(superClassNode);
-                    }
-                }
-                i++;
-            }
-        }
-        return Collections.emptyList();
-    }
-
-    public static List<MethodNode> getMethodsForLeftSideOfPropertyExpression(Expression node,
-            ASTNodeVisitor astVisitor) {
-        ClassNode classNode = getTypeOfNode(node, astVisitor);
-        if (classNode != null) {
-            List<ClassNode> classNodes = new ArrayList<>();
-            classNodes.add(classNode);
-
-            boolean statics = node instanceof ClassExpression;
-
-            List<MethodNode> result = new ArrayList<>();
-            int i = 0;
-            while (i < classNodes.size()) {
-                ClassNode current = classNodes.get(i);
-
-                result.addAll(current.getMethods().stream().filter(methodNode -> {
-                    return statics ? methodNode.isStatic() : !methodNode.isStatic();
-                }).collect(Collectors.toList()));
-
-                if (current.isInterface()) {
-                    for (ClassNode interfaceNode : current.getInterfaces()) {
-                        classNodes.add(interfaceNode);
-                    }
-                } else {
-                    ClassNode superClassNode = null;
-                    try {
-                        superClassNode = current.getSuperClass();
-                    } catch (NoClassDefFoundError e) {
-                        // this is fine, we'll just treat it as null
-                    }
-                    if (superClassNode != null) {
-                        classNodes.add(superClassNode);
-                    }
-                }
-                i++;
-            }
-            return result;
-        }
-        return Collections.emptyList();
     }
 
     public static ClassNode getTypeOfReceiver(Expression receiver, ASTNode expression, ASTNodeVisitor astVisitor) {
@@ -452,32 +329,5 @@ public class GroovyASTUtils {
             }
         }
         return score;
-    }
-
-    public static Range findAddImportRange(ASTNode offsetNode, ASTNodeVisitor astVisitor) {
-        ModuleNode moduleNode = (ModuleNode) GroovyASTUtils.getEnclosingNodeOfType(offsetNode, ModuleNode.class,
-                astVisitor);
-        if (moduleNode == null) {
-            return new Range(new Position(0, 0), new Position(0, 0));
-        }
-        ASTNode afterNode = null;
-        if (afterNode == null) {
-            List<ImportNode> importNodes = moduleNode.getImports();
-            if (importNodes.size() > 0) {
-                afterNode = importNodes.get(importNodes.size() - 1);
-            }
-        }
-        if (afterNode == null) {
-            afterNode = moduleNode.getPackage();
-        }
-        if (afterNode == null) {
-            return new Range(new Position(0, 0), new Position(0, 0));
-        }
-        Range nodeRange = GroovyLanguageServerUtils.astNodeToRange(afterNode);
-        if (nodeRange == null) {
-            return new Range(new Position(0, 0), new Position(0, 0));
-        }
-        Position position = new Position(nodeRange.getEnd().getLine() + 1, 0);
-        return new Range(position, position);
     }
 }

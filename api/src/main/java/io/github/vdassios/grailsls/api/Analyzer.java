@@ -36,6 +36,22 @@ public interface Analyzer extends AutoCloseable {
   /** Classes of the document and their members, in source order. Members added by transformations are left out. */
   List<Symbol> symbols(String documentPath);
 
+  /**
+   * Completion at a position of {@code request.text}, the document's current text. Answered from the kept compile when
+   * it is of that text. When nothing is found there (an unfinished expression such as {@code book.} does not parse),
+   * a copy with a placeholder name at the position is compiled for the answer and not kept.
+   */
+  CompletionList completion(CompileRequest request, int line, int column);
+
+  /** Signature and documentation of an item of the document's last completion; null once a compile has replaced it. */
+  CompletionDetail resolveCompletion(String documentPath, int id);
+
+  /**
+   * The overloads of the method called around a position of {@code request.text}; null outside a call. Like
+   * {@link #completion}, an unfinished call is answered from a copy with the closing parenthesis added.
+   */
+  SignatureHelp signatureHelp(CompileRequest request, int line, int column);
+
   /** Drops the result kept for a document. */
   void forget(String documentPath);
 

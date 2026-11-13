@@ -11,6 +11,7 @@ import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.codehaus.groovy.GroovyBugError;
+import org.codehaus.groovy.ast.ASTNode;
 import org.codehaus.groovy.ast.ClassNode;
 import org.codehaus.groovy.ast.MethodNode;
 import org.codehaus.groovy.control.CompilationFailedException;
@@ -31,8 +32,11 @@ import io.github.vdassios.grailsls.api.Analyzer;
 import io.github.vdassios.grailsls.api.CompileRequest;
 import io.github.vdassios.grailsls.api.CompileResult;
 import io.github.vdassios.grailsls.api.CompiledClass;
+import io.github.vdassios.grailsls.api.CompletionDetail;
+import io.github.vdassios.grailsls.api.CompletionList;
 import io.github.vdassios.grailsls.api.Diagnostic;
 import io.github.vdassios.grailsls.api.Location;
+import io.github.vdassios.grailsls.api.SignatureHelp;
 import io.github.vdassios.grailsls.api.Symbol;
 import net.prominic.groovyls.compiler.ast.ASTNodeVisitor;
 import net.prominic.groovyls.compiler.control.io.StringReaderSourceWithURI;
@@ -44,6 +48,8 @@ import net.prominic.groovyls.compiler.control.io.StringReaderSourceWithURI;
  */
 public final class GroovyAnalyzer implements Analyzer {
   private final Map<String, Kept> units = new ConcurrentHashMap<>();
+  /** The last completion per document, for resolve; dropped by the next compile of the document. */
+  private final Map<String, LastCompletion> completions = new ConcurrentHashMap<>();
   private final TransformCaches caches = new TransformCaches(GroovyAnalyzer.class.getClassLoader());
 
   public GroovyAnalyzer() {
@@ -58,16 +64,28 @@ public final class GroovyAnalyzer implements Analyzer {
 
   @Override
   public CompileResult compile(CompileRequest request) {
+    long start = System.nanoTime();
+    units.remove(request.path);
+    completions.remove(request.path);
+    List<Diagnostic> diagnostics = new ArrayList<>();
+    Kept kept = run(request, diagnostics);
+    if (kept.cancelled) {
+      return new CompileResult(List.of(), true, kept.sources, millisSince(start));
+    }
+    units.put(request.path, kept);
+    return new CompileResult(diagnostics, false, kept.sources, millisSince(start));
+  }
+
+  /** Compiles a document to canonicalization, the next phase only if the request is not cancelled. */
+  private Kept run(CompileRequest request, List<Diagnostic> diagnostics) {
     try {
-      return compileUnit(request);
+      return runUnit(request, diagnostics);
     } finally {
       caches.clear();
     }
   }
 
-  private CompileResult compileUnit(CompileRequest request) {
-    long start = System.nanoTime();
-    units.remove(request.path);
+  private Kept runUnit(CompileRequest request, List<Diagnostic> diagnostics) {
     CompilerConfiguration config = new CompilerConfiguration();
     config.setSourceEncoding("UTF-8");
     config.addCompilationCustomizers(new AstTestRemover());
@@ -81,10 +99,9 @@ public final class GroovyAnalyzer implements Analyzer {
     PathResolver resolver = new PathResolver(request.lookup, document);
     unit.setClassNodeResolver(resolver);
 
-    List<Diagnostic> diagnostics = new ArrayList<>();
     for (int phase = Phases.INITIALIZATION; phase <= Phases.CANONICALIZATION; phase++) {
       if (request.cancelled.getAsBoolean()) {
-        return new CompileResult(List.of(), true, resolver.sources(), millisSince(start));
+        return new Kept(unit, request.text, document.getSource().getURI(), resolver.sources(), true);
       }
       try {
         unit.compile(phase);
@@ -96,8 +113,7 @@ public final class GroovyAnalyzer implements Analyzer {
       }
     }
     collect(unit.getErrorCollector(), request.path, diagnostics);
-    units.put(request.path, new Kept(unit, document.getSource().getURI()));
-    return new CompileResult(diagnostics, false, resolver.sources(), millisSince(start));
+    return new Kept(unit, request.text, document.getSource().getURI(), resolver.sources(), false);
   }
 
   @Override
@@ -138,13 +154,82 @@ public final class GroovyAnalyzer implements Analyzer {
   }
 
   @Override
+  public CompletionList completion(CompileRequest request, int line, int column) {
+    Kept kept = current(request);
+    Completions found = kept == null ? null : Completions.at(kept.ast(), kept.uri, null, line, column);
+    if (found == null) {
+      kept = compileCopy(request, line, column, Completions.placeholder(lineBefore(request.text, line, column)));
+      found = kept == null ? null : Completions.at(kept.ast(), kept.uri, null, line, column);
+    }
+    if (found == null) {
+      completions.remove(request.path);
+      return CompletionList.EMPTY;
+    }
+    completions.put(request.path, new LastCompletion(found, kept));
+    return found.list();
+  }
+
+  @Override
+  public CompletionDetail resolveCompletion(String documentPath, int id) {
+    LastCompletion last = completions.get(documentPath);
+    ASTNode declaration = last == null ? null : last.completions.declaration(id);
+    return declaration == null ? null : Completions.detail(declaration, last.compile.ast());
+  }
+
+  @Override
+  public SignatureHelp signatureHelp(CompileRequest request, int line, int column) {
+    Kept kept = current(request);
+    if (kept != null && kept.ast().getNodeAtLineAndColumn(kept.uri, line, column) != null) {
+      return Signatures.at(kept.ast(), kept.uri, line, column);
+    }
+    // an unfinished call, "render(", does not parse
+    Kept copy = compileCopy(request, line, column, ")");
+    return copy == null ? null : Signatures.at(copy.ast(), copy.uri, line, column);
+  }
+
+  /** The kept compile of a document, if it is of the request's text. */
+  private Kept current(CompileRequest request) {
+    Kept kept = units.get(request.path);
+    return kept != null && kept.text.equals(request.text) ? kept : null;
+  }
+
+  /** Compiles the document with text inserted at a position, for one query; null when cancelled. Not kept. */
+  private Kept compileCopy(CompileRequest request, int line, int column, String insert) {
+    int offset = offset(request.text, line, column);
+    String text = request.text.substring(0, offset) + insert + request.text.substring(offset);
+    Kept copy = run(new CompileRequest(request.path, text, request.lookup, request.cancelled), new ArrayList<>());
+    return copy.cancelled ? null : copy;
+  }
+
+  /** The offset of a position in a text; a column past the end of its line is the end of the line. */
+  private static int offset(String text, int line, int column) {
+    int start = 0;
+    for (int i = 0; i < line; i++) {
+      int next = text.indexOf('\n', start);
+      if (next < 0) {
+        return text.length();
+      }
+      start = next + 1;
+    }
+    int end = text.indexOf('\n', start);
+    return Math.min(start + column, end < 0 ? text.length() : end);
+  }
+
+  private static String lineBefore(String text, int line, int column) {
+    int offset = offset(text, line, column);
+    return text.substring(text.lastIndexOf('\n', offset - 1) + 1, offset);
+  }
+
+  @Override
   public void forget(String documentPath) {
     units.remove(documentPath);
+    completions.remove(documentPath);
   }
 
   @Override
   public void close() {
     units.clear();
+    completions.clear();
   }
 
   /**
@@ -219,15 +304,22 @@ public final class GroovyAnalyzer implements Analyzer {
     return (System.nanoTime() - nanos) / 1_000_000;
   }
 
-  /** The last compile of a document, and its node lookup, built on the first query. */
+  /** A compile of a document, and its node lookup, built on the first query. */
   private static final class Kept {
     final CompilationUnit unit;
+    final String text;
     final URI uri;
+    /** Sources the compile read: the document and those pulled in. */
+    final int sources;
+    final boolean cancelled;
     private ASTNodeVisitor ast;
 
-    Kept(CompilationUnit unit, URI uri) {
+    Kept(CompilationUnit unit, String text, URI uri, int sources, boolean cancelled) {
       this.unit = unit;
+      this.text = text;
       this.uri = uri;
+      this.sources = sources;
+      this.cancelled = cancelled;
     }
 
     synchronized ASTNodeVisitor ast() {
@@ -236,6 +328,16 @@ public final class GroovyAnalyzer implements Analyzer {
         ast.visitCompilationUnit(unit);
       }
       return ast;
+    }
+  }
+
+  private static final class LastCompletion {
+    final Completions completions;
+    final Kept compile;
+
+    LastCompletion(Completions completions, Kept compile) {
+      this.completions = completions;
+      this.compile = compile;
     }
   }
 

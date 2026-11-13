@@ -23,8 +23,12 @@ import groovy.lang.GroovySystem;
 import io.github.vdassios.grailsls.api.CompileRequest;
 import io.github.vdassios.grailsls.api.CompileResult;
 import io.github.vdassios.grailsls.api.CompiledClass;
+import io.github.vdassios.grailsls.api.Completion;
+import io.github.vdassios.grailsls.api.CompletionDetail;
+import io.github.vdassios.grailsls.api.CompletionList;
 import io.github.vdassios.grailsls.api.Diagnostic;
 import io.github.vdassios.grailsls.api.Location;
+import io.github.vdassios.grailsls.api.SignatureHelp;
 import io.github.vdassios.grailsls.api.SourceLookup;
 import io.github.vdassios.grailsls.api.Symbol;
 
@@ -319,5 +323,96 @@ class GroovyAnalyzerTest {
     assertNull(analyzer.definition(path, 0, 0));
     assertNull(analyzer.hover(path, 0, 0));
     assertEquals(List.of(), analyzer.symbols(path));
+  }
+
+  private CompletionList complete(String path, String text, int line, int column) {
+    compile(path, text);
+    return analyzer.completion(new CompileRequest(path, text, lookup, () -> false), line, column);
+  }
+
+  private static List<String> labels(CompletionList list) {
+    return list.items.stream().map(c -> c.label).collect(Collectors.toList());
+  }
+
+  /** "a." does not parse: the answer comes from a compile of a copy, and the kept compile stays that of the text. */
+  @Test
+  void completionAfterADotUsesACopyWithAPlaceholderName() {
+    String path = tmp.resolve("A.groovy").toString();
+    String text = "class A {\n  String name\n  def run() {\n    name.\n  }\n}\n";
+    List<String> labels = labels(complete(path, text, 3, 9));
+    assertTrue(labels.contains("toUpperCase"), labels.toString());
+    assertEquals(List.of(), analyzer.symbols(path), "the copy is not kept");
+  }
+
+  /** groovy-language-server #94: members of superclasses and traits were missing. */
+  @Test
+  void membersComeFromTheWholeTypeHierarchyTraitsIncluded() throws IOException {
+    index.put("Greets", write("src/Greets.groovy", "trait Greets {\n  String greet() { 'hi' }\n}\n"));
+    index.put("Base", write("src/Base.groovy", "class Base implements Greets {\n  String baseName\n  void fromBase() {}\n}\n"));
+    String path = tmp.resolve("src/A.groovy").toString();
+    List<String> labels = labels(complete(path, "class A extends Base {\n  void own() {}\n  def run(A a) {\n    a.\n  }\n}\n", 3, 6));
+    assertTrue(labels.containsAll(List.of("own", "fromBase", "baseName", "greet", "hashCode")), labels.toString());
+    assertTrue(labels.stream().noneMatch(label -> label.contains("$")), "no generated names: " + labels);
+
+    List<String> bare = labels(complete(path, "class A extends Base {\n  void own() {}\n  def run() {\n    gr\n  }\n}\n", 3, 6));
+    assertEquals(List.of("greet"), bare, "a name in a method: the enclosing class and its supertypes");
+  }
+
+  @Test
+  void afterAClassNameOnlyStaticMembers() {
+    String path = tmp.resolve("A.groovy").toString();
+    List<String> labels = labels(complete(path, "class A {\n  static int count() { 1 }\n  int size() { 2 }\n  def run() {\n    A.\n  }\n}\n", 4, 6));
+    assertTrue(labels.contains("count"), labels.toString());
+    assertFalse(labels.contains("size"), labels.toString());
+  }
+
+  @Test
+  void resolveGivesTheSignatureAndDocumentationUntilTheNextCompile() {
+    String path = tmp.resolve("A.groovy").toString();
+    String text = "class A {\n  /** Counts things. */\n  int count(String what) { 1 }\n  def run() {\n    cou\n  }\n}\n";
+    CompletionList list = complete(path, text, 4, 7);
+    Completion count = list.items.stream().filter(c -> c.label.equals("count")).findFirst().orElseThrow();
+    assertEquals(Completion.Kind.METHOD, count.kind);
+    assertNull(count.detail, "left to resolve");
+    CompletionDetail detail = analyzer.resolveCompletion(path, count.id);
+    assertEquals("public int count(String what)", detail.detail);
+    assertEquals(!GroovySystem.getVersion().startsWith("2."), detail.documentation != null && detail.documentation.contains("Counts things."));
+    compile(path, text);
+    assertNull(analyzer.resolveCompletion(path, count.id));
+  }
+
+  @Test
+  void aClassOfAnotherPackageComesWithItsImport() throws IOException {
+    index.put("other.Widget", write("src/other/Widget.groovy", "package other\nclass Widget {}\n"));
+    String path = tmp.resolve("src/app/A.groovy").toString();
+    CompletionList list = complete(path, "package app\n\nclass A {\n  other.Widget widget\n  def run() {\n    Wid\n  }\n}\n", 5, 7);
+    Completion widget = list.items.stream().filter(c -> c.label.equals("Widget")).findFirst().orElseThrow();
+    assertEquals("other", widget.detail);
+    assertEquals("[2:1-2:1 import other.Widget\n]", widget.additionalEdits.toString());
+  }
+
+  @Test
+  void signatureHelpOnAnUnfinishedCallListsTheOverloads() {
+    String path = tmp.resolve("A.groovy").toString();
+    String text = "class A {\n  void show(Map options) {}\n  void show(String text, int times) {}\n  def run() {\n    show(\n  }\n}\n";
+    compile(path, text);
+    SignatureHelp help = analyzer.signatureHelp(new CompileRequest(path, text, lookup, () -> false), 4, 9);
+    assertNotNull(help);
+    assertEquals("[public void show(Map options), public void show(String text, int times)]", help.signatures.toString());
+    assertEquals(List.of("String text", "int times"), help.signatures.get(1).parameters);
+    assertEquals(0, help.activeParameter);
+  }
+
+  @Test
+  void signatureHelpPicksTheOverloadAndArgumentAtThePosition() {
+    String path = tmp.resolve("A.groovy").toString();
+    String text = "class A {\n  void show(Map options) {}\n  void show(String text, int times) {}\n  def run() {\n    show('x', 2)\n    show(view: 'x')\n  }\n}\n";
+    compile(path, text);
+    SignatureHelp positional = analyzer.signatureHelp(new CompileRequest(path, text, lookup, () -> false), 4, 14);
+    assertEquals(1, positional.activeSignature);
+    assertEquals(1, positional.activeParameter);
+    SignatureHelp named = analyzer.signatureHelp(new CompileRequest(path, text, lookup, () -> false), 5, 17);
+    assertEquals(0, named.activeSignature, "named arguments are one map");
+    assertEquals(0, named.activeParameter);
   }
 }
