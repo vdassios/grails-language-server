@@ -25,4 +25,11 @@ subprojects {
   test {
     useJUnitPlatform()
   }
+
+  // -PtestJavaHome=<jdk>: run the tests on another JDK, e.g. 11, the oldest the server runs on.
+  tasks.withType(Test).configureEach {
+    if (project.hasProperty("testJavaHome")) {
+      executable = "${project.property("testJavaHome")}/bin/java"
+    }
+  }
 }
