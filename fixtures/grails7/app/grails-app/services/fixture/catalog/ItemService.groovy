@@ -9,4 +9,8 @@ class ItemService {
         log.info("added at ${Clock.now()}")
         new Item(name: name).save(flush: true)
     }
+
+    List<Item> named(String wanted) {
+        Item.where { name == wanted }.list()
+    }
 }

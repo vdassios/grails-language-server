@@ -27,8 +27,9 @@ subprojects {
   }
 
   // -PtestJavaHome=<jdk>: run the tests on another JDK, e.g. 11, the oldest the server runs on.
+  // Not testJdk17 (server), which runs on GLS_TEST_JDK17.
   tasks.withType(Test).configureEach {
-    if (project.hasProperty("testJavaHome")) {
+    if (project.hasProperty("testJavaHome") && name != "testJdk17") {
       executable = "${project.property("testJavaHome")}/bin/java"
     }
   }

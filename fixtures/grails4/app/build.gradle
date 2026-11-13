@@ -8,9 +8,11 @@ dependencies {
   implementation project(":support")
   implementation "org.springframework.boot:spring-boot-autoconfigure"
   implementation "org.grails:grails-core"
+  implementation "org.grails:grails-logging"
   implementation "org.grails:grails-web-boot"
   implementation "org.grails:grails-plugin-controllers"
   implementation "org.grails:grails-plugin-services"
   implementation "org.grails:grails-plugin-domain-class"
   implementation "org.grails.plugins:hibernate5"
+  implementation "org.grails.plugins:gsp"
 }

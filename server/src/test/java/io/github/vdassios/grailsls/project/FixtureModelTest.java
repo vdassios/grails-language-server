@@ -43,7 +43,8 @@ class FixtureModelTest {
     assertEquals(List.of(":support"), app.dependsOn);
     assertEquals(List.of(), app.errors);
     SourceSetRecord main = app.sourceSet("main");
-    assertEquals(List.of("grails-app/controllers", "grails-app/domain", "grails-app/services", "src/main/groovy", "src/main/java"), relative(app, main.sourceRoots));
+    assertEquals(List.of("grails-app/controllers", "grails-app/domain", "grails-app/services", "grails-app/taglib", "src/main/groovy", "src/main/java"),
+        relative(app, main.sourceRoots));
     assertEquals(Set.of("Isbn.java", "Slug.java"), names(main.javaFiles), "joint-compiled Java in src/main/java and src/main/groovy");
     assertTrue(relative(app, main.classesDirs).contains("build/classes/groovy/main"));
     assertTrue(names(main.compileClasspath).contains("grails-core-4.1.4.jar"));

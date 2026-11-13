@@ -43,8 +43,25 @@ test {
   systemProperty "gls.fixtures", rootProject.file("fixtures").absolutePath
   inputs.dir(rootProject.file("fixtures")).withPropertyName("fixtures")
   inputs.property("jdks", [System.getenv("GLS_TEST_JDK11"), System.getenv("GLS_TEST_JDK17")].toString())
-  useJUnitPlatform { excludeTags "perf" }
+  useJUnitPlatform { excludeTags "perf", "jdk17" }
 }
+// Tests tagged jdk17 compile the Grails 7 fixture in-process: its classes need Java 17, so they run on GLS_TEST_JDK17
+// (skipped without it, like the other fixture tests).
+def testJdk17 = tasks.register("testJdk17", Test) {
+  description = "Runs the tests tagged jdk17 on the JDK in GLS_TEST_JDK17."
+  group = "verification"
+  testClassesDirs = sourceSets.test.output.classesDirs
+  classpath = sourceSets.test.runtimeClasspath
+  useJUnitPlatform { includeTags "jdk17" }
+  def jdk17 = System.getenv("GLS_TEST_JDK17")
+  if (jdk17) {
+    executable = "${jdk17}/bin/java"
+  }
+  systemProperty "gls.fixtures", rootProject.file("fixtures").absolutePath
+  inputs.dir(rootProject.file("fixtures")).withPropertyName("fixtures")
+  inputs.property("jdk17", jdk17.toString())
+}
+tasks.named("check") { dependsOn testJdk17 }
 
 // Latency against the performance budget (LatencyTest): slow, and machine-dependent, so never part of `build`.
 // GLS_PERF_PROJECT=<built project> measures that project instead of the grails4 fixture.
