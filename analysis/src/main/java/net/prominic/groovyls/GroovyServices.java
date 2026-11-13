@@ -63,6 +63,8 @@ import org.eclipse.lsp4j.DidSaveTextDocumentParams;
 import org.eclipse.lsp4j.DocumentSymbol;
 import org.eclipse.lsp4j.DocumentSymbolParams;
 import org.eclipse.lsp4j.Hover;
+import org.eclipse.lsp4j.MarkupContent;
+import org.eclipse.lsp4j.MarkupKind;
 import org.eclipse.lsp4j.HoverParams;
 import org.eclipse.lsp4j.Location;
 import org.eclipse.lsp4j.LocationLink;
@@ -74,6 +76,7 @@ import org.eclipse.lsp4j.RenameParams;
 import org.eclipse.lsp4j.SignatureHelp;
 import org.eclipse.lsp4j.SignatureHelpParams;
 import org.eclipse.lsp4j.SymbolInformation;
+import org.eclipse.lsp4j.SymbolKind;
 import org.eclipse.lsp4j.TextDocumentContentChangeEvent;
 import org.eclipse.lsp4j.TextDocumentIdentifier;
 import org.eclipse.lsp4j.TypeDefinitionParams;
@@ -90,13 +93,12 @@ import groovy.lang.GroovyClassLoader;
 import io.github.classgraph.ClassGraph;
 import io.github.classgraph.ClassGraphException;
 import io.github.classgraph.ScanResult;
+import io.github.vdassios.grailsls.analysis.Navigation;
+import io.github.vdassios.grailsls.api.Symbol;
 import net.prominic.groovyls.compiler.ast.ASTNodeVisitor;
 import net.prominic.groovyls.compiler.control.GroovyLSCompilationUnit;
 import net.prominic.groovyls.config.ICompilationUnitFactory;
 import net.prominic.groovyls.providers.CompletionProvider;
-import net.prominic.groovyls.providers.DefinitionProvider;
-import net.prominic.groovyls.providers.DocumentSymbolProvider;
-import net.prominic.groovyls.providers.HoverProvider;
 import net.prominic.groovyls.providers.ReferenceProvider;
 import net.prominic.groovyls.providers.RenameProvider;
 import net.prominic.groovyls.providers.SignatureHelpProvider;
@@ -215,8 +217,9 @@ public class GroovyServices implements TextDocumentService, WorkspaceService, La
 		URI uri = URI.create(params.getTextDocument().getUri());
 		recompileIfContextChanged(uri);
 
-		HoverProvider provider = new HoverProvider(astVisitor);
-		return provider.provideHover(params.getTextDocument(), params.getPosition());
+		String markdown = astVisitor == null ? null
+				: Navigation.hover(astVisitor, uri, params.getPosition().getLine(), params.getPosition().getCharacter());
+		return CompletableFuture.completedFuture(markdown == null ? null : new Hover(new MarkupContent(MarkupKind.MARKDOWN, markdown)));
 	}
 
 	@Override
@@ -280,8 +283,10 @@ public class GroovyServices implements TextDocumentService, WorkspaceService, La
 		URI uri = URI.create(params.getTextDocument().getUri());
 		recompileIfContextChanged(uri);
 
-		DefinitionProvider provider = new DefinitionProvider(astVisitor);
-		return provider.provideDefinition(params.getTextDocument(), params.getPosition());
+		io.github.vdassios.grailsls.api.Location location = astVisitor == null ? null
+				: Navigation.definition(astVisitor, uri, params.getPosition().getLine(), params.getPosition().getCharacter());
+		List<Location> locations = location == null ? Collections.emptyList() : Collections.singletonList(toLocation(location));
+		return CompletableFuture.completedFuture(Either.forLeft(locations));
 	}
 
 	@Override
@@ -354,8 +359,37 @@ public class GroovyServices implements TextDocumentService, WorkspaceService, La
 		URI uri = URI.create(params.getTextDocument().getUri());
 		recompileIfContextChanged(uri);
 
-		DocumentSymbolProvider provider = new DocumentSymbolProvider(astVisitor);
-		return provider.provideDocumentSymbols(params.getTextDocument());
+		List<Either<SymbolInformation, DocumentSymbol>> symbols = new ArrayList<>();
+		if (astVisitor != null) {
+			for (Symbol symbol : Navigation.symbols(astVisitor, uri)) {
+				Location location = toLocation(new io.github.vdassios.grailsls.api.Location(Path.of(uri).toString(), symbol.range));
+				symbols.add(Either.forLeft(new SymbolInformation(symbol.name, toSymbolKind(symbol.kind), location, symbol.container)));
+			}
+		}
+		return CompletableFuture.completedFuture(symbols);
+	}
+
+	private static Location toLocation(io.github.vdassios.grailsls.api.Location location) {
+		io.github.vdassios.grailsls.api.Range r = location.range;
+		return new Location(Path.of(location.path).toUri().toString(),
+				new Range(new Position(r.startLine, r.startColumn), new Position(r.endLine, r.endColumn)));
+	}
+
+	private static SymbolKind toSymbolKind(Symbol.Kind kind) {
+		switch (kind) {
+			case CLASS:
+				return SymbolKind.Class;
+			case INTERFACE:
+				return SymbolKind.Interface;
+			case ENUM:
+				return SymbolKind.Enum;
+			case METHOD:
+				return SymbolKind.Method;
+			case FIELD:
+				return SymbolKind.Field;
+			default:
+				return SymbolKind.Variable;
+		}
 	}
 
 	@Override

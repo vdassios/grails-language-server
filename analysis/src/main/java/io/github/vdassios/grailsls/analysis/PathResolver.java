@@ -46,7 +46,7 @@ final class PathResolver extends ClassNodeResolver {
     if (source == null) {
       String text = lookup.openText(path);
       source = text != null
-          ? new SourceUnit(path, text, unit.getConfiguration(), unit.getClassLoader(), unit.getErrorCollector())
+          ? GroovyAnalyzer.source(path, text, unit.getConfiguration(), unit.getClassLoader(), unit.getErrorCollector())
           : new SourceUnit(new File(path), unit.getConfiguration(), unit.getClassLoader(), unit.getErrorCollector());
       source = unit.addSource(source);
       sources.put(path, source);

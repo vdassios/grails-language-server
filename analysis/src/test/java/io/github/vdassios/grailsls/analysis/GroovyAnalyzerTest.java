@@ -19,11 +19,14 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import groovy.lang.GroovyClassLoader;
+import groovy.lang.GroovySystem;
 import io.github.vdassios.grailsls.api.CompileRequest;
 import io.github.vdassios.grailsls.api.CompileResult;
 import io.github.vdassios.grailsls.api.CompiledClass;
 import io.github.vdassios.grailsls.api.Diagnostic;
+import io.github.vdassios.grailsls.api.Location;
 import io.github.vdassios.grailsls.api.SourceLookup;
+import io.github.vdassios.grailsls.api.Symbol;
 
 /** Runs on Groovy 2.5 ({@code test}) and Groovy 4 ({@code testGroovy4}). */
 class GroovyAnalyzerTest {
@@ -203,5 +206,90 @@ class GroovyAnalyzerTest {
     assertNotNull(analyzer.compiledClass(path, "A"));
     analyzer.forget(path);
     assertNull(analyzer.compiledClass(path, "A"));
+  }
+
+  @Test
+  void definitionOfAClassPulledInFromSourceIsItsFile() throws IOException {
+    String book = write("src/lib/Book.groovy", "package lib\n\nclass Book {\n  String title\n}\n");
+    index.put("lib.Book", book);
+    String path = tmp.resolve("src/A.groovy").toString();
+    compile(path, "import lib.Book\nclass A {\n  def run() { Book.newInstance() }\n}\n");
+    Location location = analyzer.definition(path, 2, 15); // on Book
+    assertNotNull(location);
+    assertEquals(book, location.path);
+    assertEquals(2, location.range.startLine);
+  }
+
+  @Test
+  void definitionOfAMemberOfAnOpenUnsavedSourceIsThatFile() {
+    String book = tmp.resolve("src/Book.groovy").toString(); // not on disk
+    index.put("Book", book);
+    open.put(book, "class Book {\n  String title() { 'x' }\n}\n");
+    String path = tmp.resolve("src/A.groovy").toString();
+    compile(path, "class A {\n  def run(Book b) { b.title() }\n}\n");
+    Location location = analyzer.definition(path, 1, 23); // on title
+    assertNotNull(location);
+    assertEquals(book, location.path);
+    assertEquals(1, location.range.startLine);
+  }
+
+  @Test
+  void definitionFromAnImportIsTheImportedClass() throws IOException {
+    String shelf = write("src/misc/Shelf.groovy", "package storage\n\nclass Shelf {\n  Shelf(String label) {}\n}\n");
+    index.put("storage.Shelf", shelf);
+    String path = tmp.resolve("src/A.groovy").toString();
+    compile(path, "import storage.Shelf\nclass A {\n  def run() { new Shelf('x') }\n}\n");
+    Location location = analyzer.definition(path, 0, 15); // on Shelf
+    assertNotNull(location);
+    assertEquals(shelf, location.path);
+    assertEquals(2, location.range.startLine);
+  }
+
+  @Test
+  void definitionOfALocalVariableIsInTheDocument() {
+    String path = tmp.resolve("A.groovy").toString();
+    compile(path, "class A {\n  def run() {\n    def count = 1\n    count + 1\n  }\n}\n");
+    Location location = analyzer.definition(path, 3, 5);
+    assertNotNull(location);
+    assertEquals(path, location.path);
+    assertEquals(2, location.range.startLine);
+  }
+
+  @Test
+  void definitionOfAJdkMethodIsNull() {
+    String path = tmp.resolve("A.groovy").toString();
+    compile(path, "class A {\n  def run() { 'x'.toUpperCase() }\n}\n");
+    assertNull(analyzer.definition(path, 1, 19)); // on toUpperCase
+  }
+
+  @Test
+  void hoverShowsTheSignatureAndOnGroovy3AndLaterTheGroovydoc() {
+    String path = tmp.resolve("A.groovy").toString();
+    compile(path, "class A {\n  /** Counts things. */\n  int count(String what) { 1 }\n  def run() { count('x') }\n}\n");
+    String hover = analyzer.hover(path, 3, 15);
+    assertNotNull(hover);
+    assertTrue(hover.startsWith("```groovy\npublic int count(String what)\n```"), hover);
+    boolean groovydoc = !GroovySystem.getVersion().startsWith("2.");
+    assertEquals(groovydoc, hover.contains("Counts things."), hover);
+  }
+
+  @Test
+  void symbolsAreTheDocumentsDeclarationsOnly() throws IOException {
+    String other = write("src/Other.groovy", "class Other { String x }\n");
+    index.put("Other", other);
+    String path = tmp.resolve("src/A.groovy").toString();
+    compile(path, "class A {\n  String name\n  Other other\n  void run() {}\n  enum Kind { ONE }\n}\n");
+    List<String> symbols = analyzer.symbols(path).stream().map(s -> s.kind + " " + s.container + " " + s.name).collect(Collectors.toList());
+    assertEquals(List.of("CLASS null A", "FIELD A name", "FIELD A other", "METHOD A run", "ENUM null A$Kind", "FIELD A$Kind ONE"), symbols);
+    Symbol run = analyzer.symbols(path).get(3);
+    assertEquals(3, run.range.startLine);
+  }
+
+  @Test
+  void queriesWithoutACompileFindNothing() {
+    String path = tmp.resolve("A.groovy").toString();
+    assertNull(analyzer.definition(path, 0, 0));
+    assertNull(analyzer.hover(path, 0, 0));
+    assertEquals(List.of(), analyzer.symbols(path));
   }
 }

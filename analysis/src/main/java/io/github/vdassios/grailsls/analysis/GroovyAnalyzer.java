@@ -1,5 +1,7 @@
 package io.github.vdassios.grailsls.analysis;
 
+import java.io.File;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -30,6 +32,10 @@ import io.github.vdassios.grailsls.api.CompileRequest;
 import io.github.vdassios.grailsls.api.CompileResult;
 import io.github.vdassios.grailsls.api.CompiledClass;
 import io.github.vdassios.grailsls.api.Diagnostic;
+import io.github.vdassios.grailsls.api.Location;
+import io.github.vdassios.grailsls.api.Symbol;
+import net.prominic.groovyls.compiler.ast.ASTNodeVisitor;
+import net.prominic.groovyls.compiler.control.io.StringReaderSourceWithURI;
 
 /**
  * Compiles one document per {@link CompilationUnit}, in the module loader that loaded this class: the project's own
@@ -37,7 +43,7 @@ import io.github.vdassios.grailsls.api.Diagnostic;
  * or from the loader (jars, class directories, compiled Java).
  */
 public final class GroovyAnalyzer implements Analyzer {
-  private final Map<String, CompilationUnit> units = new ConcurrentHashMap<>();
+  private final Map<String, Kept> units = new ConcurrentHashMap<>();
   private final TransformCaches caches = new TransformCaches(GroovyAnalyzer.class.getClassLoader());
 
   public GroovyAnalyzer() {
@@ -65,11 +71,13 @@ public final class GroovyAnalyzer implements Analyzer {
     CompilerConfiguration config = new CompilerConfiguration();
     config.setSourceEncoding("UTF-8");
     config.addCompilationCustomizers(new AstTestRemover());
+    // attaches Groovydoc comments to nodes for hover (CompilerConfiguration.GROOVYDOC, Groovy 3+; 2.5 has none)
+    config.getOptimizationOptions().put("groovydoc", true);
     GroovyClassLoader loader = new GroovyClassLoader(GroovyAnalyzer.class.getClassLoader(), config, false);
     // source lookup goes through the resolver only, never through the loader (no URL-named sources)
     loader.setResourceLoader(name -> null);
     DocumentUnit unit = new DocumentUnit(config, loader);
-    SourceUnit document = unit.addSource(new SourceUnit(request.path, request.text, config, loader, unit.getErrorCollector()));
+    SourceUnit document = unit.addSource(source(request.path, request.text, config, loader, unit.getErrorCollector()));
     PathResolver resolver = new PathResolver(request.lookup, document);
     unit.setClassNodeResolver(resolver);
 
@@ -88,14 +96,14 @@ public final class GroovyAnalyzer implements Analyzer {
       }
     }
     collect(unit.getErrorCollector(), request.path, diagnostics);
-    units.put(request.path, unit);
+    units.put(request.path, new Kept(unit, document.getSource().getURI()));
     return new CompileResult(diagnostics, false, resolver.sources(), millisSince(start));
   }
 
   @Override
   public CompiledClass compiledClass(String documentPath, String className) {
-    CompilationUnit unit = units.get(documentPath);
-    ClassNode node = unit == null ? null : unit.getAST().getClass(className);
+    Kept kept = units.get(documentPath);
+    ClassNode node = kept == null ? null : kept.unit.getAST().getClass(className);
     if (node == null) {
       return null;
     }
@@ -112,6 +120,24 @@ public final class GroovyAnalyzer implements Analyzer {
   }
 
   @Override
+  public Location definition(String documentPath, int line, int column) {
+    Kept kept = units.get(documentPath);
+    return kept == null ? null : Navigation.definition(kept.ast(), kept.uri, line, column);
+  }
+
+  @Override
+  public String hover(String documentPath, int line, int column) {
+    Kept kept = units.get(documentPath);
+    return kept == null ? null : Navigation.hover(kept.ast(), kept.uri, line, column);
+  }
+
+  @Override
+  public List<Symbol> symbols(String documentPath) {
+    Kept kept = units.get(documentPath);
+    return kept == null ? List.of() : Navigation.symbols(kept.ast(), kept.uri);
+  }
+
+  @Override
   public void forget(String documentPath) {
     units.remove(documentPath);
   }
@@ -119,6 +145,14 @@ public final class GroovyAnalyzer implements Analyzer {
   @Override
   public void close() {
     units.clear();
+  }
+
+  /**
+   * A source of in-memory text, named by its file path (Grails decides artefacts by it) and identified by the file's
+   * URI, as a source read from disk is.
+   */
+  static SourceUnit source(String path, String text, CompilerConfiguration config, GroovyClassLoader loader, ErrorCollector errors) {
+    return new SourceUnit(path, new StringReaderSourceWithURI(text, new File(path).toURI(), config), config, loader, errors);
   }
 
   /** Groovy reports some errors once per generated node (a property's field and accessors): keep one of each. */
@@ -183,6 +217,26 @@ public final class GroovyAnalyzer implements Analyzer {
 
   private static long millisSince(long nanos) {
     return (System.nanoTime() - nanos) / 1_000_000;
+  }
+
+  /** The last compile of a document, and its node lookup, built on the first query. */
+  private static final class Kept {
+    final CompilationUnit unit;
+    final URI uri;
+    private ASTNodeVisitor ast;
+
+    Kept(CompilationUnit unit, URI uri) {
+      this.unit = unit;
+      this.uri = uri;
+    }
+
+    synchronized ASTNodeVisitor ast() {
+      if (ast == null) {
+        ast = new ASTNodeVisitor();
+        ast.visitCompilationUnit(unit);
+      }
+      return ast;
+    }
   }
 
   /** A unit whose errors do not stop it: the following phases still run, so one unresolved name hides nothing else. */

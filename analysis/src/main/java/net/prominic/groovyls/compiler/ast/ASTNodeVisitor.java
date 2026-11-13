@@ -92,12 +92,9 @@ import org.codehaus.groovy.ast.stmt.WhileStatement;
 import org.codehaus.groovy.classgen.BytecodeExpression;
 import org.codehaus.groovy.control.CompilationUnit;
 import org.codehaus.groovy.control.SourceUnit;
-import org.eclipse.lsp4j.Position;
-import org.eclipse.lsp4j.Range;
 
-import net.prominic.groovyls.util.GroovyLanguageServerUtils;
-import net.prominic.lsp.utils.Positions;
-import net.prominic.lsp.utils.Ranges;
+import io.github.vdassios.grailsls.analysis.NodeRanges;
+import io.github.vdassios.grailsls.api.Range;
 
 public class ASTNodeVisitor extends ClassCodeVisitorSupport {
 	private class ASTLookupKey {
@@ -188,7 +185,6 @@ public class ASTNodeVisitor extends ClassCodeVisitorSupport {
 	}
 
 	public ASTNode getNodeAtLineAndColumn(URI uri, int line, int column) {
-		Position position = new Position(line, column);
 		Map<ASTNode, Range> nodeToRange = new HashMap<>();
 		List<ASTNode> nodes = nodesByURI.get(uri);
 		if (nodes == null) {
@@ -200,11 +196,11 @@ public class ASTNodeVisitor extends ClassCodeVisitorSupport {
 				// also, do this first because it's the fastest comparison
 				return false;
 			}
-			Range range = GroovyLanguageServerUtils.astNodeToRange(node);
+			Range range = NodeRanges.of(node);
 			if (range == null) {
 				return false;
 			}
-			boolean result = Ranges.contains(range, position);
+			boolean result = NodeRanges.contains(range, line, column);
 			if (result) {
 				// save the range object to avoid creating it again when we
 				// sort the nodes
@@ -212,12 +208,11 @@ public class ASTNodeVisitor extends ClassCodeVisitorSupport {
 			}
 			return result;
 		}).sorted((n1, n2) -> {
-			int result = Positions.COMPARATOR.reversed().compare(nodeToRange.get(n1).getStart(),
-					nodeToRange.get(n2).getStart());
+			int result = NodeRanges.BY_START.reversed().compare(nodeToRange.get(n1), nodeToRange.get(n2));
 			if (result != 0) {
 				return result;
 			}
-			result = Positions.COMPARATOR.compare(nodeToRange.get(n1).getEnd(), nodeToRange.get(n2).getEnd());
+			result = NodeRanges.BY_END.compare(nodeToRange.get(n1), nodeToRange.get(n2));
 			if (result != 0) {
 				return result;
 			}
