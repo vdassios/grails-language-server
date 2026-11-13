@@ -105,10 +105,13 @@ public final class GroovyAnalyzer implements Analyzer {
     PathResolver resolver = new PathResolver(request.lookup, document);
     unit.setClassNodeResolver(resolver);
 
-    // the last phase is known once the document is parsed, so the condition is evaluated again each phase
-    for (int phase = Phases.INITIALIZATION; phase <= lastPhase(document); phase++) {
+    // the last phase depends on the document's own annotations, known once it is converted: decided then and kept,
+    // because transformations add statically compiled members to classes that are not (Grails's controller traits)
+    int last = Phases.CONVERSION;
+    int phase = Phases.INITIALIZATION;
+    for (; phase <= last; phase++) {
       if (request.cancelled.getAsBoolean()) {
-        return new Kept(unit, request.text, document.getSource().getURI(), resolver.sources(), true);
+        return new Kept(unit, request.text, document.getSource().getURI(), resolver.sources(), phase - 1, true);
       }
       try {
         unit.compile(phase);
@@ -118,9 +121,12 @@ public final class GroovyAnalyzer implements Analyzer {
         diagnostics.add(new Diagnostic(request.path, 0, 0, 0, 0, Diagnostic.ERROR, "internal compiler error in phase " + phase + ": " + e));
         break;
       }
+      if (phase == Phases.CONVERSION) {
+        last = lastPhase(document);
+      }
     }
     collect(unit.getErrorCollector(), request.path, diagnostics);
-    return new Kept(unit, request.text, document.getSource().getURI(), resolver.sources(), false);
+    return new Kept(unit, request.text, document.getSource().getURI(), resolver.sources(), Math.min(phase, last), false);
   }
 
   /**
@@ -148,6 +154,12 @@ public final class GroovyAnalyzer implements Analyzer {
       }
     }
     return false;
+  }
+
+  /** The last phase the document's kept compile ran, or -1 when nothing is kept. For tests. */
+  int phase(String documentPath) {
+    Kept kept = units.get(documentPath);
+    return kept == null ? -1 : kept.phase;
   }
 
   @Override
@@ -398,14 +410,17 @@ public final class GroovyAnalyzer implements Analyzer {
     final URI uri;
     /** Sources the compile read: the document and those pulled in. */
     final int sources;
+    /** The last phase compiled. */
+    final int phase;
     final boolean cancelled;
     private ASTNodeVisitor ast;
 
-    Kept(CompilationUnit unit, String text, URI uri, int sources, boolean cancelled) {
+    Kept(CompilationUnit unit, String text, URI uri, int sources, int phase, boolean cancelled) {
       this.unit = unit;
       this.text = text;
       this.uri = uri;
       this.sources = sources;
+      this.phase = phase;
       this.cancelled = cancelled;
     }
 

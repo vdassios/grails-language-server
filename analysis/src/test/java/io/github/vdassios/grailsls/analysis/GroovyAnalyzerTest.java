@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+import org.codehaus.groovy.control.Phases;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -439,6 +440,7 @@ class GroovyAnalyzerTest {
     String text = "@groovy.transform.CompileStatic\nclass A {\n  String name\n  int run(List<String> names) {\n    names.each { it.toUpperCase() }\n"
         + "    def x\n    x = 'text'\n    x.length() + name.size()\n  }\n}\n";
     assertEquals(List.of(), errors(compile(path, text)));
+    assertEquals(Phases.INSTRUCTION_SELECTION, analyzer.phase(path));
     String hover = analyzer.hover(path, 4, 21);
     assertNotNull(hover, "it.toUpperCase(): it is a String");
     assertEquals("public String toUpperCase()", hover.split("\n")[1]);
@@ -454,6 +456,18 @@ class GroovyAnalyzerTest {
     CompileResult wrong = compile(path, "@groovy.transform.CompileStatic\nclass A {\n  int run() { 'x'.nope() }\n}\n");
     assertEquals(1, errors(wrong).size(), "the static type checker ran: " + wrong.diagnostics);
     assertTrue(errors(wrong).get(0).contains("nope"), errors(wrong).toString());
+  }
+
+  /**
+   * A transformation that adds statically compiled members (Grails's controller traits, here a trait's) does not make
+   * the class statically compiled: it stops at canonicalization, as the document's own annotations say.
+   */
+  @Test
+  void membersAddedStaticallyCompiledDoNotMakeTheDocumentStaticallyCompiled() throws IOException {
+    index.put("Greets", write("src/Greets.groovy", "@groovy.transform.CompileStatic\ntrait Greets {\n  String name\n  String greet() { 'hi ' + name }\n}\n"));
+    String path = tmp.resolve("src/A.groovy").toString();
+    assertEquals(List.of(), errors(compile(path, "class A implements Greets {\n  def run() { greet() }\n}\n")));
+    assertEquals(Phases.CANONICALIZATION, analyzer.phase(path));
   }
 
   /** The symbol index's parse: declarations only, no class resolved, no transformation run. */
