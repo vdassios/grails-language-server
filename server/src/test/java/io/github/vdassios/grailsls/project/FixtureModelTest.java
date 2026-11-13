@@ -4,17 +4,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
-import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -22,22 +17,16 @@ import org.junit.jupiter.api.io.TempDir;
 
 import io.github.vdassios.grailsls.project.ModuleRecord.SourceSetRecord;
 
-/**
- * Runs the real fixture builds under {@code fixtures/}. Each needs a JDK its Gradle version supports, given as
- * {@code GLS_TEST_JDK11} or {@code GLS_TEST_JDK17}; without it the test is skipped.
- */
+/** Resolves the real fixture builds under {@code fixtures/} (see {@link Fixtures} for the JDKs they need). */
 @Timeout(600)
 class FixtureModelTest {
-  private static final Path FIXTURES = Path.of(System.getProperty("gls.fixtures", "../fixtures"));
-
   @TempDir
   Path tmp;
 
   private ProjectModel resolve(String fixture, String jdkVariable) throws Exception {
-    String jdk = System.getenv(jdkVariable);
-    assumeTrue(jdk != null && !jdk.isEmpty(), jdkVariable + " is not set");
-    Path root = copy(FIXTURES.resolve(fixture), tmp.resolve(fixture));
-    GradleBridge bridge = new GradleBridge(tmp.resolve("cache"), Path.of(jdk), Duration.ofSeconds(540));
+    Path jdk = Fixtures.jdk(jdkVariable);
+    Path root = Fixtures.copy(Fixtures.ROOT.resolve(fixture), tmp.resolve(fixture));
+    GradleBridge bridge = new GradleBridge(tmp.resolve("cache"), jdk, Duration.ofSeconds(540));
     ProjectModel model = bridge.resolve(root, false);
     assertFalse(model.fromCache);
     assertTrue(bridge.resolve(root, false).fromCache);
@@ -102,33 +91,5 @@ class FixtureModelTest {
 
   private static Set<String> names(List<String> paths) {
     return paths.stream().map(p -> Path.of(p).getFileName().toString()).collect(Collectors.toSet());
-  }
-
-  /** The fixture without its build output and Gradle caches. */
-  private static Path copy(Path from, Path to) throws IOException {
-    try (Stream<Path> paths = Files.walk(from)) {
-      for (Path source : (Iterable<Path>) paths::iterator) {
-        Path rel = from.relativize(source);
-        if (containsSegment(rel, ".gradle") || containsSegment(rel, "build")) {
-          continue;
-        }
-        Path target = to.resolve(rel.toString());
-        if (Files.isDirectory(source)) {
-          Files.createDirectories(target);
-        } else {
-          Files.copy(source, target, StandardCopyOption.COPY_ATTRIBUTES);
-        }
-      }
-    }
-    return to;
-  }
-
-  private static boolean containsSegment(Path rel, String name) {
-    for (Path segment : rel) {
-      if (segment.toString().equals(name)) {
-        return true;
-      }
-    }
-    return false;
   }
 }

@@ -9,7 +9,7 @@ public final class ProjectModel {
   public final List<ModuleRecord> modules;
   public final boolean fromCache;
 
-  ProjectModel(Path buildRoot, List<ModuleRecord> modules, boolean fromCache) {
+  public ProjectModel(Path buildRoot, List<ModuleRecord> modules, boolean fromCache) {
     this.buildRoot = buildRoot;
     this.modules = List.copyOf(modules);
     this.fromCache = fromCache;

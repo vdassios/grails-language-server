@@ -4,9 +4,19 @@ apply plugin: "com.gradleup.shadow"
 def mainClassName = "io.github.vdassios.grailsls.GrailsLanguageServer"
 
 dependencies {
+  implementation project(":api")
   implementation "org.eclipse.lsp4j:org.eclipse.lsp4j:0.12.0"
   implementation "org.eclipse.lsp4j:org.eclipse.lsp4j.jsonrpc:0.12.0"
   implementation "com.google.code.gson:gson:2.13.1"
+}
+
+// The analysis layer is loaded by each module loader, not by the server's: ship it as a nested jar (AnalysisJar).
+// Not named *.jar: the shadow plugin would unpack it into the server's own classes.
+processResources {
+  from(project(":analysis").tasks.named("jar")) {
+    into "io/github/vdassios/grailsls/compile"
+    rename { "analysis.bin" }
+  }
 }
 
 jar {
@@ -22,7 +32,13 @@ shadowJar {
 
 tasks.named("build") { dependsOn tasks.named("shadowJar") }
 
+// A Groovy jar for module loaders in tests that need no Gradle build (the server itself has no Groovy).
+configurations { testGroovy }
+dependencies { testGroovy "org.codehaus.groovy:groovy:2.5.23" }
+
 test {
+  inputs.files(configurations.testGroovy).withPropertyName("testGroovy")
+  jvmArgumentProviders.add({ ["-Dgls.testGroovy=${configurations.testGroovy.singleFile}"] } as CommandLineArgumentProvider)
   // FixtureModelTest builds the projects under fixtures/ with JDKs from GLS_TEST_JDK11 and GLS_TEST_JDK17.
   systemProperty "gls.fixtures", rootProject.file("fixtures").absolutePath
   inputs.dir(rootProject.file("fixtures")).withPropertyName("fixtures")
