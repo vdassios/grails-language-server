@@ -14,15 +14,22 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
+import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 
+import org.eclipse.lsp4j.CompletionItem;
+import org.eclipse.lsp4j.CompletionParams;
 import org.eclipse.lsp4j.DidOpenTextDocumentParams;
 import org.eclipse.lsp4j.InitializeParams;
 import org.eclipse.lsp4j.InitializedParams;
 import org.eclipse.lsp4j.MessageActionItem;
 import org.eclipse.lsp4j.MessageParams;
+import org.eclipse.lsp4j.Position;
 import org.eclipse.lsp4j.PublishDiagnosticsParams;
 import org.eclipse.lsp4j.ShowMessageRequestParams;
+import org.eclipse.lsp4j.SignatureHelp;
+import org.eclipse.lsp4j.SignatureHelpParams;
+import org.eclipse.lsp4j.TextDocumentIdentifier;
 import org.eclipse.lsp4j.TextDocumentItem;
 import org.eclipse.lsp4j.WorkspaceFolder;
 import org.eclipse.lsp4j.jsonrpc.Launcher;
@@ -136,6 +143,57 @@ class ProtocolTest {
     StatusParams failed = next();
     assertEquals(StatusParams.FAILED, failed.state);
     assertTrue(failed.message.startsWith("Gradle failed: boom (log: "), failed.message);
+  }
+
+  /** A project of one module whose main source set is {@code src} on the test's Groovy. */
+  private Path groovyProject() throws Exception {
+    Path root = tmp.resolve("project");
+    JsonObject main = new JsonObject();
+    main.addProperty("name", "main");
+    JsonArray roots = new JsonArray();
+    roots.add(root.resolve("src").toString());
+    main.add("sourceRoots", roots);
+    JsonArray classpath = new JsonArray();
+    classpath.add(System.getProperty("gls.testGroovy"));
+    main.add("compileClasspath", classpath);
+    JsonObject module = new JsonObject();
+    module.addProperty("path", ":");
+    module.addProperty("name", "project");
+    module.addProperty("projectDir", root.toString());
+    module.addProperty("groovyVersion", "2.5.23");
+    JsonArray sourceSets = new JsonArray();
+    sourceSets.add(main);
+    module.add("sourceSets", sourceSets);
+    FakeWrapper.write(root, "printf '%s' '" + module + "' > \"$out/_root.json\"\n");
+    Files.writeString(root.resolve("settings.gradle"), "");
+    Files.createDirectories(root.resolve("src"));
+    return root;
+  }
+
+  @Test
+  void completionItemsResolveToTheirSignatureAndSignatureHelpAnswers() throws Exception {
+    Path root = groovyProject();
+    start(root, trustedOptions());
+    assertEquals(StatusParams.RESOLVING, next().state);
+    assertEquals(StatusParams.INDEXING, next().state);
+    assertEquals(StatusParams.READY, next().state);
+
+    String uri = root.resolve("src/A.groovy").toUri().toString();
+    String text = "class A {\n  String name\n  def run() {\n    name.\n  }\n}\n";
+    server.getTextDocumentService().didOpen(new DidOpenTextDocumentParams(new TextDocumentItem(uri, "groovy", 1, text)));
+    TextDocumentIdentifier document = new TextDocumentIdentifier(uri);
+
+    List<CompletionItem> items = server.getTextDocumentService().completion(new CompletionParams(document, new Position(3, 9))).get(30, TimeUnit.SECONDS).getRight().getItems();
+    CompletionItem upper = items.stream().filter(item -> item.getLabel().equals("toUpperCase")).findFirst().orElseThrow();
+    assertNull(upper.getDetail(), "left to resolve");
+    CompletionItem resolved = server.getTextDocumentService().resolveCompletionItem(upper).get(30, TimeUnit.SECONDS);
+    assertTrue(resolved.getDetail().startsWith("public String toUpperCase("), resolved.getDetail());
+
+    String other = root.resolve("src/B.groovy").toUri().toString();
+    server.getTextDocumentService().didOpen(new DidOpenTextDocumentParams(new TextDocumentItem(other, "groovy", 1, "class B {\n  int count(String what) { 1 }\n  def run() { count('x') }\n}\n")));
+    SignatureHelp help = server.getTextDocumentService().signatureHelp(new SignatureHelpParams(new TextDocumentIdentifier(other), new Position(2, 21))).get(30, TimeUnit.SECONDS);
+    assertEquals("public int count(String what)", help.getSignatures().get(0).getLabel());
+    assertEquals(0, help.getActiveParameter());
   }
 
   private final class RecordingClient implements GrailsLanguageClient {

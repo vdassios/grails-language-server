@@ -108,14 +108,32 @@ public final class CompileService {
    * current text. Completes with {@code none} when the document is not open or not in a Groovy source set.
    */
   public <T> CompletableFuture<T> query(String uri, T none, BiFunction<Analyzer, String, T> query) {
+    return queryText(uri, none, (analyzer, request) -> query.apply(analyzer, request.path));
+  }
+
+  /**
+   * Like {@link #query}, given a request for the document's current text instead of its path: for queries that may
+   * compile a copy of it (completion, signature help).
+   */
+  public <T> CompletableFuture<T> queryText(String uri, T none, BiFunction<Analyzer, CompileRequest, T> query) {
     Path path = Documents.path(uri);
     return path == null ? CompletableFuture.completedFuture(none) : afterCompiles(path, () -> {
       Workspace current = workspace;
-      CompileContext context = current == null || documents.get(path) == null ? null : current.contextOf(path);
+      Document document = documents.get(path);
+      CompileContext context = current == null || document == null ? null : current.contextOf(path);
       if (context == null) {
         return CompletableFuture.completedFuture(none);
       }
-      return context.query(analyzer -> query.apply(analyzer, path.toString()));
+      CompileRequest request = new CompileRequest(path.toString(), document.text, lookup(current, context), () -> false);
+      return context.query(analyzer -> query.apply(analyzer, request));
+    });
+  }
+
+  /** Finds classes in the declaration index and reads open documents from their current text. */
+  private SourceLookup lookup(Workspace current, CompileContext context) {
+    return current.lookup(context, file -> {
+      Document open = documents.get(file);
+      return open == null ? null : open.text;
     });
   }
 
@@ -170,11 +188,7 @@ public final class CompileService {
       finish(path, task); // not a source file of a Groovy module
       return;
     }
-    SourceLookup lookup = current.lookup(context, file -> {
-      Document open = documents.get(file);
-      return open == null ? null : open.text;
-    });
-    context.compile(new CompileRequest(path.toString(), document.text, lookup, task.cancelled::get)).whenComplete((result, error) -> {
+    context.compile(new CompileRequest(path.toString(), document.text, lookup(current, context), task.cancelled::get)).whenComplete((result, error) -> {
       try {
         report(path, task, document, current, result, error);
       } finally {

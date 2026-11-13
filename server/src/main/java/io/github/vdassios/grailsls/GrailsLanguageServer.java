@@ -13,6 +13,11 @@ import java.util.concurrent.CompletableFuture;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
+import org.eclipse.lsp4j.CompletionItem;
+import org.eclipse.lsp4j.CompletionItemKind;
+import org.eclipse.lsp4j.CompletionList;
+import org.eclipse.lsp4j.CompletionOptions;
+import org.eclipse.lsp4j.CompletionParams;
 import org.eclipse.lsp4j.DidChangeConfigurationParams;
 import org.eclipse.lsp4j.DidChangeTextDocumentParams;
 import org.eclipse.lsp4j.DidChangeWatchedFilesParams;
@@ -29,6 +34,7 @@ import org.eclipse.lsp4j.Location;
 import org.eclipse.lsp4j.LocationLink;
 import org.eclipse.lsp4j.MarkupContent;
 import org.eclipse.lsp4j.MarkupKind;
+import org.eclipse.lsp4j.ParameterInformation;
 import org.eclipse.lsp4j.Position;
 import org.eclipse.lsp4j.Range;
 import org.eclipse.lsp4j.SymbolInformation;
@@ -43,8 +49,13 @@ import org.eclipse.lsp4j.RegistrationParams;
 import org.eclipse.lsp4j.SaveOptions;
 import org.eclipse.lsp4j.ServerCapabilities;
 import org.eclipse.lsp4j.ServerInfo;
+import org.eclipse.lsp4j.SignatureHelp;
+import org.eclipse.lsp4j.SignatureHelpOptions;
+import org.eclipse.lsp4j.SignatureHelpParams;
+import org.eclipse.lsp4j.SignatureInformation;
 import org.eclipse.lsp4j.TextDocumentSyncKind;
 import org.eclipse.lsp4j.TextDocumentSyncOptions;
+import org.eclipse.lsp4j.TextEdit;
 import org.eclipse.lsp4j.jsonrpc.Launcher;
 import org.eclipse.lsp4j.jsonrpc.messages.Either;
 import org.eclipse.lsp4j.jsonrpc.services.JsonRequest;
@@ -54,6 +65,7 @@ import org.eclipse.lsp4j.services.LanguageServer;
 import org.eclipse.lsp4j.services.TextDocumentService;
 import org.eclipse.lsp4j.services.WorkspaceService;
 
+import io.github.vdassios.grailsls.api.Completion;
 import io.github.vdassios.grailsls.api.Symbol;
 import io.github.vdassios.grailsls.compile.AnalysisJar;
 import io.github.vdassios.grailsls.compile.CompileService;
@@ -120,6 +132,8 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
     capabilities.setDefinitionProvider(true);
     capabilities.setHoverProvider(true);
     capabilities.setDocumentSymbolProvider(true);
+    capabilities.setCompletionProvider(new CompletionOptions(true, List.of(".")));
+    capabilities.setSignatureHelpProvider(new SignatureHelpOptions(List.of("(", ",")));
     return CompletableFuture.completedFuture(new InitializeResult(capabilities, new ServerInfo("grails-language-server")));
   }
 
@@ -225,7 +239,105 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
         return result;
       });
     }
+
+    @Override
+    public CompletableFuture<Either<List<CompletionItem>, CompletionList>> completion(CompletionParams params) {
+      String uri = params.getTextDocument().getUri();
+      Position at = params.getPosition();
+      return compiles.queryText(uri, io.github.vdassios.grailsls.api.CompletionList.EMPTY, (analyzer, request) -> analyzer.completion(request, at.getLine(), at.getCharacter()))
+          .thenApply(list -> Either.forRight(completionList(uri, list)));
+    }
+
+    /** Adds the signature and documentation; the item's data names its document and its key there. */
+    @Override
+    public CompletableFuture<CompletionItem> resolveCompletionItem(CompletionItem item) {
+      JsonObject data = item.getData() instanceof JsonObject ? (JsonObject) item.getData() : null;
+      if (data == null || !data.has("uri") || !data.has("id")) {
+        return CompletableFuture.completedFuture(item);
+      }
+      int id = data.get("id").getAsInt();
+      return compiles.query(data.get("uri").getAsString(), null, (analyzer, path) -> analyzer.resolveCompletion(path, id)).thenApply(detail -> {
+        if (detail != null) {
+          item.setDetail(detail.detail);
+          if (detail.documentation != null) {
+            item.setDocumentation(new MarkupContent(MarkupKind.MARKDOWN, detail.documentation));
+          }
+        }
+        return item;
+      });
+    }
+
+    @Override
+    public CompletableFuture<SignatureHelp> signatureHelp(SignatureHelpParams params) {
+      Position at = params.getPosition();
+      return compiles.queryText(params.getTextDocument().getUri(), null, (analyzer, request) -> analyzer.signatureHelp(request, at.getLine(), at.getCharacter()))
+          .thenApply(help -> help == null ? null : toSignatureHelp(help));
+    }
   };
+
+  private static CompletionList completionList(String uri, io.github.vdassios.grailsls.api.CompletionList list) {
+    List<CompletionItem> items = new ArrayList<>();
+    for (Completion completion : list.items) {
+      CompletionItem item = new CompletionItem(completion.label);
+      item.setKind(completionKind(completion.kind));
+      item.setDetail(completion.detail);
+      item.setSortText(completion.sortText);
+      if (completion.replace != null) {
+        item.setTextEdit(Either.forLeft(new TextEdit(range(completion.replace), completion.label)));
+      }
+      if (!completion.additionalEdits.isEmpty()) {
+        List<TextEdit> edits = new ArrayList<>();
+        for (io.github.vdassios.grailsls.api.TextEdit edit : completion.additionalEdits) {
+          edits.add(new TextEdit(range(edit.range), edit.newText));
+        }
+        item.setAdditionalTextEdits(edits);
+      }
+      if (completion.id >= 0) {
+        JsonObject data = new JsonObject();
+        data.addProperty("uri", uri);
+        data.addProperty("id", completion.id);
+        item.setData(data);
+      }
+      items.add(item);
+    }
+    return new CompletionList(list.incomplete, items);
+  }
+
+  private static CompletionItemKind completionKind(Completion.Kind kind) {
+    switch (kind) {
+      case CLASS:
+        return CompletionItemKind.Class;
+      case INTERFACE:
+        return CompletionItemKind.Interface;
+      case ENUM:
+        return CompletionItemKind.Enum;
+      case METHOD:
+        return CompletionItemKind.Method;
+      case FIELD:
+        return CompletionItemKind.Field;
+      case PACKAGE:
+        return CompletionItemKind.Module;
+      default:
+        return CompletionItemKind.Variable;
+    }
+  }
+
+  private static SignatureHelp toSignatureHelp(io.github.vdassios.grailsls.api.SignatureHelp help) {
+    List<SignatureInformation> signatures = new ArrayList<>();
+    for (io.github.vdassios.grailsls.api.SignatureHelp.Signature signature : help.signatures) {
+      SignatureInformation information = new SignatureInformation(signature.label);
+      List<ParameterInformation> parameters = new ArrayList<>();
+      for (String parameter : signature.parameters) {
+        parameters.add(new ParameterInformation(parameter));
+      }
+      information.setParameters(parameters);
+      if (signature.documentation != null) {
+        information.setDocumentation(new MarkupContent(MarkupKind.MARKDOWN, signature.documentation));
+      }
+      signatures.add(information);
+    }
+    return new SignatureHelp(signatures, help.activeSignature, help.activeParameter);
+  }
 
   private static Location location(io.github.vdassios.grailsls.api.Location location) {
     return new Location(Path.of(location.path).toUri().toString(), range(location.range));

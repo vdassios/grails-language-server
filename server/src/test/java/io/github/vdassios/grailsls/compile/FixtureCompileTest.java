@@ -1,6 +1,7 @@
 package io.github.vdassios.grailsls.compile;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -27,6 +28,7 @@ import io.github.vdassios.grailsls.api.CompileResult;
 import io.github.vdassios.grailsls.api.CompiledClass;
 import io.github.vdassios.grailsls.api.Diagnostic;
 import io.github.vdassios.grailsls.api.Location;
+import io.github.vdassios.grailsls.api.SignatureHelp;
 import io.github.vdassios.grailsls.project.Fixtures;
 import io.github.vdassios.grailsls.project.ProjectModel;
 
@@ -162,6 +164,54 @@ class FixtureCompileTest {
       }
       assertEquals(Map.of("list()", "public static List list()", "render(", "public void render(Map param1)", "redirect(", "public void redirect(Map param1)", "save(",
           "public Book save(Map param1)"), hovers);
+    }
+  }
+
+  /** Completion on a line typed into the controller's save action, before its redirect. */
+  private static List<String> completion(Workspace workspace, Path controller, String typed) throws Exception {
+    String saved = Files.readString(controller);
+    String anchor = "        redirect(action:";
+    assertTrue(saved.contains(anchor));
+    String text = saved.replace(anchor, "        " + typed + "\n" + anchor);
+    int line = (int) text.substring(0, text.indexOf("        " + typed + "\n")).chars().filter(c -> c == '\n').count();
+    compile(workspace, controller, text);
+    CompileContext context = workspace.contextOf(controller);
+    CompileRequest request = new CompileRequest(controller.toString(), text, workspace.lookup(context, p -> null), () -> false);
+    return context.query(a -> a.completion(request, line, 8 + typed.length())).get(60, TimeUnit.SECONDS).items.stream().map(c -> c.label).collect(Collectors.toList());
+  }
+
+  /** Members the Grails transformations add, on a domain class pulled in from source and on the controller itself. */
+  @Test
+  void completionListsMembersAddedByGrails() throws Exception {
+    ProjectModel model = Fixtures.built("grails4", "GLS_TEST_JDK11");
+    try (Workspace workspace = workspace(model)) {
+      Path controller = file(model, ":app", "grails-app/controllers/fixture/library/BookController.groovy");
+      List<String> instance = completion(workspace, controller, "book.");
+      assertTrue(instance.containsAll(List.of("save", "validate", "delete", "title", "isbn")), instance.toString());
+      assertFalse(instance.contains("list"), "static");
+      assertTrue(instance.stream().noneMatch(label -> label.contains("$")), instance.toString());
+
+      List<String> statics = completion(workspace, controller, "Book.");
+      assertTrue(statics.containsAll(List.of("list", "get", "findAll", "where")), statics.toString());
+      assertFalse(statics.contains("validate"), "an instance method");
+
+      List<String> bare = completion(workspace, controller, "re");
+      assertEquals(List.of("redirect", "render"), bare.stream().sorted().collect(Collectors.toList()), "no private members of Object");
+    }
+  }
+
+  @Test
+  void signatureHelpOnRenderInAnAction() throws Exception {
+    ProjectModel model = Fixtures.built("grails4", "GLS_TEST_JDK11");
+    try (Workspace workspace = workspace(model)) {
+      Path controller = file(model, ":app", "grails-app/controllers/fixture/library/BookController.groovy");
+      String text = Files.readString(controller);
+      int[] p = at(controller, "\"index\", model", 1);
+      CompileContext context = workspace.contextOf(controller);
+      CompileRequest request = new CompileRequest(controller.toString(), text, workspace.lookup(context, f -> null), () -> false);
+      SignatureHelp help = query(workspace, controller, a -> a.signatureHelp(request, p[0], p[1]));
+      assertNotNull(help);
+      assertEquals("public void render(Map param1)", help.signatures.get(help.activeSignature).label, help.signatures.toString());
     }
   }
 
