@@ -28,6 +28,9 @@ final class ModuleClassLoader extends URLClassLoader {
   private final Map<String, Path> javaClasses;
   /** Resource name ({@link #EXTENSION_DESCRIPTORS}) to the project's files of that name. */
   private final Map<String, List<Path>> resources;
+  /** Built on the first lookup, on the compile thread. */
+  private volatile JarIndex index;
+  private final Object indexLock = new Object();
 
   /** Where Groovy looks for extension module descriptors: {@code META-INF/groovy} since 2.5, before that services. */
   static final List<String> EXTENSION_DESCRIPTORS = List.of("META-INF/groovy/org.codehaus.groovy.runtime.ExtensionModule",
@@ -41,28 +44,50 @@ final class ModuleClassLoader extends URLClassLoader {
 
   @Override
   protected Class<?> findClass(String name) throws ClassNotFoundException {
+    String resource = name.replace('.', '/') + ".class";
+    if (!mayHave(resource)) {
+      return javaClass(name, resource, new ClassNotFoundException(name));
+    }
     try {
       return super.findClass(name);
     } catch (ClassNotFoundException e) {
-      Path file = javaClasses.get(name.replace('.', '/') + ".class");
-      if (file == null) {
-        throw e;
-      }
-      byte[] bytes;
-      try {
-        bytes = Files.readAllBytes(file);
-      } catch (IOException io) {
-        throw new ClassNotFoundException(name, io);
-      }
-      return defineClass(name, bytes, 0, bytes.length);
+      return javaClass(name, resource, e);
     }
+  }
+
+  private Class<?> javaClass(String name, String resource, ClassNotFoundException notFound) throws ClassNotFoundException {
+    Path file = javaClasses.get(resource);
+    if (file == null) {
+      throw notFound;
+    }
+    byte[] bytes;
+    try {
+      bytes = Files.readAllBytes(file);
+    } catch (IOException io) {
+      throw new ClassNotFoundException(name, io);
+    }
+    return defineClass(name, bytes, 0, bytes.length);
   }
 
   /** Groovy's resolver reads class files as resources (ASM), so they must be found here too. */
   @Override
   public URL findResource(String name) {
-    URL url = super.findResource(name);
+    URL url = mayHave(name) ? super.findResource(name) : null;
     return url != null ? url : javaClassUrl(name);
+  }
+
+  /** False when the resource is in none of the URLs, from {@link JarIndex}; a miss then skips searching every jar. */
+  private boolean mayHave(String resource) {
+    JarIndex current = index;
+    if (current == null) {
+      synchronized (indexLock) {
+        current = index;
+        if (current == null) {
+          index = current = JarIndex.of(getURLs());
+        }
+      }
+    }
+    return current.mayHave(resource);
   }
 
   /** Groovy's extension module scanner reads every descriptor of the name (Groovy's own, the jars', the project's). */
