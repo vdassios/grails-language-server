@@ -2,7 +2,15 @@
 
 A [language server](https://microsoft.github.io/language-server-protocol/) for Groovy with Grails support, usable from any LSP editor. It compiles each open file with the **project's own** Groovy and Grails jars, so the members Grails adds at compile time (`render`, `params`, `save`, `get`, finders, ...) are visible to completion, hover and navigation.
 
-**Status: pre-alpha, milestone M1 (Groovy core).** The server resolves the Gradle project model in the background, reports progress through `grails/status`, compiles each open Groovy file and publishes its diagnostics. It answers completion (with resolve, including types not imported yet), hover, signature help, definition, document symbols and workspace symbols. Grails-specific features (artefact checks, untyped injection, GORM finders, conventions, GSP) come in later milestones.
+**Status: pre-alpha, milestone M2 (Grails artefacts).** The server resolves the Gradle project model in the background, reports progress through `grails/status`, compiles each open Groovy file and publishes its diagnostics. It answers completion (with resolve, including types not imported yet), hover, signature help, definition, document symbols and workspace symbols. Controllers, domain classes, services and taglibs get the members Grails adds (tested on Grails 4 and Grails 7), and `def fooService` is typed as the service of that name. GORM dynamic finders and DSL blocks, conventions (views, templates, actions) and GSP come in later milestones.
+
+## Grails artefacts
+
+Grails adds most artefact members through AST transformations and traits. Compiled with the project's own jars and real file paths, the classes already carry them: `render`, `redirect`, `params`, `request` in controllers; `save`, `get`, `list`, `errors` on domain classes; the transaction manager on `@Transactional` services; `out` and `throwTagError` in taglibs; `log` with `grails-logging`. The server adds three things:
+
+- A getter also completes as its property (`params`, `errors`, `out`), as Groovy code uses it.
+- A name the transformations add after Groovy binds variables (`log`, a trait's `params`) is resolved to that member, so `params.` and `log.` complete and hover with the member's type.
+- **Untyped injection.** A property `def fooService` in any class is typed as the service class `FooService` (declared under a `grails-app/services` source root, in any package, the only one of that name); the compile pulls that class in from source. Services from plugin jars are not looked up.
 
 ## How it works
 
@@ -39,9 +47,9 @@ java -jar build/libs/grails-language-server-all.jar   # LSP over stdio
 
 The project-model tests run the fixture builds under `fixtures/` (see its README) with their own Gradle wrappers. They need a JDK 11 (Grails 4 fixture) and a JDK 17 (Grails 7 and plain Groovy fixtures), given as `GLS_TEST_JDK11` and `GLS_TEST_JDK17`; a test whose JDK is not set is skipped. `-PtestJavaHome=<jdk>` runs the tests on another JDK; CI runs them on JDK 11, the oldest the server supports, with both fixture JDKs set.
 
-`analysis` is tested twice: `test` on Groovy 2.5, `testGroovy4` on Groovy 4.
+`analysis` is tested twice: `test` on Groovy 2.5, `testGroovy4` on Groovy 4. The server tests that compile the Grails 7 fixture in-process (tagged `jdk17`) run in `:server:testJdk17` on the JDK in `GLS_TEST_JDK17`, since Grails 7 needs Java 17.
 
-`./gradlew :server:perfTest` measures compile and query latency, outside the default build: on the Grails 4 fixture, or on the built project in `GLS_PERF_PROJECT` (resolved with the JDK in `GLS_PERF_JDK`). It writes counts and timings only, under `server/build/perf/`.
+`./gradlew :server:perfTest` measures compile and query latency, outside the default build: on the Grails 4 fixture, or on the built project in `GLS_PERF_PROJECT` (resolved with the JDK in `GLS_PERF_JDK`). It writes counts and timings only, under `server/build/perf/`. `LatencyTest.artefactSweep` compiles every Groovy file of the project as the open file and reports time, errors and whether Grails's members are present, per artefact kind and kind of module (`sweep.txt`).
 
 ## Origin
 
