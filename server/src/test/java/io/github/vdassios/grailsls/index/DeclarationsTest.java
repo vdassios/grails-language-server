@@ -42,7 +42,13 @@ class DeclarationsTest {
   }
 
   @Test
-  void anIndentedTypeWithoutAnOuterTypeIsSkipped() {
-    assertEquals(List.of(), Declarations.of("def make() {\n  return 1\n}\n  class Odd {}\n"));
+  void anIndentedTypeOutsideEveryBlockIsTopLevel() {
+    assertEquals(List.of("u.Cookies", "u.Cookies$Jar"), Declarations.of("package u\nimport a.B\n\n final class Cookies {\n    static class Jar {}\n}\n"));
+    assertEquals(List.of("Odd"), Declarations.of("def make() {\n  return '}'\n}\n  class Odd {}\n"), "after a script method, braces in strings ignored");
+  }
+
+  @Test
+  void anIndentedTypeInsideABlockOfNoTypeIsSkipped() {
+    assertEquals(List.of(), Declarations.of("def make = {\n  class Odd {}\n}\n"));
   }
 }

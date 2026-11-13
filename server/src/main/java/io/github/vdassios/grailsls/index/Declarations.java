@@ -10,7 +10,8 @@ import java.util.regex.Pattern;
 /**
  * The types a Groovy or Java file declares, from its text alone (no compiler): binary names, {@code pkg.Name} for
  * top-level types and {@code pkg.Outer$Inner} for nested ones. The package comes from the {@code package} line, not the
- * directory. Top-level means declared at column 0; a type indented under another is nested in it.
+ * directory. Top-level means declared at column 0, or indented with no type above it and outside every brace; a type
+ * indented under another is nested in it.
  *
  * <p>Must be exact: the resolver claims a file for every name listed here, and a name the file does not declare makes
  * the compile fail with "expected to find the class".
@@ -18,6 +19,7 @@ import java.util.regex.Pattern;
 public final class Declarations {
   private static final Pattern BLOCK_COMMENT = Pattern.compile("/\\*.*?\\*/", Pattern.DOTALL);
   private static final Pattern LINE_COMMENT = Pattern.compile("//[^\\n]*");
+  private static final Pattern STRING = Pattern.compile("\"(?:\\\\.|[^\"\\\\\\n])*\"|'(?:\\\\.|[^'\\\\\\n])*'");
   private static final Pattern PACKAGE = Pattern.compile("^\\s*package\\s+([\\w.]+)", Pattern.MULTILINE);
   private static final Pattern TYPE = Pattern.compile(
       "^([ \\t]*)(?:(?:public|protected|private|abstract|final|static|strictfp|sealed|non-sealed)\\s+|@(?!interface\\b)[\\w.]+(?:\\([^)\\n]*\\))?\\s+)*"
@@ -46,14 +48,27 @@ public final class Declarations {
         name = prefix + type.group(2);
       } else if (!outers.isEmpty()) {
         name = outers.peek() + "$" + type.group(2);
+      } else if (braceDepth(code, type.start()) == 0) {
+        name = prefix + type.group(2); // indented, outside every block: still top-level (" final class A")
       } else {
-        continue; // indented without an enclosing type: not a declaration we can name
+        continue; // inside a block of no type found: not a declaration we can name
       }
       names.add(name);
       indents.push(new int[] {indent});
       outers.push(name);
     }
     return names;
+  }
+
+  /** Open braces minus closed ones before {@code end}, outside string literals of one line. */
+  private static int braceDepth(String code, int end) {
+    String before = STRING.matcher(code.substring(0, end)).replaceAll("");
+    int depth = 0;
+    for (int i = 0; i < before.length(); i++) {
+      char c = before.charAt(i);
+      depth += c == '{' ? 1 : c == '}' ? -1 : 0;
+    }
+    return depth;
   }
 
   /** Block comments removed, their line breaks kept. */
