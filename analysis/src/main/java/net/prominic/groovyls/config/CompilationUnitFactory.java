@@ -116,7 +116,8 @@ public class CompilationUnitFactory implements ICompilationUnitFactory {
 		CompilerConfiguration config = new CompilerConfiguration();
 
 		Map<String, Boolean> optimizationOptions = new HashMap<>();
-		optimizationOptions.put(CompilerConfiguration.GROOVYDOC, true);
+		// CompilerConfiguration.GROOVYDOC (Groovy 3+); Groovy 2.5 ignores the unknown key
+		optimizationOptions.put("groovydoc", true);
 		config.setOptimizationOptions(optimizationOptions);
 
 		List<String> classpathList = new ArrayList<>();

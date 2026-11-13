@@ -23,6 +23,6 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: ${{ matrix.java-version == '17' }}
         with:
-          path: build/libs/groovy-language-server-all.jar
+          path: build/libs/grails-language-server-all.jar
           archive: false
           if-no-files-found: error

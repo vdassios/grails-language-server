@@ -19,14 +19,21 @@
 ////////////////////////////////////////////////////////////////////////////////
 package net.prominic.groovyls.compiler.util;
 
-import groovy.lang.groovydoc.Groovydoc;
+import java.lang.reflect.Method;
+
+import org.codehaus.groovy.ast.AnnotatedNode;
 
 public class GroovydocUtils {
-	public static String groovydocToMarkdownDescription(Groovydoc groovydoc) {
-		if (groovydoc == null || !groovydoc.isPresent()) {
+	/**
+	 * Groovydoc is attached to AST nodes from Groovy 3 on ({@code AnnotatedNode.getGroovydoc()}). This
+	 * layer is compiled against Groovy 2.5 and runs on the project's Groovy, so it is read reflectively:
+	 * on Groovy 2.5 the result is always null.
+	 */
+	public static String groovydocToMarkdownDescription(AnnotatedNode node) {
+		String content = groovydocContent(node);
+		if (content == null) {
 			return null;
 		}
-		String content = groovydoc.getContent();
 		String[] lines = content.split("\n");
 		StringBuilder markdownBuilder = new StringBuilder();
 		int n = lines.length;
@@ -54,6 +61,22 @@ public class GroovydocUtils {
 			}
 		}
 		return markdownBuilder.toString().trim();
+	}
+
+	private static String groovydocContent(AnnotatedNode node) {
+		if (node == null) {
+			return null;
+		}
+		try {
+			Method getGroovydoc = node.getClass().getMethod("getGroovydoc");
+			Object groovydoc = getGroovydoc.invoke(node);
+			if (groovydoc == null || !(Boolean) groovydoc.getClass().getMethod("isPresent").invoke(groovydoc)) {
+				return null;
+			}
+			return (String) groovydoc.getClass().getMethod("getContent").invoke(groovydoc);
+		} catch (ReflectiveOperationException e) {
+			return null;
+		}
 	}
 
 	private static void appendLine(StringBuilder markdownBuilder, String line) {

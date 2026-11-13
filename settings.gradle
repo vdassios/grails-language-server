@@ -1,0 +1,3 @@
+rootProject.name = "grails-language-server"
+
+include "server", "analysis"

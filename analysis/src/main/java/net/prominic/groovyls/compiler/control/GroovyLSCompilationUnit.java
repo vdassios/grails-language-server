@@ -27,6 +27,7 @@ import org.codehaus.groovy.control.CompilerConfiguration;
 import org.codehaus.groovy.control.SourceUnit;
 import org.codehaus.groovy.tools.GroovyClass;
 
+import java.lang.reflect.Field;
 import java.security.CodeSource;
 import java.util.Collection;
 import java.util.Collections;
@@ -57,6 +58,7 @@ public class GroovyLSCompilationUnit extends CompilationUnit {
 				generatedClasses.removeIf(groovyClass -> sourceUnitClassNames.contains(groovyClass.getName()));
 			}
 			sources.remove(sourceUnit.getName());
+			removeName(sourceUnit.getName());
 		}
 		// keep existing modules from other source units
 		List<ModuleNode> modules = ast.getModules();
@@ -68,6 +70,23 @@ public class GroovyLSCompilationUnit extends CompilationUnit {
 		}
 		LanguageServerErrorCollector lsErrorCollector = (LanguageServerErrorCollector) errorCollector;
 		lsErrorCollector.clear();
+	}
+
+	/**
+	 * Groovy 2.5 also lists each source in {@code CompilationUnit.names}, and its iterator looks every
+	 * name up in {@code sources}: a removed source would come back as null. Groovy 3 dropped the field.
+	 */
+	@SuppressWarnings("unchecked")
+	private void removeName(String name) {
+		try {
+			Field field = CompilationUnit.class.getDeclaredField("names");
+			field.setAccessible(true);
+			((List<String>) field.get(this)).remove(name);
+		} catch (NoSuchFieldException e) {
+			// Groovy 3 or later
+		} catch (IllegalAccessException e) {
+			throw new IllegalStateException(e);
+		}
 	}
 
 	public void removeSource(SourceUnit sourceUnit) {

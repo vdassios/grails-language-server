@@ -33,7 +33,6 @@ import org.eclipse.lsp4j.MarkupKind;
 import org.eclipse.lsp4j.Position;
 import org.eclipse.lsp4j.TextDocumentIdentifier;
 
-import groovy.lang.groovydoc.Groovydoc;
 import net.prominic.groovyls.compiler.ast.ASTNodeVisitor;
 import net.prominic.groovyls.compiler.util.GroovyASTUtils;
 import net.prominic.groovyls.compiler.util.GroovydocUtils;
@@ -72,8 +71,7 @@ public class HoverProvider {
 		String documentation = null;
 		if (definitionNode instanceof AnnotatedNode) {
 			AnnotatedNode annotatedNode = (AnnotatedNode) definitionNode;
-			Groovydoc groovydoc = annotatedNode.getGroovydoc();
-			documentation = GroovydocUtils.groovydocToMarkdownDescription(groovydoc);
+			documentation = GroovydocUtils.groovydocToMarkdownDescription(annotatedNode);
 		}
 
 		StringBuilder contentsBuilder = new StringBuilder();

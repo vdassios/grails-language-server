@@ -181,7 +181,7 @@ public class CompletionProvider {
 			if (classNode.getNameWithoutPackage().startsWith(importText)) {
 				item.setSortText(classNode.getNameWithoutPackage());
 			}
-			String markdownDocs = GroovydocUtils.groovydocToMarkdownDescription(classNode.getGroovydoc());
+			String markdownDocs = GroovydocUtils.groovydocToMarkdownDescription(classNode);
 			if (markdownDocs != null) {
 				item.setDocumentation(new MarkupContent(MarkupKind.MARKDOWN, markdownDocs));
 			}
@@ -289,7 +289,7 @@ public class CompletionProvider {
 			CompletionItem item = new CompletionItem();
 			item.setLabel(property.getName());
 			item.setKind(GroovyLanguageServerUtils.astNodeToCompletionItemKind(property));
-			String markdownDocs = GroovydocUtils.groovydocToMarkdownDescription(property.getGroovydoc());
+			String markdownDocs = GroovydocUtils.groovydocToMarkdownDescription(property);
 			if (markdownDocs != null) {
 				item.setDocumentation(new MarkupContent(MarkupKind.MARKDOWN, markdownDocs));
 			}
@@ -308,7 +308,7 @@ public class CompletionProvider {
 			CompletionItem item = new CompletionItem();
 			item.setLabel(field.getName());
 			item.setKind(GroovyLanguageServerUtils.astNodeToCompletionItemKind(field));
-			String markdownDocs = GroovydocUtils.groovydocToMarkdownDescription(field.getGroovydoc());
+			String markdownDocs = GroovydocUtils.groovydocToMarkdownDescription(field);
 			if (markdownDocs != null) {
 				item.setDocumentation(new MarkupContent(MarkupKind.MARKDOWN, markdownDocs));
 			}
@@ -331,7 +331,7 @@ public class CompletionProvider {
 			CompletionItem item = new CompletionItem();
 			item.setLabel(method.getName());
 			item.setKind(GroovyLanguageServerUtils.astNodeToCompletionItemKind(method));
-			String markdownDocs = GroovydocUtils.groovydocToMarkdownDescription(method.getGroovydoc());
+			String markdownDocs = GroovydocUtils.groovydocToMarkdownDescription(method);
 			if (markdownDocs != null) {
 				item.setDocumentation(new MarkupContent(MarkupKind.MARKDOWN, markdownDocs));
 			}
@@ -368,7 +368,7 @@ public class CompletionProvider {
 			item.setKind(GroovyLanguageServerUtils.astNodeToCompletionItemKind((ASTNode) variable));
 			if (variable instanceof AnnotatedNode) {
 				AnnotatedNode annotatedVar = (AnnotatedNode) variable;
-				String markdownDocs = GroovydocUtils.groovydocToMarkdownDescription(annotatedVar.getGroovydoc());
+				String markdownDocs = GroovydocUtils.groovydocToMarkdownDescription(annotatedVar);
 				if (markdownDocs != null) {
 					item.setDocumentation(new MarkupContent(MarkupKind.MARKDOWN, markdownDocs));
 				}
@@ -438,7 +438,7 @@ public class CompletionProvider {
 			item.setLabel(classNode.getNameWithoutPackage());
 			item.setKind(GroovyLanguageServerUtils.astNodeToCompletionItemKind(classNode));
 			item.setDetail(packageName);
-			String markdownDocs = GroovydocUtils.groovydocToMarkdownDescription(classNode.getGroovydoc());
+			String markdownDocs = GroovydocUtils.groovydocToMarkdownDescription(classNode);
 			if (markdownDocs != null) {
 				item.setDocumentation(new MarkupContent(MarkupKind.MARKDOWN, markdownDocs));
 			}
