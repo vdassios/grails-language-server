@@ -53,6 +53,7 @@ class ProtocolTest {
 
   private final BlockingQueue<StatusParams> statuses = new LinkedBlockingQueue<>();
   private final BlockingQueue<PublishDiagnosticsParams> diagnostics = new LinkedBlockingQueue<>();
+  private final List<String> logs = new java.util.concurrent.CopyOnWriteArrayList<>();
   private GrailsServerProxy server;
 
   /** The server as the client sees it, with the custom request. */
@@ -218,6 +219,29 @@ class ProtocolTest {
     assertEquals(root.resolve("src/Shelf.groovy").toUri().toString(), found.get(0).getLocation().getUri());
   }
 
+  /** Each startup stage is logged with the time since initialize: how the C6 budget (first diagnostics in 3 s) is read. */
+  @Test
+  void logsEachStartupStageWithItsTime() throws Exception {
+    Path root = groovyProject();
+    start(root, trustedOptions());
+    assertEquals(StatusParams.RESOLVING, next().state);
+    assertEquals(StatusParams.INDEXING, next().state);
+    assertEquals(StatusParams.READY, next().state);
+    server.getTextDocumentService().didOpen(new DidOpenTextDocumentParams(new TextDocumentItem(root.resolve("src/A.groovy").toUri().toString(), "groovy", 1, "class A {}\n")));
+    assertTrue(diagnostics.poll(30, TimeUnit.SECONDS) != null, "no diagnostics");
+    List<String> marks = List.of("model resolved", "declarations indexed", "symbols indexed", "first diagnostics");
+    for (int i = 0; i < 300 && startupMarks().size() < marks.size(); i++) {
+      Thread.sleep(100);
+    }
+    assertEquals(marks, startupMarks().stream().sorted((a, b) -> marks.indexOf(a) - marks.indexOf(b)).collect(java.util.stream.Collectors.toList()));
+    assertTrue(logs.stream().filter(l -> l.startsWith("startup: ")).allMatch(l -> l.matches("startup: [a-z ]+ after \\d+ ms")), logs.toString());
+  }
+
+  private List<String> startupMarks() {
+    return logs.stream().filter(l -> l.startsWith("startup: ")).map(l -> l.substring("startup: ".length(), l.indexOf(" after ")))
+        .collect(java.util.stream.Collectors.toList());
+  }
+
   private final class RecordingClient implements GrailsLanguageClient {
     @Override
     public void status(StatusParams params) {
@@ -241,6 +265,8 @@ class ProtocolTest {
     }
 
     @Override
-    public void logMessage(MessageParams message) {}
+    public void logMessage(MessageParams message) {
+      logs.add(message.getMessage());
+    }
   }
 }

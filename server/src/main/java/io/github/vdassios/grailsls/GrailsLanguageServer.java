@@ -34,6 +34,8 @@ import org.eclipse.lsp4j.Location;
 import org.eclipse.lsp4j.LocationLink;
 import org.eclipse.lsp4j.MarkupContent;
 import org.eclipse.lsp4j.MarkupKind;
+import org.eclipse.lsp4j.MessageParams;
+import org.eclipse.lsp4j.MessageType;
 import org.eclipse.lsp4j.ParameterInformation;
 import org.eclipse.lsp4j.Position;
 import org.eclipse.lsp4j.Range;
@@ -114,12 +116,18 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
     int timeout = gradle.has("timeoutSeconds") ? gradle.get("timeoutSeconds").getAsInt() : DEFAULT_TIMEOUT_SECONDS;
     Path cacheDir = options.has("cacheDir") ? Path.of(options.get("cacheDir").getAsString()) : GradleBridge.defaultCacheDir();
     GradleBridge bridge = new GradleBridge(cacheDir, GradleBridge.defaultJavaHome(), Duration.ofSeconds(timeout));
-    compiles = new CompileService(diagnostics -> client.publishDiagnostics(diagnostics), CompileService.DEBOUNCE_MILLIS);
+    StartupMarks marks = new StartupMarks(message -> client.logMessage(new MessageParams(MessageType.Log, message)));
+    compiles = new CompileService(diagnostics -> {
+      client.publishDiagnostics(diagnostics);
+      marks.mark(StartupMarks.FIRST_DIAGNOSTICS);
+    }, CompileService.DEBOUNCE_MILLIS);
     project = new ProjectService(bridge, workspaceRoot(params), trusted, status -> client.status(status), model -> {
+      marks.mark(StartupMarks.MODEL_RESOLVED);
       Workspace workspace = new Workspace(model, AnalysisJar.extract(cacheDir));
       workspace.index();
+      marks.mark(StartupMarks.DECLARATIONS_INDEXED);
       compiles.setWorkspace(workspace);
-      workspace.indexSymbols();
+      workspace.indexSymbols().thenRun(() -> marks.mark(StartupMarks.SYMBOLS_INDEXED));
       return workspace.summary();
     });
     watchFiles = params.getCapabilities() != null && params.getCapabilities().getWorkspace() != null
