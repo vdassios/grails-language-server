@@ -89,7 +89,12 @@ public class GroovyASTUtils {
             return tryToResolveOriginalClassNode((ClassNode) node, strict, astVisitor);
         } else if (node instanceof ConstructorCallExpression) {
             ConstructorCallExpression callExpression = (ConstructorCallExpression) node;
-            return GroovyASTUtils.getMethodFromCallExpression(callExpression, astVisitor);
+            MethodNode constructor = GroovyASTUtils.getMethodFromCallExpression(callExpression, astVisitor);
+            if (constructor != null && constructor.getLineNumber() != -1) {
+                return constructor;
+            }
+            // a default or generated constructor has no source: the class instead
+            return tryToResolveOriginalClassNode(callExpression.getType(), strict, astVisitor);
         } else if (node instanceof DeclarationExpression) {
             DeclarationExpression declExpression = (DeclarationExpression) node;
             if (!declExpression.isMultipleAssignmentDeclaration()) {

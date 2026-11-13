@@ -268,6 +268,19 @@ class GroovyAnalyzerTest {
     assertEquals(2, location.range.startLine);
   }
 
+  /** {@code new P()}: the constructor when the class declares it, else the class (no source for a default one). */
+  @Test
+  void definitionOfAConstructorCallWithoutADeclaredConstructorIsTheClass() {
+    String path = tmp.resolve("A.groovy").toString();
+    compile(path, "class P {}\nclass Q {\n  Q(int n) {}\n}\nclass A {\n  def run() { [new P(), new Q(1)] }\n}\n");
+    Location p = analyzer.definition(path, 5, 18); // on P
+    assertNotNull(p);
+    assertEquals(0, p.range.startLine);
+    Location q = analyzer.definition(path, 5, 27); // on Q
+    assertNotNull(q);
+    assertEquals(2, q.range.startLine);
+  }
+
   @Test
   void definitionOfAJdkMethodIsNull() {
     String path = tmp.resolve("A.groovy").toString();
