@@ -120,6 +120,7 @@ public final class GroovyAnalyzer implements Analyzer {
     // because transformations add statically compiled members to classes that are not (Grails's controller traits)
     int last = Phases.CONVERSION;
     int phase = Phases.INITIALIZATION;
+    Injections injections = null;
     for (; phase <= last; phase++) {
       if (request.cancelled.getAsBoolean()) {
         return new Kept(unit, request.text, document.getSource().getURI(), resolver.sources(), phase - 1, true);
@@ -134,7 +135,11 @@ public final class GroovyAnalyzer implements Analyzer {
       }
       if (phase == Phases.CONVERSION) {
         last = lastPhase(document);
+        injections = Injections.queue(document, request.lookup, resolver, unit);
       }
+    }
+    if (injections != null) {
+      injections.mark(unit);
     }
     collect(unit.getErrorCollector(), request.path, diagnostics);
     return new Kept(unit, request.text, document.getSource().getURI(), resolver.sources(), Math.min(phase, last), false);

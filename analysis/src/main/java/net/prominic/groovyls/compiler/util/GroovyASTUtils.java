@@ -49,6 +49,7 @@ import org.codehaus.groovy.ast.expr.VariableExpression;
 import org.codehaus.groovy.ast.stmt.ExpressionStatement;
 import org.codehaus.groovy.transform.stc.StaticTypesMarker;
 
+import io.github.vdassios.grailsls.analysis.Injections;
 import net.prominic.groovyls.compiler.ast.ASTNodeVisitor;
 
 public class GroovyASTUtils {
@@ -273,6 +274,11 @@ public class GroovyASTUtils {
                 }
             } else if (var.isDynamicTyped()) {
                 ASTNode defNode = GroovyASTUtils.getDefinition(node, false, astVisitor);
+                // def fooService in an artefact: the service Grails injects by name
+                ClassNode injected = Injections.typeOf(defNode);
+                if (injected != null) {
+                    return injected;
+                }
                 // a member added by a transformation: its getter, or a field or property with a declared type
                 if (defNode instanceof MethodNode) {
                     return ((MethodNode) defNode).getReturnType();

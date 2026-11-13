@@ -45,6 +45,23 @@ public final class DeclarationIndex {
     return null;
   }
 
+  /** Top-level classes named {@code simpleName} in any package, in the order of {@code searchRoots}, each once. */
+  public List<String> classesNamed(String simpleName, List<Path> searchRoots) {
+    Set<String> found = new LinkedHashSet<>();
+    for (Path path : searchRoots) {
+      Root root = roots.get(path);
+      if (root == null) {
+        continue;
+      }
+      for (String name : root.files.keySet()) {
+        if (name.indexOf('$') < 0 && (name.equals(simpleName) || name.endsWith("." + simpleName))) {
+          found.add(name);
+        }
+      }
+    }
+    return new ArrayList<>(found);
+  }
+
   /** Re-reads one file after it was saved, created or deleted. Files outside every root are ignored. */
   public void update(Path file) {
     if (!file.toString().endsWith(".groovy")) {

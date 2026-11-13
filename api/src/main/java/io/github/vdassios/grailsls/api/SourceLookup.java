@@ -17,4 +17,12 @@ public interface SourceLookup {
   default List<Symbol> types() {
     return List.of();
   }
+
+  /**
+   * Binary names of the top-level classes with this simple name that the sources declare, in search order; for names
+   * Grails resolves by convention, such as the bean {@code bookService} to the class {@code BookService}.
+   */
+  default List<String> classesNamed(String simpleName) {
+    return List.of();
+  }
 }

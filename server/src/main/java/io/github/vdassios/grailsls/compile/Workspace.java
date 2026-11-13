@@ -152,6 +152,11 @@ public final class Workspace implements AutoCloseable {
       public List<Symbol> types() {
         return symbols.types(context.searchRoots);
       }
+
+      @Override
+      public List<String> classesNamed(String simpleName) {
+        return index.classesNamed(simpleName, context.searchRoots);
+      }
     };
   }
 
