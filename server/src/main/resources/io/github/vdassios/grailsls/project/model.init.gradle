@@ -1,0 +1,47 @@
+// grails-language-server: writes one JSON record per Gradle project into the directory given as -Pgls.out.
+// Resolves dependencies only; builds nothing. Works on Gradle 5 to 9.
+import groovy.json.JsonOutput
+import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+import org.gradle.api.artifacts.component.ProjectComponentIdentifier
+import org.gradle.util.GradleVersion
+
+allprojects { p ->
+  def task = p.tasks.create('grailsLanguageServerModel')
+  if (GradleVersion.current() >= GradleVersion.version('7.4')) {
+    task.notCompatibleWithConfigurationCache('reads the project model at execution time')
+  }
+  task.doLast {
+    def out = new File(p.rootProject.findProperty('gls.out') as String)
+    def record = [path: p.path, name: p.name, projectDir: p.projectDir.absolutePath, groovyVersion: null, dependsOn: [], sourceSets: [], errors: []]
+    def sourceSets = p.extensions.findByName('sourceSets')
+    sourceSets?.each { ss ->
+      def conf = p.configurations.findByName(ss.compileClasspathConfigurationName)
+      def classpath = []
+      if (conf != null) {
+        def artifacts = conf.incoming.artifactView { lenient(true) }.artifacts
+        artifacts.each { a ->
+          classpath << a.file.absolutePath
+          def id = a.id.componentIdentifier
+          if (id instanceof ModuleComponentIdentifier && id.module in ['groovy', 'groovy-all'] && id.group in ['org.codehaus.groovy', 'org.apache.groovy']) {
+            record.groovyVersion = record.groovyVersion ?: id.version
+          }
+          if (id instanceof ProjectComponentIdentifier && id.projectPath != p.path && !(id.projectPath in record.dependsOn)) {
+            record.dependsOn << id.projectPath
+          }
+        }
+        artifacts.failures.each { f -> record.errors << "${ss.name}: ${f.message}".toString() }
+      }
+      def resourceDirs = ss.resources.srcDirs
+      record.sourceSets << [
+        name: ss.name,
+        sourceRoots: (ss.allSource.srcDirs - resourceDirs)*.absolutePath.sort(),
+        resourceRoots: resourceDirs*.absolutePath.sort(),
+        compileClasspath: classpath,
+        classesDirs: ss.output.classesDirs.files*.absolutePath.sort(),
+        javaFiles: ss.allJava.files*.absolutePath.sort(),
+      ]
+    }
+    def file = p.path == ':' ? '_root' : p.path.substring(1).replace(':', '__')
+    new File(out, file + '.json').text = JsonOutput.toJson(record)
+  }
+}

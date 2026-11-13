@@ -21,3 +21,10 @@ shadowJar {
 }
 
 tasks.named("build") { dependsOn tasks.named("shadowJar") }
+
+test {
+  // FixtureModelTest builds the projects under fixtures/ with JDKs from GLS_TEST_JDK11 and GLS_TEST_JDK17.
+  systemProperty "gls.fixtures", rootProject.file("fixtures").absolutePath
+  inputs.dir(rootProject.file("fixtures")).withPropertyName("fixtures")
+  inputs.property("jdks", [System.getenv("GLS_TEST_JDK11"), System.getenv("GLS_TEST_JDK17")].toString())
+}
