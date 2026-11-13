@@ -4,6 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
 import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
 import java.nio.file.Files;
@@ -94,6 +96,32 @@ class FixtureCompileTest {
       CompiledClass self = workspace.contextOf(controller).analyzer().compiledClass(controller.toString(), "fixture.library.BookController");
       assertTrue(self.interfaces.contains("grails.artefact.Controller"), self.interfaces.toString());
       assertTrue(self.methods.containsAll(List.of("render", "redirect", "getParams")), self.methods.toString());
+    }
+  }
+
+  /** Grails prints a warning with a sample of the source to System.err for each command object it cannot use. */
+  @Test
+  void transformationOutputDuringACompileIsDropped() throws Exception {
+    ProjectModel model = Fixtures.built("grails4", "GLS_TEST_JDK11");
+    try (Workspace workspace = workspace(model)) {
+      Path controller = file(model, ":app", "grails-app/controllers/fixture/library/BookController.groovy");
+      String saved = Files.readString(controller);
+      String text = saved.substring(0, saved.lastIndexOf('}')) + "    def run(Runnable task) { [task: task] }\n}\n"; // an interface: Grails warns
+      PrintStream savedErr = System.err;
+      PrintStream savedOut = System.out;
+      ByteArrayOutputStream printed = new ByteArrayOutputStream();
+      CompileResult result;
+      try {
+        System.setErr(new PrintStream(printed, true));
+        System.setOut(new PrintStream(printed, true));
+        result = compile(workspace, controller, text);
+        System.err.print("after");
+      } finally {
+        System.setErr(savedErr);
+        System.setOut(savedOut);
+      }
+      assertEquals(List.of(), errors(result));
+      assertEquals("after", printed.toString(), "only output from outside the compile");
     }
   }
 

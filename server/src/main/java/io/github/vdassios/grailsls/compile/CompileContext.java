@@ -77,7 +77,7 @@ public final class CompileContext implements AutoCloseable {
       }
       executor = thread;
     }
-    return CompletableFuture.supplyAsync(() -> analyzer().compile(request), executor);
+    return CompletableFuture.supplyAsync(() -> CompilerOutput.muted(() -> analyzer().compile(request)), executor);
   }
 
   /** Drops what the analyzer keeps for a closed document. */
