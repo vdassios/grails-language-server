@@ -127,7 +127,9 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
       workspace.index();
       marks.mark(StartupMarks.DECLARATIONS_INDEXED);
       compiles.setWorkspace(workspace);
-      workspace.indexSymbols().thenRun(() -> marks.mark(StartupMarks.SYMBOLS_INDEXED));
+      // the symbol index parses on the compile threads: started after the open documents' compiles, whose
+      // diagnostics would otherwise wait for its batches and compete with it for the CPU
+      compiles.afterPendingCompiles().thenCompose(compiled -> workspace.indexSymbols()).thenRun(() -> marks.mark(StartupMarks.SYMBOLS_INDEXED));
       return workspace.summary();
     });
     watchFiles = params.getCapabilities() != null && params.getCapabilities().getWorkspace() != null

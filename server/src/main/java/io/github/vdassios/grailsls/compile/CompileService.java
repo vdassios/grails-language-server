@@ -147,6 +147,14 @@ public final class CompileService {
     return task.done.thenCompose(done -> afterCompiles(path, query));
   }
 
+  /**
+   * Completes when the compiles scheduled or running now are over (done, cancelled or skipped), for background work
+   * that must not hold up their diagnostics. Compiles scheduled later are not waited for.
+   */
+  public CompletableFuture<Void> afterPendingCompiles() {
+    return CompletableFuture.allOf(pending.values().stream().map(task -> task.done).toArray(CompletableFuture<?>[]::new));
+  }
+
   /** A file was saved, created, changed on disk or deleted: re-read its declarations. */
   public void fileChanged(Path path) {
     Workspace current = workspace;

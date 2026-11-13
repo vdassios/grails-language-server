@@ -63,6 +63,11 @@ class ProtocolTest {
   }
 
   private void start(Path root, JsonObject options) throws Exception {
+    start(root, options, proxy -> {});
+  }
+
+  /** Starts the server; {@code beforeInitialized} runs between initialize and initialized, before the project resolves. */
+  private void start(Path root, JsonObject options, java.util.function.Consumer<GrailsServerProxy> beforeInitialized) throws Exception {
     PipedInputStream serverIn = new PipedInputStream();
     PipedOutputStream clientOut = new PipedOutputStream(serverIn);
     PipedInputStream clientIn = new PipedInputStream();
@@ -81,6 +86,7 @@ class ProtocolTest {
     params.setWorkspaceFolders(List.of(new WorkspaceFolder(root.toUri().toString(), "project")));
     params.setInitializationOptions(options);
     server.initialize(params).get(10, TimeUnit.SECONDS);
+    beforeInitialized.accept(server);
     server.initialized(new InitializedParams());
   }
 
@@ -235,6 +241,24 @@ class ProtocolTest {
     }
     assertEquals(marks, startupMarks().stream().sorted((a, b) -> marks.indexOf(a) - marks.indexOf(b)).collect(java.util.stream.Collectors.toList()));
     assertTrue(logs.stream().filter(l -> l.startsWith("startup: ")).allMatch(l -> l.matches("startup: [a-z ]+ after \\d+ ms")), logs.toString());
+  }
+
+  /**
+   * A document open when the project resolves (an editor starts the server for the file it opens) compiles before the
+   * symbol index starts, so the index's batches do not hold up its first diagnostics.
+   */
+  @Test
+  void theSymbolIndexStartsAfterTheOpenDocumentsCompile() throws Exception {
+    Path root = groovyProject();
+    String uri = root.resolve("src/A.groovy").toUri().toString();
+    start(root, trustedOptions(), proxy -> proxy.getTextDocumentService().didOpen(new DidOpenTextDocumentParams(new TextDocumentItem(uri, "groovy", 1, "class A {}\n"))));
+    assertTrue(diagnostics.poll(30, TimeUnit.SECONDS) != null, "no diagnostics");
+    for (int i = 0; i < 300 && !startupMarks().contains("symbols indexed"); i++) {
+      Thread.sleep(100);
+    }
+    List<String> marks = startupMarks();
+    assertTrue(marks.contains("symbols indexed"), marks.toString());
+    assertTrue(marks.indexOf("first diagnostics") < marks.indexOf("symbols indexed"), marks.toString());
   }
 
   private List<String> startupMarks() {
