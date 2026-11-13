@@ -123,17 +123,18 @@ public class ASTNodeVisitor extends ClassCodeVisitorSupport {
 			AnnotatedNode annotatedNode = (AnnotatedNode) node;
 			isSynthetic = annotatedNode.isSynthetic();
 		}
+		URI uri = sourceUnit.getSource().getURI();
 		if (!isSynthetic) {
-			URI uri = sourceUnit.getSource().getURI();
 			nodesByURI.get(uri).add(node);
-
-			ASTNodeLookupData data = new ASTNodeLookupData();
-			data.uri = uri;
-			if (stack.size() > 0) {
-				data.parent = stack.lastElement();
-			}
-			lookup.put(node, data);
 		}
+		// a synthetic node is never found by position, but keeps its parent: the field behind a property is
+		// synthetic, and the nodes of its initial value (a closure, as in a taglib) must still reach the class
+		ASTNodeLookupData data = new ASTNodeLookupData();
+		data.uri = uri;
+		if (stack.size() > 0) {
+			data.parent = stack.lastElement();
+		}
+		lookup.put(node, data);
 
 		stack.add(node);
 	}
@@ -286,12 +287,9 @@ public class ASTNodeVisitor extends ClassCodeVisitorSupport {
 	public void visitCompilationUnit(CompilationUnit unit, Collection<URI> uris) {
 		uris.forEach(uri -> {
 			// clear all old nodes so that they may be replaced
-			List<ASTNode> nodes = nodesByURI.remove(uri);
-			if (nodes != null) {
-				nodes.forEach(node -> {
-					lookup.remove(node);
-				});
-			}
+			nodesByURI.remove(uri);
+			// synthetic nodes too, which are in the lookup only
+			lookup.values().removeIf(data -> uri.equals(data.uri));
 			classNodesByURI.remove(uri);
 		});
 		unit.iterator().forEachRemaining(sourceUnit -> {
