@@ -43,4 +43,18 @@ test {
   systemProperty "gls.fixtures", rootProject.file("fixtures").absolutePath
   inputs.dir(rootProject.file("fixtures")).withPropertyName("fixtures")
   inputs.property("jdks", [System.getenv("GLS_TEST_JDK11"), System.getenv("GLS_TEST_JDK17")].toString())
+  useJUnitPlatform { excludeTags "perf" }
+}
+
+// Latency against the performance budget (LatencyTest): slow, and machine-dependent, so never part of `build`.
+// GLS_PERF_PROJECT=<built project> measures that project instead of the grails4 fixture.
+tasks.register("perfTest", Test) {
+  description = "Measures query latency on the grails4 fixture or GLS_PERF_PROJECT."
+  group = "verification"
+  testClassesDirs = sourceSets.test.output.classesDirs
+  classpath = sourceSets.test.runtimeClasspath
+  useJUnitPlatform { includeTags "perf" }
+  systemProperty "gls.fixtures", rootProject.file("fixtures").absolutePath
+  testLogging { showStandardStreams = true }
+  outputs.upToDateWhen { false }
 }
