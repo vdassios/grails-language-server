@@ -154,14 +154,14 @@ class FixtureCompileTest {
       Path controller = file(model, ":app", "grails-app/controllers/fixture/library/BookController.groovy");
       Path service = file(model, ":app", "grails-app/services/fixture/library/BookService.groovy");
       Map<String, String> hovers = new TreeMap<>();
-      // render(...) and redirect(...) in actions (implicit this) are not found yet: phase 13b1 notes
-      for (Object[] probe : new Object[][] { { controller, "list()" }, { service, "save(" } }) {
+      for (Object[] probe : new Object[][] { { controller, "list()" }, { controller, "render(" }, { controller, "redirect(" }, { service, "save(" } }) {
         Path file = (Path) probe[0];
         int[] p = at(file, (String) probe[1], 1);
         String hover = query(workspace, file, a -> a.hover(file.toString(), p[0], p[1]));
         hovers.put((String) probe[1], hover == null ? null : hover.split("\n")[1]);
       }
-      assertEquals(Map.of("list()", "public static List list()", "save(", "public Book save(Map param1)"), hovers);
+      assertEquals(Map.of("list()", "public static List list()", "render(", "public void render(Map param1)", "redirect(", "public void redirect(Map param1)", "save(",
+          "public Book save(Map param1)"), hovers);
     }
   }
 

@@ -160,7 +160,7 @@ public class GroovyASTUtils {
     }
 
     public static PropertyNode getPropertyFromExpression(PropertyExpression node, ASTNodeVisitor astVisitor) {
-        ClassNode classNode = getTypeOfNode(node.getObjectExpression(), astVisitor);
+        ClassNode classNode = getTypeOfReceiver(node.getObjectExpression(), node, astVisitor);
         if (classNode != null) {
             return classNode.getProperty(node.getProperty().getText());
         }
@@ -168,7 +168,7 @@ public class GroovyASTUtils {
     }
 
     public static FieldNode getFieldFromExpression(PropertyExpression node, ASTNodeVisitor astVisitor) {
-        ClassNode classNode = getTypeOfNode(node.getObjectExpression(), astVisitor);
+        ClassNode classNode = getTypeOfReceiver(node.getObjectExpression(), node, astVisitor);
         if (classNode != null) {
             return classNode.getField(node.getProperty().getText());
         }
@@ -293,6 +293,16 @@ public class GroovyASTUtils {
         return Collections.emptyList();
     }
 
+    public static ClassNode getTypeOfReceiver(Expression receiver, ASTNode expression, ASTNodeVisitor astVisitor) {
+        if (receiver instanceof VariableExpression && ((VariableExpression) receiver).isThisExpression()) {
+            ClassNode enclosingClass = (ClassNode) getEnclosingNodeOfType(expression, ClassNode.class, astVisitor);
+            if (enclosingClass != null) {
+                return enclosingClass;
+            }
+        }
+        return getTypeOfNode(receiver, astVisitor);
+    }
+
     public static ClassNode getTypeOfNode(ASTNode node, ASTNodeVisitor astVisitor) {
         if (node instanceof BinaryExpression) {
             BinaryExpression binaryExpr = (BinaryExpression) node;
@@ -361,7 +371,7 @@ public class GroovyASTUtils {
     public static List<MethodNode> getMethodOverloadsFromCallExpression(MethodCall node, ASTNodeVisitor astVisitor) {
         if (node instanceof MethodCallExpression) {
             MethodCallExpression methodCallExpr = (MethodCallExpression) node;
-            ClassNode leftType = getTypeOfNode(methodCallExpr.getObjectExpression(), astVisitor);
+            ClassNode leftType = getTypeOfReceiver(methodCallExpr.getObjectExpression(), methodCallExpr, astVisitor);
             if (leftType != null) {
                 return leftType.getMethods(methodCallExpr.getMethod().getText());
             }

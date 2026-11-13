@@ -284,6 +284,23 @@ class GroovyAnalyzerTest {
     assertEquals("public void show(Map options)", hover.split("\n")[1]);
   }
 
+  /**
+   * Groovy 2.5 parses {@code this} to one shared node, also used by the {@code previous()} and {@code next()} it
+   * generates for every enum (and, in a Grails controller, by every implicit-this call in an action). Its parent in
+   * the node lookup is wherever it was visited last: here the enum after the class.
+   */
+  @Test
+  void anImplicitThisCallResolvesInItsOwnClassWhenAnEnumFollows() {
+    String path = tmp.resolve("A.groovy").toString();
+    compile(path, "class A {\n  int count() { 1 }\n  def run() { this.count() }\n}\nenum Kind { ONE }\n");
+    String hover = analyzer.hover(path, 2, 20);
+    assertNotNull(hover);
+    assertEquals("public int count()", hover.split("\n")[1]);
+    Location definition = analyzer.definition(path, 2, 20);
+    assertNotNull(definition);
+    assertEquals(1, definition.range.startLine);
+  }
+
   @Test
   void symbolsAreTheDocumentsDeclarationsOnly() throws IOException {
     String other = write("src/Other.groovy", "class Other { String x }\n");
