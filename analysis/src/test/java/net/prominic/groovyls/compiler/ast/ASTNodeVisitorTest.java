@@ -1,7 +1,9 @@
 package net.prominic.groovyls.compiler.ast;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.net.URI;
 import java.util.ArrayList;
@@ -9,6 +11,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.codehaus.groovy.ast.ClassNode;
+import org.codehaus.groovy.ast.MethodNode;
 import org.codehaus.groovy.ast.expr.ConstantExpression;
 import org.codehaus.groovy.ast.stmt.BlockStatement;
 import org.codehaus.groovy.ast.stmt.ExpressionStatement;
@@ -59,5 +62,37 @@ class ASTNodeVisitorTest {
       assertEquals(uri, visitor.getURI(statement.getExpression()));
     }
     assertEquals(0, hashCodes.get(), "the lookup hashed the nodes");
+  }
+
+  /**
+   * A Grails controller pulls in hundreds of sources; visiting them all for the first query took as long as the
+   * compile. Only the document is visited; the classes of the other sources are still found, with their source.
+   */
+  @Test
+  void aDocumentVisitIndexesTheDocumentsNodesAndOnlyTheClassesOfTheOthers() {
+    CompilerConfiguration config = new CompilerConfiguration();
+    CompilationUnit unit = new CompilationUnit(config);
+    URI a = URI.create("file:/src/A.groovy");
+    URI b = URI.create("file:/src/B.groovy");
+    unit.addSource(new SourceUnit("A.groovy", new StringReaderSourceWithURI("class A {\n  def run() { new B().go() }\n}\n", a, config), config,
+        unit.getClassLoader(), unit.getErrorCollector()));
+    unit.addSource(new SourceUnit("B.groovy", new StringReaderSourceWithURI("class B {\n  def go() { 1 }\n  static class Inner {}\n}\n", b, config),
+        config, unit.getClassLoader(), unit.getErrorCollector()));
+    unit.compile(Phases.CANONICALIZATION);
+
+    ASTNodeVisitor visitor = new ASTNodeVisitor();
+    visitor.visitDocument(unit, a);
+
+    assertTrue(visitor.getNodes(b).isEmpty(), "the other source was visited");
+    assertTrue(visitor.getNodes(a).size() > 3);
+    ClassNode classB = unit.getAST().getClass("B");
+    ClassNode inner = unit.getAST().getClass("B$Inner");
+    assertTrue(visitor.getClassNodes().contains(classB));
+    assertTrue(visitor.getClassNodes().contains(inner));
+    MethodNode go = classB.getMethods("go").get(0);
+    assertEquals(b, visitor.getURI(classB));
+    assertEquals(b, visitor.getURI(go));
+    assertNull(visitor.getParent(go));
+    assertNull(visitor.getURI(ClassNode.SUPER), "a class of no source in the unit");
   }
 }

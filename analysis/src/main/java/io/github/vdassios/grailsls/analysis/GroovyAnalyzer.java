@@ -304,7 +304,7 @@ public final class GroovyAnalyzer implements Analyzer {
     return (System.nanoTime() - nanos) / 1_000_000;
   }
 
-  /** A compile of a document, and its node lookup, built on the first query. */
+  /** A compile of a document, and its node lookup (of the document only), built on the first query. */
   private static final class Kept {
     final CompilationUnit unit;
     final String text;
@@ -325,7 +325,7 @@ public final class GroovyAnalyzer implements Analyzer {
     synchronized ASTNodeVisitor ast() {
       if (ast == null) {
         ast = new ASTNodeVisitor();
-        ast.visitCompilationUnit(unit);
+        ast.visitDocument(unit, uri);
       }
       return ast;
     }

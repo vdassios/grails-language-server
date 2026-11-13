@@ -242,10 +242,17 @@ public class ASTNodeVisitor extends ClassCodeVisitorSupport {
 
 	public URI getURI(ASTNode node) {
 		ASTNodeLookupData data = lookup.get(node);
-		if (data == null) {
+		if (data != null) {
+			return data.uri;
+		}
+		// a class or member of a source that was not visited (visitDocument): the source of its class
+		ClassNode owner = node instanceof ClassNode ? (ClassNode) node
+				: node instanceof AnnotatedNode ? ((AnnotatedNode) node).getDeclaringClass() : null;
+		ModuleNode module = owner == null ? null : owner.getModule();
+		if (module == null || module.getContext() == null || !classNodesByURI.containsKey(module.getContext().getSource().getURI())) {
 			return null;
 		}
-		return data.uri;
+		return module.getContext().getSource().getURI();
 	}
 
 	public void visitCompilationUnit(CompilationUnit unit) {
@@ -254,6 +261,25 @@ public class ASTNodeVisitor extends ClassCodeVisitorSupport {
 		lookup.clear();
 		unit.iterator().forEachRemaining(sourceUnit -> {
 			visitSourceUnit(sourceUnit);
+		});
+	}
+
+	/**
+	 * Visits one source of a unit: only its nodes get parents and positions. The classes of the other sources are known
+	 * (getClassNodes, getURI) without visiting their bodies, which costs as much as the compile when a document pulls in
+	 * hundreds of sources.
+	 */
+	public void visitDocument(CompilationUnit unit, URI document) {
+		nodesByURI.clear();
+		classNodesByURI.clear();
+		lookup.clear();
+		unit.iterator().forEachRemaining(sourceUnit -> {
+			URI uri = sourceUnit.getSource().getURI();
+			if (uri.equals(document)) {
+				visitSourceUnit(sourceUnit);
+			} else if (sourceUnit.getAST() != null) {
+				classNodesByURI.put(uri, new ArrayList<>(sourceUnit.getAST().getClasses()));
+			}
 		});
 	}
 
