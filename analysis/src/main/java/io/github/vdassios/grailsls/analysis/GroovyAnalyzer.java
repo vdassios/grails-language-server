@@ -38,6 +38,7 @@ import io.github.vdassios.grailsls.api.Diagnostic;
  */
 public final class GroovyAnalyzer implements Analyzer {
   private final Map<String, CompilationUnit> units = new ConcurrentHashMap<>();
+  private final TransformCaches caches = new TransformCaches(GroovyAnalyzer.class.getClassLoader());
 
   public GroovyAnalyzer() {
     // @Grab would download and load code at compile time
@@ -51,6 +52,14 @@ public final class GroovyAnalyzer implements Analyzer {
 
   @Override
   public CompileResult compile(CompileRequest request) {
+    try {
+      return compileUnit(request);
+    } finally {
+      caches.clear();
+    }
+  }
+
+  private CompileResult compileUnit(CompileRequest request) {
     long start = System.nanoTime();
     units.remove(request.path);
     CompilerConfiguration config = new CompilerConfiguration();

@@ -5,9 +5,12 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.lang.ref.WeakReference;
+import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
@@ -118,6 +121,35 @@ class FixtureCompileTest {
       CompiledClass clock = workspace.contextOf(service).analyzer().compiledClass(service.toString(), "fixture.support.Clock");
       assertEquals(file(model, ":support", "src/main/groovy/fixture/support/Clock.groovy").toString(), clock.sourcePath);
     }
+  }
+
+  /** Each kept every AST it saw until the loader closed: 2.5 GB after a sweep of one module of the target project. */
+  @Test
+  void grailsTransformationCachesAreEmptyAfterACompile() throws Exception {
+    ProjectModel model = Fixtures.built("grails4", "GLS_TEST_JDK11");
+    try (Workspace workspace = workspace(model)) {
+      Path controller = file(model, ":app", "grails-app/controllers/fixture/library/BookController.groovy");
+      assertEquals(List.of(), errors(compile(workspace, controller)));
+      ClassLoader loader = workspace.contextOf(controller).loader();
+      Map<String, Integer> sizes = new TreeMap<>();
+      sizes.put("data binding", staticMapSize(loader, "org.grails.web.databinding.DefaultASTDatabindingHelper", "CLASS_NODE_TO_WHITE_LIST_PROPERTY_NAMES"));
+      sizes.put("GORM domain check", staticMapSize(loader, "org.grails.datastore.mapping.reflect.AstUtils", "memoizedMethodClosure$isDomainClassClassNode"));
+      sizes.put("GORM properties", staticMapSize(loader, "org.grails.datastore.gorm.transform.AstPropertyResolveUtils", "cachedClassProperties"));
+      assertEquals(Map.of("data binding", 0, "GORM domain check", 0, "GORM properties", 0), sizes);
+    }
+  }
+
+  /** Size of a static map, or of the cache of a static {@code @Memoized} closure, read through the module loader. */
+  private static int staticMapSize(ClassLoader loader, String className, String fieldName) throws ReflectiveOperationException {
+    Field field = Class.forName(className, false, loader).getDeclaredField(fieldName);
+    field.setAccessible(true);
+    Object value = field.get(null);
+    if (!(value instanceof Map)) {
+      Field cache = value.getClass().getDeclaredField("cache");
+      cache.setAccessible(true);
+      value = cache.get(value);
+    }
+    return ((Map<?, ?>) value).size();
   }
 
   @Test

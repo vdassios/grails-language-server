@@ -10,4 +10,8 @@ class BookService {
         log.info("stored at ${Clock.now()}")
         book
     }
+
+    List<Book> titled(String wanted) {
+        Book.where { title == wanted }.list()
+    }
 }
