@@ -34,7 +34,7 @@ import org.codehaus.groovy.ast.ModuleNode;
 import org.codehaus.groovy.ast.Parameter;
 import org.codehaus.groovy.ast.PropertyNode;
 import org.codehaus.groovy.ast.Variable;
-import org.codehaus.groovy.ast.expr.ArgumentListExpression;
+import org.codehaus.groovy.ast.ClassHelper;
 import org.codehaus.groovy.ast.expr.BinaryExpression;
 import org.codehaus.groovy.ast.expr.ClassExpression;
 import org.codehaus.groovy.ast.expr.ConstantExpression;
@@ -42,8 +42,10 @@ import org.codehaus.groovy.ast.expr.ConstructorCallExpression;
 import org.codehaus.groovy.ast.expr.DeclarationExpression;
 import org.codehaus.groovy.ast.expr.Expression;
 import org.codehaus.groovy.ast.expr.MethodCall;
+import org.codehaus.groovy.ast.expr.MapExpression;
 import org.codehaus.groovy.ast.expr.MethodCallExpression;
 import org.codehaus.groovy.ast.expr.PropertyExpression;
+import org.codehaus.groovy.ast.expr.TupleExpression;
 import org.codehaus.groovy.ast.expr.VariableExpression;
 import org.codehaus.groovy.ast.stmt.ExpressionStatement;
 import org.eclipse.lsp4j.Position;
@@ -380,8 +382,9 @@ public class GroovyASTUtils {
 
     public static MethodNode getMethodFromCallExpression(MethodCall node, ASTNodeVisitor astVisitor, int argIndex) {
         List<MethodNode> possibleMethods = getMethodOverloadsFromCallExpression(node, astVisitor);
-        if (!possibleMethods.isEmpty() && node.getArguments() instanceof ArgumentListExpression) {
-            ArgumentListExpression actualArguments = (ArgumentListExpression) node.getArguments();
+        // named arguments, foo(a: 1), are a TupleExpression holding one map; an ArgumentListExpression is a tuple too
+        if (!possibleMethods.isEmpty() && node.getArguments() instanceof TupleExpression) {
+            TupleExpression actualArguments = (TupleExpression) node.getArguments();
             MethodNode foundMethod = possibleMethods.stream().max(new Comparator<MethodNode>() {
                 public int compare(MethodNode m1, MethodNode m2) {
                     Parameter[] p1 = m1.getParameters();
@@ -401,7 +404,12 @@ public class GroovyASTUtils {
         return null;
     }
 
-    private static int calculateArgumentsScore(Parameter[] parameters, ArgumentListExpression arguments, int argIndex) {
+    /** A map literal, named arguments included, is typed Object in the AST: count it as a Map. */
+    private static ClassNode argumentType(Expression argument) {
+        return argument instanceof MapExpression ? ClassHelper.MAP_TYPE : argument.getType();
+    }
+
+    private static int calculateArgumentsScore(Parameter[] parameters, TupleExpression arguments, int argIndex) {
         int score = 0;
         int paramCount = parameters.length;
         int expressionsCount = arguments.getExpressions().size();
@@ -410,11 +418,12 @@ public class GroovyASTUtils {
             argsCount = argIndex + 1;
         }
         int minCount = Math.min(paramCount, argsCount);
-        if (minCount == 0 && paramCount == argsCount) {
+        if (paramCount == argsCount) {
+            // among overloads that match as well, the one with as many parameters as there are arguments
             score++;
         }
         for (int i = 0; i < minCount; i++) {
-            ClassNode argType = (i < expressionsCount) ? arguments.getExpression(i).getType() : null;
+            ClassNode argType = (i < expressionsCount) ? argumentType(arguments.getExpression(i)) : null;
             ClassNode paramType = (i < paramCount) ? parameters[i].getType() : null;
             if (argType != null && paramType != null) {
                 if (argType.equals(paramType)) {

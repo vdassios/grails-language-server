@@ -273,6 +273,17 @@ class GroovyAnalyzerTest {
     assertEquals(groovydoc, hover.contains("Counts things."), hover);
   }
 
+  /** Grails's idiom: render(view: 'x'), save(flush: true). Named arguments arrive as one map. */
+  @Test
+  void hoverOnACallWithNamedArgumentsPicksTheMapOverload() {
+    String path = tmp.resolve("A.groovy").toString();
+    compile(path, "class A {\n  void show(String text) {}\n  void show(Map options, Closure body) {}\n  void show(Map options) {}\n"
+        + "  def run() { show(view: 'x') }\n}\n");
+    String hover = analyzer.hover(path, 4, 15);
+    assertNotNull(hover);
+    assertEquals("public void show(Map options)", hover.split("\n")[1]);
+  }
+
   @Test
   void symbolsAreTheDocumentsDeclarationsOnly() throws IOException {
     String other = write("src/Other.groovy", "class Other { String x }\n");
