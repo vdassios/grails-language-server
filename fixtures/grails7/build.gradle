@@ -1,0 +1,16 @@
+buildscript {
+  repositories {
+    mavenCentral()
+    gradlePluginPortal()
+  }
+  dependencies {
+    classpath platform("org.apache.grails:grails-bom:$grailsVersion")
+    classpath "org.apache.grails:grails-gradle-plugins"
+  }
+}
+
+allprojects {
+  repositories {
+    mavenCentral()
+  }
+}

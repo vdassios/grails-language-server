@@ -1,0 +1,3 @@
+rootProject.name = "grails7-fixture"
+
+include "app", "support"

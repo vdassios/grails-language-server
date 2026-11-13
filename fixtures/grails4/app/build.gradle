@@ -1,0 +1,16 @@
+apply plugin: "org.grails.grails-web"
+
+// Joint compilation of src/main/java by the Groovy compiler, with compileJava left without sources.
+sourceSets.main.groovy.srcDirs += "src/main/java"
+sourceSets.main.java.srcDirs = []
+
+dependencies {
+  implementation project(":support")
+  implementation "org.springframework.boot:spring-boot-autoconfigure"
+  implementation "org.grails:grails-core"
+  implementation "org.grails:grails-web-boot"
+  implementation "org.grails:grails-plugin-controllers"
+  implementation "org.grails:grails-plugin-services"
+  implementation "org.grails:grails-plugin-domain-class"
+  implementation "org.grails.plugins:hibernate5"
+}
