@@ -50,11 +50,14 @@ class CompileServiceTest {
     service.shutdown();
   }
 
-  private Workspace workspace() {
+  private Workspace workspace(Path... classpath) {
     SourceSetRecord main = new SourceSetRecord();
     main.name = "main";
     main.sourceRoots.add(src.toString());
     main.compileClasspath.add(System.getProperty("gls.testGroovy"));
+    for (Path entry : classpath) {
+      main.compileClasspath.add(entry.toString());
+    }
     ModuleRecord module = new ModuleRecord();
     module.path = ":";
     module.projectDir = tmp.toString();
@@ -182,6 +185,31 @@ class CompileServiceTest {
     assertEquals(List.of("CLASS A"), symbols(service, "A.groovy"));
     service.close(uri("A.groovy"));
     assertEquals(List.of(), symbols(service, "A.groovy"));
+  }
+
+  /**
+   * A class on the classpath loads its members on first use; when one of their types is missing (stale build output),
+   * Groovy throws. Seen on hover in the target project: the request failed.
+   */
+  @Test
+  void queriesAnswerWhenAClassOnTheClasspathRefersToAMissingClass() throws Exception {
+    Path sources = Files.createDirectories(tmp.resolve("java/lib"));
+    Files.writeString(sources.resolve("A.java"), "package lib;\npublic class A { public B make() { return null; } public int size() { return 0; } }\n");
+    Files.writeString(sources.resolve("B.java"), "package lib;\npublic class B {}\n");
+    Path classes = tmp.resolve("classes");
+    int exit = javax.tools.ToolProvider.getSystemJavaCompiler().run(null, null, null, "-d", classes.toString(), sources.resolve("A.java").toString(), sources.resolve("B.java").toString());
+    assertEquals(0, exit);
+    Files.delete(classes.resolve("lib/B.class"));
+
+    service.setWorkspace(workspace(classes));
+    String text = "class D {\n  def run(lib.A a) {\n    a.size()\n  }\n}\n";
+    service.open(uri("D.groovy"), text, 1);
+    assertEquals(List.of(), messages(next()));
+    String hover = service.query(uri("D.groovy"), null, (analyzer, path) -> analyzer.hover(path, 2, 7)).get(30, TimeUnit.SECONDS);
+    assertNull(hover, "A's methods cannot be read");
+    io.github.vdassios.grailsls.api.CompletionList completion = service.queryText(uri("D.groovy"), null, (analyzer, request) -> analyzer.completion(request, 2, 6))
+        .get(30, TimeUnit.SECONDS);
+    assertTrue(completion.items.stream().anyMatch(c -> c.label.equals("hashCode")), "Object's members still: " + completion.items);
   }
 
   private List<String> symbols(CompileService compiles, String relative) throws Exception {

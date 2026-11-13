@@ -22,6 +22,7 @@ package net.prominic.groovyls.compiler.util;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 import org.codehaus.groovy.ast.ASTNode;
@@ -50,6 +51,18 @@ import org.codehaus.groovy.ast.stmt.ExpressionStatement;
 import net.prominic.groovyls.compiler.ast.ASTNodeVisitor;
 
 public class GroovyASTUtils {
+    /**
+     * Reads members of a class node, or {@code none}. A class from a jar or class directory loads its members on first
+     * use, and Groovy throws when the type of one of them is missing from the classpath (e.g. stale build output).
+     */
+    public static <T> T members(Supplier<T> read, T none) {
+        try {
+            return read.get();
+        } catch (LinkageError e) {
+            return none;
+        }
+    }
+
     public static ASTNode getEnclosingNodeOfType(ASTNode offsetNode, Class<? extends ASTNode> nodeType,
             ASTNodeVisitor astVisitor) {
         ASTNode current = offsetNode;
@@ -157,7 +170,7 @@ public class GroovyASTUtils {
     public static PropertyNode getPropertyFromExpression(PropertyExpression node, ASTNodeVisitor astVisitor) {
         ClassNode classNode = getTypeOfReceiver(node.getObjectExpression(), node, astVisitor);
         if (classNode != null) {
-            return classNode.getProperty(node.getProperty().getText());
+            return members(() -> classNode.getProperty(node.getProperty().getText()), null);
         }
         return null;
     }
@@ -165,7 +178,7 @@ public class GroovyASTUtils {
     public static FieldNode getFieldFromExpression(PropertyExpression node, ASTNodeVisitor astVisitor) {
         ClassNode classNode = getTypeOfReceiver(node.getObjectExpression(), node, astVisitor);
         if (classNode != null) {
-            return classNode.getField(node.getProperty().getText());
+            return members(() -> classNode.getField(node.getProperty().getText()), null);
         }
         return null;
     }
@@ -250,14 +263,14 @@ public class GroovyASTUtils {
             MethodCallExpression methodCallExpr = (MethodCallExpression) node;
             ClassNode leftType = getTypeOfReceiver(methodCallExpr.getObjectExpression(), methodCallExpr, astVisitor);
             if (leftType != null) {
-                return leftType.getMethods(methodCallExpr.getMethod().getText());
+                return members(() -> leftType.getMethods(methodCallExpr.getMethod().getText()), Collections.emptyList());
             }
         } else if (node instanceof ConstructorCallExpression) {
             ConstructorCallExpression constructorCallExpr = (ConstructorCallExpression) node;
             ClassNode constructorType = constructorCallExpr.getType();
             if (constructorType != null) {
-                return constructorType.getDeclaredConstructors().stream().map(constructor -> (MethodNode) constructor)
-                        .collect(Collectors.toList());
+                return members(() -> constructorType.getDeclaredConstructors().stream().map(constructor -> (MethodNode) constructor)
+                        .collect(Collectors.toList()), Collections.emptyList());
             }
         }
         return Collections.emptyList();

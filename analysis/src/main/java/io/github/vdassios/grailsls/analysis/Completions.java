@@ -181,28 +181,28 @@ public final class Completions {
 
   /**
    * Properties and fields, then methods, of a type and its supertypes, nearest first; overloads once. Private members
-   * of supertypes are left out.
+   * of supertypes are left out, and so are the members of a class whose members cannot be loaded.
    *
    * @param statics true for static members only, false for the others, null for all
    */
   private void members(ClassNode type, Boolean statics, String prefix, Set<String> names) {
     List<ClassNode> hierarchy = hierarchy(type);
     for (ClassNode current : hierarchy) {
-      for (PropertyNode property : current.getProperties()) {
+      for (PropertyNode property : GroovyASTUtils.members(current::getProperties, List.<PropertyNode>of())) {
         if (statics == null || property.isStatic() == statics) {
           add(property.getName(), Completion.Kind.FIELD, property, prefix, names);
         }
       }
     }
     for (ClassNode current : hierarchy) {
-      for (FieldNode field : current.getFields()) {
+      for (FieldNode field : GroovyASTUtils.members(current::getFields, List.<FieldNode>of())) {
         if ((statics == null || field.isStatic() == statics) && (current == type || !field.isPrivate())) {
           add(field.getName(), Completion.Kind.FIELD, field, prefix, names);
         }
       }
     }
     for (ClassNode current : hierarchy) {
-      for (MethodNode method : current.getMethods()) {
+      for (MethodNode method : GroovyASTUtils.members(current::getMethods, List.<MethodNode>of())) {
         if ((statics == null || method.isStatic() == statics) && (current == type || !method.isPrivate()) && !method.isSynthetic()) {
           add(method.getName(), Completion.Kind.METHOD, method, prefix, names);
         }
