@@ -39,6 +39,7 @@ public final class CompileContext implements AutoCloseable {
   public final List<Path> searchRoots;
   private final List<Path> classpath;
   private final Map<String, Path> javaClasses;
+  private final Map<String, List<Path>> resources;
   /** {@code .java} files of this source set whose classes are not in its class output (not built yet). */
   public final int javaFilesNotBuilt;
   /** Gradle task that builds this source set's classes, e.g. {@code :app:testClasses}. */
@@ -49,13 +50,14 @@ public final class CompileContext implements AutoCloseable {
   private Analyzer analyzer;
   private boolean closed;
 
-  CompileContext(String name, List<Path> ownRoots, List<Path> searchRoots, List<Path> classpath, Map<String, Path> javaClasses, int javaFilesNotBuilt,
-      String classesTask) {
+  CompileContext(String name, List<Path> ownRoots, List<Path> searchRoots, List<Path> classpath, Map<String, Path> javaClasses,
+      Map<String, List<Path>> resources, int javaFilesNotBuilt, String classesTask) {
     this.name = name;
     this.ownRoots = List.copyOf(ownRoots);
     this.searchRoots = List.copyOf(searchRoots);
     this.classpath = List.copyOf(classpath);
     this.javaClasses = Map.copyOf(javaClasses);
+    this.resources = Map.copyOf(resources);
     this.javaFilesNotBuilt = javaFilesNotBuilt;
     this.classesTask = classesTask;
   }
@@ -65,7 +67,7 @@ public final class CompileContext implements AutoCloseable {
     return classpath;
   }
 
-  /** Number of compiled Java classes served from the class output. */
+  /** Number of classes served from the class output: those of Java sources and of extension modules. */
   public int javaClasses() {
     return javaClasses.size();
   }
@@ -141,7 +143,7 @@ public final class CompileContext implements AutoCloseable {
         throw new IllegalArgumentException(entry.toString(), e);
       }
     }
-    loader = new ModuleClassLoader(name, urls, javaClasses);
+    loader = new ModuleClassLoader(name, urls, javaClasses, resources);
     ModuleClassLoader threadLoader = loader;
     thread = Executors.newSingleThreadExecutor(r -> {
       Thread t = new Thread(r, "grails-compile " + name);

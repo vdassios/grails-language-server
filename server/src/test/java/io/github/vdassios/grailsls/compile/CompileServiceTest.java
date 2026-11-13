@@ -246,6 +246,53 @@ class CompileServiceTest {
     assertTrue(completion.items.stream().anyMatch(c -> c.label.equals("hashCode")), "Object's members still: " + completion.items);
   }
 
+  /**
+   * An extension module of the project's main source set (descriptor in its resources, class in its output): Gradle
+   * puts main's output on the test compile classpath, so statically compiled tests call its methods. Seen in the
+   * target project: without it the call fails and every value it gives is typed {@code Object}.
+   */
+  @Test
+  void staticallyCompiledTestsSeeTheExtensionMethodsOfMain() throws Exception {
+    Path sources = Files.createDirectories(tmp.resolve("ext-src/ext"));
+    Files.writeString(sources.resolve("Shout.java"), "package ext;\npublic class Shout { public static String shout(String self) { return self.toUpperCase(); } }\n");
+    Path classes = tmp.resolve("build/classes/groovy/main");
+    assertEquals(0, javax.tools.ToolProvider.getSystemJavaCompiler().run(null, null, null, "-d", classes.toString(), sources.resolve("Shout.java").toString()));
+    Path resources = tmp.resolve("resources");
+    Path descriptor = resources.resolve("META-INF/groovy/org.codehaus.groovy.runtime.ExtensionModule");
+    Files.createDirectories(descriptor.getParent());
+    Files.writeString(descriptor, "moduleName=shout\nmoduleVersion=1.0\nextensionClasses=ext.Shout, ext.Missing\n");
+
+    SourceSetRecord main = new SourceSetRecord();
+    main.name = "main";
+    main.sourceRoots.add(src.toString());
+    main.resourceRoots.add(resources.toString());
+    main.compileClasspath.add(System.getProperty("gls.testGroovy"));
+    main.classesDirs.add(classes.toString());
+    SourceSetRecord test = new SourceSetRecord();
+    test.name = "test";
+    Path testSrc = Files.createDirectories(tmp.resolve("test"));
+    test.sourceRoots.add(testSrc.toString());
+    // as Gradle lists it: main's output, which the loader leaves out (build directory)
+    test.compileClasspath.addAll(List.of(System.getProperty("gls.testGroovy"), classes.toString(), tmp.resolve("build/resources/main").toString()));
+    ModuleRecord module = new ModuleRecord();
+    module.path = ":";
+    module.projectDir = tmp.toString();
+    module.groovyVersion = "2.5.23";
+    module.sourceSets.addAll(List.of(main, test));
+    Workspace workspace = new Workspace(new ProjectModel(tmp, List.of(module), false), AnalysisJar.extract(tmp.resolve("cache")));
+    workspace.index();
+    service.setWorkspace(workspace);
+
+    String text = "@groovy.transform.CompileStatic\nclass T {\n  int run() { 'a'.shout().size() }\n}\n";
+    service.open(testSrc.resolve("T.groovy").toUri().toString(), text, 1);
+    assertEquals(List.of(), messages(next()), "ext.Missing has no class file: skipped, the rest of the module still loads");
+    // as in Gradle, main does not see its own extension module
+    service.open(uri("M.groovy"), text.replace("class T", "class M"), 1);
+    List<String> mainErrors = messages(next());
+    assertEquals(1, mainErrors.size(), mainErrors.toString());
+    assertTrue(mainErrors.get(0).contains("shout"), mainErrors.toString());
+  }
+
   private List<String> symbols(CompileService compiles, String relative) throws Exception {
     List<Symbol> symbols = compiles.query(uri(relative), List.<Symbol>of(), (analyzer, path) -> analyzer.symbols(path)).get(10, TimeUnit.SECONDS);
     return symbols.stream().map(s -> s.kind + " " + s.name).collect(Collectors.toList());

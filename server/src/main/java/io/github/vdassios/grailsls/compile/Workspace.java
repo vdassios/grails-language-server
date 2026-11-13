@@ -1,6 +1,7 @@
 package io.github.vdassios.grailsls.compile;
 
 import java.io.IOException;
+import java.io.Reader;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryStream;
@@ -13,6 +14,7 @@ import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Function;
@@ -207,13 +209,55 @@ public final class Workspace implements AutoCloseable {
       }
     }
 
-    Map<String, Path> javaClasses = new HashMap<>();
-    int notBuilt = javaClasses(sourceSet, javaClasses);
+    Map<String, Path> classFiles = new HashMap<>();
+    int notBuilt = javaClasses(sourceSet, classFiles);
     if (main != null) {
-      javaClasses(main, javaClasses); // main's are counted by main's own context
+      javaClasses(main, classFiles); // main's are counted by main's own context
+    }
+    // Gradle puts main's output (classes and resources) on the other source sets' classpath and siblings' jars on
+    // every one, so their extension modules apply: statically compiled code calls their methods
+    Map<String, List<Path>> descriptors = new HashMap<>();
+    if (main != null) {
+      extensionModules(main, descriptors, classFiles);
+    }
+    for (ModuleRecord sibling : siblings) {
+      SourceSetRecord siblingMain = sibling.sourceSet("main");
+      if (siblingMain != null) {
+        extensionModules(siblingMain, descriptors, classFiles);
+      }
     }
     String name = module.path + " " + sourceSet.name;
-    return new CompileContext(name, own, new ArrayList<>(search), new ArrayList<>(classpath), javaClasses, notBuilt, classesTask(module.path, sourceSet.name));
+    return new CompileContext(name, own, new ArrayList<>(search), new ArrayList<>(classpath), classFiles, descriptors, notBuilt,
+        classesTask(module.path, sourceSet.name));
+  }
+
+  /**
+   * Adds the extension module descriptors in the source set's resource roots, and the class files of the extension
+   * classes they name from its class output. A class not built is left out: Groovy skips it with a warning.
+   */
+  private static void extensionModules(SourceSetRecord sourceSet, Map<String, List<Path>> descriptors, Map<String, Path> classFiles) {
+    for (String root : sourceSet.resourceRoots) {
+      for (String resource : ModuleClassLoader.EXTENSION_DESCRIPTORS) {
+        Path descriptor = Path.of(root, resource);
+        if (!Files.isRegularFile(descriptor)) {
+          continue;
+        }
+        Properties properties = new Properties();
+        try (Reader reader = Files.newBufferedReader(descriptor, StandardCharsets.UTF_8)) {
+          properties.load(reader);
+        } catch (IOException e) {
+          continue;
+        }
+        descriptors.computeIfAbsent(resource, k -> new ArrayList<>()).add(descriptor);
+        for (String key : List.of("extensionClasses", "staticExtensionClasses")) {
+          for (String type : properties.getProperty(key, "").trim().split("[,; ]+")) {
+            if (!type.isEmpty()) {
+              classFiles(type, sourceSet.classesDirs, classFiles);
+            }
+          }
+        }
+      }
+    }
   }
 
   private static void addOutsideBuildDirs(Set<Path> classpath, List<String> entries, List<Path> buildDirs) {
@@ -263,26 +307,8 @@ public final class Workspace implements AutoCloseable {
       }
       boolean found = false;
       for (String type : Declarations.of(text)) {
-        if (type.contains("$")) {
-          continue;
-        }
-        String resource = type.replace('.', '/');
-        int slash = resource.lastIndexOf('/');
-        String simple = resource.substring(slash + 1);
-        for (String dir : sourceSet.classesDirs) {
-          Path packageDir = slash < 0 ? Path.of(dir) : Path.of(dir, resource.substring(0, slash));
-          if (!Files.isRegularFile(packageDir.resolve(simple + ".class"))) {
-            continue;
-          }
-          found = true;
-          String prefix = slash < 0 ? "" : resource.substring(0, slash + 1);
-          try (DirectoryStream<Path> files = Files.newDirectoryStream(packageDir, simple + "{.class,$*.class}")) {
-            for (Path file : files) {
-              out.putIfAbsent(prefix + file.getFileName(), file);
-            }
-          } catch (IOException e) {
-            throw new UncheckedIOException(e);
-          }
+        if (!type.contains("$")) {
+          found |= classFiles(type, sourceSet.classesDirs, out);
         }
       }
       if (!found) {
@@ -290,5 +316,29 @@ public final class Workspace implements AutoCloseable {
       }
     }
     return notBuilt;
+  }
+
+  /** Adds a top-level type's class file and its {@code $} classes from the class directories; false if none has it. */
+  private static boolean classFiles(String type, List<String> classesDirs, Map<String, Path> out) {
+    boolean found = false;
+    String resource = type.replace('.', '/');
+    int slash = resource.lastIndexOf('/');
+    String simple = resource.substring(slash + 1);
+    for (String dir : classesDirs) {
+      Path packageDir = slash < 0 ? Path.of(dir) : Path.of(dir, resource.substring(0, slash));
+      if (!Files.isRegularFile(packageDir.resolve(simple + ".class"))) {
+        continue;
+      }
+      found = true;
+      String prefix = slash < 0 ? "" : resource.substring(0, slash + 1);
+      try (DirectoryStream<Path> files = Files.newDirectoryStream(packageDir, simple + "{.class,$*.class}")) {
+        for (Path file : files) {
+          out.putIfAbsent(prefix + file.getFileName(), file);
+        }
+      } catch (IOException e) {
+        throw new UncheckedIOException(e);
+      }
+    }
+    return found;
   }
 }
