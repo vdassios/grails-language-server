@@ -57,8 +57,16 @@ public final class GroovyAnalyzer implements Analyzer {
   /** The last completion per document, for resolve; dropped by the next compile of the document. */
   private final Map<String, LastCompletion> completions = new ConcurrentHashMap<>();
   private final TransformCaches caches = new TransformCaches(GroovyAnalyzer.class.getClassLoader());
+  /** Parent of each compile's class loader: the module loader that loaded this class. */
+  private final ClassLoader parent;
 
   public GroovyAnalyzer() {
+    this(GroovyAnalyzer.class.getClassLoader());
+  }
+
+  /** With another parent loader, for tests. */
+  GroovyAnalyzer(ClassLoader parent) {
+    this.parent = parent;
     // @Grab would download and load code at compile time
     System.setProperty("groovy.grape.enable", "false");
   }
@@ -97,7 +105,10 @@ public final class GroovyAnalyzer implements Analyzer {
     config.addCompilationCustomizers(new AstTestRemover());
     // attaches Groovydoc comments to nodes for hover (CompilerConfiguration.GROOVYDOC, Groovy 3+; 2.5 has none)
     config.getOptimizationOptions().put("groovydoc", true);
-    GroovyClassLoader loader = new GroovyClassLoader(GroovyAnalyzer.class.getClassLoader(), config, false);
+    // a name without a class file is not loaded as a class next: of the thousands of names the resolver tries per
+    // compile, almost all exist nowhere, and each such load searched every jar again and threw through four loaders
+    config.getOptimizationOptions().put("classLoaderResolving", false);
+    GroovyClassLoader loader = new GroovyClassLoader(parent, config, false);
     // source lookup goes through the resolver only, never through the loader (no URL-named sources)
     loader.setResourceLoader(name -> null);
     DocumentUnit unit = new DocumentUnit(config, loader);

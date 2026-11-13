@@ -104,6 +104,28 @@ class GroovyAnalyzerTest {
   }
 
   @Test
+  void aNameWithoutAClassFileIsNotLoadedAsAClass() {
+    List<String> loaded = java.util.Collections.synchronizedList(new ArrayList<>());
+    ClassLoader recording = new ClassLoader(GroovyAnalyzer.class.getClassLoader()) {
+      @Override
+      protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
+        loaded.add(name);
+        return super.loadClass(name, resolve);
+      }
+    };
+    GroovyAnalyzer recorded = new GroovyAnalyzer(recording);
+    try {
+      CompileResult result = recorded.compile(new CompileRequest(tmp.resolve("p/A.groovy").toString(), "package p\nclass A { Missing m\n List<String> names }\n", lookup, () -> false));
+      assertEquals(1, errors(result).size(), errors(result).toString());
+      assertTrue(errors(result).get(0).contains("unable to resolve class Missing"), errors(result).toString());
+      assertEquals(List.of(), loaded.stream().filter(name -> name.endsWith("Missing")).collect(Collectors.toList()),
+          "each candidate name of Missing was found to have no class file; loading it would search the classpath again");
+    } finally {
+      recorded.close();
+    }
+  }
+
+  @Test
   void unresolvedClassIsReportedAndLaterPhasesStillRun() {
     String path = tmp.resolve("A.groovy").toString();
     CompileResult result = compile(path, "@groovy.transform.ToString\nclass A { Missing m\n String name }\n");
