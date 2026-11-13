@@ -127,12 +127,40 @@ public class GroovyASTUtils {
             if (accessedVariable instanceof ASTNode) {
                 return (ASTNode) accessedVariable;
             }
-            // DynamicVariable is not an ASTNode, so skip it
-            return null;
+            return getMemberOfDynamicVariable(variableExpression, astVisitor);
         } else if (node instanceof Variable) {
             return node;
         }
         return null;
+    }
+
+    /**
+     * A name the scope visitor left unbound (a DynamicVariable): a member of the enclosing class added after it ran, by
+     * a transformation (Grails's {@code log}) or a trait ({@code params}, {@code out}): a field or property of that
+     * name, else its getter. Null when the class has neither.
+     */
+    private static ASTNode getMemberOfDynamicVariable(VariableExpression variable, ASTNodeVisitor astVisitor) {
+        String name = variable.getName();
+        ClassNode owner = (ClassNode) getEnclosingNodeOfType(variable, ClassNode.class, astVisitor);
+        if (owner == null || name.isEmpty() || variable.isThisExpression() || variable.isSuperExpression()) {
+            return null;
+        }
+        return members(() -> {
+            PropertyNode property = owner.getProperty(name);
+            if (property != null) {
+                return property;
+            }
+            FieldNode field = owner.getField(name);
+            if (field != null) {
+                return field;
+            }
+            String capitalized = Character.toUpperCase(name.charAt(0)) + name.substring(1);
+            MethodNode getter = owner.getGetterMethod("get" + capitalized);
+            if (getter == null) {
+                getter = owner.getGetterMethod("is" + capitalized);
+            }
+            return getter;
+        }, null);
     }
 
     public static ASTNode getTypeDefinition(ASTNode node, ASTNodeVisitor astVisitor) {
@@ -245,6 +273,13 @@ public class GroovyASTUtils {
                 }
             } else if (var.isDynamicTyped()) {
                 ASTNode defNode = GroovyASTUtils.getDefinition(node, false, astVisitor);
+                // a member added by a transformation: its getter, or a field or property with a declared type
+                if (defNode instanceof MethodNode) {
+                    return ((MethodNode) defNode).getReturnType();
+                }
+                if ((defNode instanceof FieldNode || defNode instanceof PropertyNode) && !((Variable) defNode).isDynamicTyped()) {
+                    return ((Variable) defNode).getOriginType();
+                }
                 if (defNode instanceof Variable) {
                     Variable defVar = (Variable) defNode;
                     if (defVar.hasInitialExpression()) {
