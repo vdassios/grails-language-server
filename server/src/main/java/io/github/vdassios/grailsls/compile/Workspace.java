@@ -97,10 +97,20 @@ public final class Workspace implements AutoCloseable {
     };
   }
 
-  /** Status detail: empty, or what limits the results (Java sources not compiled yet). */
+  /** Status detail: empty, or what limits the results (Java sources not compiled yet, and the tasks that build them). */
   public String summary() {
     int notBuilt = contexts.stream().mapToInt(c -> c.javaFilesNotBuilt).sum();
-    return notBuilt == 0 ? "" : ", " + notBuilt + " Java " + (notBuilt == 1 ? "file" : "files") + " not built (run the Gradle classes task)";
+    if (notBuilt == 0) {
+      return "";
+    }
+    String tasks = contexts.stream().filter(c -> c.javaFilesNotBuilt > 0).map(c -> c.classesTask).collect(Collectors.joining(" "));
+    return ", " + notBuilt + " Java " + (notBuilt == 1 ? "file" : "files") + " not built (run Gradle " + tasks + ")";
+  }
+
+  /** Gradle's task for a source set's classes: {@code classes} for {@code main}, {@code <name>Classes} otherwise. */
+  static String classesTask(String modulePath, String sourceSet) {
+    String task = sourceSet.equals("main") ? "classes" : sourceSet + "Classes";
+    return modulePath.equals(":") ? ":" + task : modulePath + ":" + task;
   }
 
   @Override
@@ -147,7 +157,7 @@ public final class Workspace implements AutoCloseable {
       javaClasses(main, javaClasses); // main's are counted by main's own context
     }
     String name = module.path + " " + sourceSet.name;
-    return new CompileContext(name, own, new ArrayList<>(search), new ArrayList<>(classpath), javaClasses, notBuilt);
+    return new CompileContext(name, own, new ArrayList<>(search), new ArrayList<>(classpath), javaClasses, notBuilt, classesTask(module.path, sourceSet.name));
   }
 
   private static void addOutsideBuildDirs(Set<Path> classpath, List<String> entries, List<Path> buildDirs) {

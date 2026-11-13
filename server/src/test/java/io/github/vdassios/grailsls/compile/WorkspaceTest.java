@@ -49,7 +49,7 @@ class WorkspaceTest {
     return record;
   }
 
-  /** {@code app} depends on {@code lib}; {@code app} joint-compiles Java, one file of it not built. */
+  /** {@code app} depends on {@code lib}; {@code app} joint-compiles Java, one file of main and one of test not built. */
   private Workspace workspace() throws IOException {
     Path app = tmp.resolve("app");
     Path lib = tmp.resolve("lib");
@@ -61,12 +61,13 @@ class WorkspaceTest {
     touch("app/build/classes/groovy/main/a/GroovyClass.class", "");
     Path built = touch("app/src/main/java/a/Built.java", "package a;\npublic class Built {\n  static class Inner {}\n}\n");
     Path notBuilt = touch("app/src/main/groovy/a/Fresh.java", "package a;\npublic class Fresh {}\n");
+    Path testNotBuilt = touch("app/src/test/groovy/a/FreshTest.java", "package a;\npublic class FreshTest {}\n");
     Path jar = touch("repo/dep.jar", "");
 
     SourceSetRecord appMain = sourceSet("main", List.of(app.resolve("grails-app/domain"), app.resolve("src/main/groovy"), app.resolve("src/main/java"), app.resolve("build/generated")),
         List.of(jar, lib.resolve("build/libs/lib.jar")), List.of(appClasses, app.resolve("build/classes/java/main")), List.of(built, notBuilt));
     SourceSetRecord appTest = sourceSet("test", List.of(app.resolve("src/test/groovy")), List.of(jar, appClasses, app.resolve("build/resources/main"), lib.resolve("build/libs/lib.jar")),
-        List.of(app.resolve("build/classes/groovy/test")), List.of());
+        List.of(app.resolve("build/classes/groovy/test")), List.of(testNotBuilt));
     SourceSetRecord libMain = sourceSet("main", List.of(lib.resolve("src/main/groovy")), List.of(jar), List.of(lib.resolve("build/classes/groovy/main")), List.of());
     ModuleRecord root = module(":", tmp, null, List.of());
     return new Workspace(new ProjectModel(tmp, List.of(root, module(":app", app, "2.5.14", List.of(":lib"), appMain, appTest), module(":lib", lib, "2.5.14", List.of(), libMain)), false),
@@ -97,9 +98,17 @@ class WorkspaceTest {
       CompileContext appMain = workspace.contexts().get(0);
       assertEquals(3, appMain.javaClasses(), "Built, Built$Inner, Built$1; not BuiltOther or GroovyClass");
       assertEquals(1, appMain.javaFilesNotBuilt);
-      assertEquals(", 1 Java file not built (run the Gradle classes task)", workspace.summary());
+      assertEquals(1, workspace.contexts().get(1).javaFilesNotBuilt);
+      assertEquals(", 2 Java files not built (run Gradle :app:classes :app:testClasses)", workspace.summary(), "each source set needs its own task");
       assertEquals(3, workspace.contexts().get(1).javaClasses(), "a test source set sees main's Java classes");
     }
+  }
+
+  @Test
+  void eachSourceSetIsBuiltByItsOwnGradleTask() {
+    assertEquals(List.of(":classes", ":app:classes", ":app:testClasses", ":app:integrationTestClasses"),
+        List.of(Workspace.classesTask(":", "main"), Workspace.classesTask(":app", "main"), Workspace.classesTask(":app", "test"),
+            Workspace.classesTask(":app", "integrationTest")));
   }
 
   @Test

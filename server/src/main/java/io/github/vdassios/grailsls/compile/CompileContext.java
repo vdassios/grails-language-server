@@ -40,19 +40,23 @@ public final class CompileContext implements AutoCloseable {
   private final Map<String, Path> javaClasses;
   /** {@code .java} files of this source set whose classes are not in its class output (not built yet). */
   public final int javaFilesNotBuilt;
+  /** Gradle task that builds this source set's classes, e.g. {@code :app:testClasses}. */
+  public final String classesTask;
 
   private ExecutorService thread;
   private ModuleClassLoader loader;
   private Analyzer analyzer;
   private boolean closed;
 
-  CompileContext(String name, List<Path> ownRoots, List<Path> searchRoots, List<Path> classpath, Map<String, Path> javaClasses, int javaFilesNotBuilt) {
+  CompileContext(String name, List<Path> ownRoots, List<Path> searchRoots, List<Path> classpath, Map<String, Path> javaClasses, int javaFilesNotBuilt,
+      String classesTask) {
     this.name = name;
     this.ownRoots = List.copyOf(ownRoots);
     this.searchRoots = List.copyOf(searchRoots);
     this.classpath = List.copyOf(classpath);
     this.javaClasses = Map.copyOf(javaClasses);
     this.javaFilesNotBuilt = javaFilesNotBuilt;
+    this.classesTask = classesTask;
   }
 
   /** Classpath entries of the loader, analysis jar first. For tests and status. */
