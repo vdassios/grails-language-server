@@ -11,6 +11,7 @@ import java.util.stream.Collectors;
 
 import org.codehaus.groovy.ast.ASTNode;
 import org.codehaus.groovy.ast.AnnotatedNode;
+import org.codehaus.groovy.ast.ClassHelper;
 import org.codehaus.groovy.ast.ClassNode;
 import org.codehaus.groovy.ast.FieldNode;
 import org.codehaus.groovy.ast.ImportNode;
@@ -201,13 +202,35 @@ public final class Completions {
         }
       }
     }
+    List<MethodNode> methods = new ArrayList<>();
     for (ClassNode current : hierarchy) {
       for (MethodNode method : GroovyASTUtils.members(current::getMethods, List.<MethodNode>of())) {
         if ((statics == null || method.isStatic() == statics) && (current == type || !method.isPrivate()) && !method.isSynthetic()) {
-          add(method.getName(), Completion.Kind.METHOD, method, prefix, names);
+          methods.add(method);
         }
       }
     }
+    // a getter is also a property (book.errors, params, out): most members Grails adds are getters
+    for (MethodNode method : methods) {
+      String property = propertyOf(method);
+      if (property != null) {
+        add(property, Completion.Kind.FIELD, method, prefix, names);
+      }
+    }
+    for (MethodNode method : methods) {
+      add(method.getName(), Completion.Kind.METHOD, method, prefix, names);
+    }
+  }
+
+  /** {@code errors} for {@code getErrors()}, {@code dirty} for {@code boolean isDirty()}; null for other methods. */
+  static String propertyOf(MethodNode method) {
+    String name = method.getName();
+    int start = name.startsWith("get") ? 3 : name.startsWith("is") && method.getReturnType().equals(ClassHelper.boolean_TYPE) ? 2 : -1;
+    if (start < 0 || name.length() == start || !Character.isUpperCase(name.charAt(start)) || method.getParameters().length > 0
+        || method.getReturnType().equals(ClassHelper.VOID_TYPE)) {
+      return null;
+    }
+    return Character.toLowerCase(name.charAt(start)) + name.substring(start + 1);
   }
 
   /** A type, its superclasses and every interface they implement. A supertype whose class cannot be loaded is skipped. */

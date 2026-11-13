@@ -196,7 +196,8 @@ class FixtureCompileTest {
       assertFalse(statics.contains("validate"), "an instance method");
 
       List<String> bare = completion(workspace, controller, "re");
-      assertEquals(List.of("redirect", "render"), bare.stream().sorted().collect(Collectors.toList()), "no private members of Object");
+      // request and response: the getters of the controller trait, as properties
+      assertEquals(List.of("redirect", "render", "request", "response"), bare.stream().sorted().collect(Collectors.toList()), "no private members of Object");
     }
   }
 
