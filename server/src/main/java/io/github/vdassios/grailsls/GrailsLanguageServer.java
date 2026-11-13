@@ -6,6 +6,7 @@ import java.io.PrintStream;
 import java.net.URI;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
@@ -19,6 +20,19 @@ import org.eclipse.lsp4j.DidCloseTextDocumentParams;
 import org.eclipse.lsp4j.DidOpenTextDocumentParams;
 import org.eclipse.lsp4j.DidChangeWatchedFilesRegistrationOptions;
 import org.eclipse.lsp4j.DidSaveTextDocumentParams;
+import org.eclipse.lsp4j.DefinitionParams;
+import org.eclipse.lsp4j.DocumentSymbol;
+import org.eclipse.lsp4j.DocumentSymbolParams;
+import org.eclipse.lsp4j.Hover;
+import org.eclipse.lsp4j.HoverParams;
+import org.eclipse.lsp4j.Location;
+import org.eclipse.lsp4j.LocationLink;
+import org.eclipse.lsp4j.MarkupContent;
+import org.eclipse.lsp4j.MarkupKind;
+import org.eclipse.lsp4j.Position;
+import org.eclipse.lsp4j.Range;
+import org.eclipse.lsp4j.SymbolInformation;
+import org.eclipse.lsp4j.SymbolKind;
 import org.eclipse.lsp4j.FileEvent;
 import org.eclipse.lsp4j.FileSystemWatcher;
 import org.eclipse.lsp4j.InitializeParams;
@@ -32,6 +46,7 @@ import org.eclipse.lsp4j.ServerInfo;
 import org.eclipse.lsp4j.TextDocumentSyncKind;
 import org.eclipse.lsp4j.TextDocumentSyncOptions;
 import org.eclipse.lsp4j.jsonrpc.Launcher;
+import org.eclipse.lsp4j.jsonrpc.messages.Either;
 import org.eclipse.lsp4j.jsonrpc.services.JsonRequest;
 import org.eclipse.lsp4j.services.LanguageClient;
 import org.eclipse.lsp4j.services.LanguageClientAware;
@@ -39,6 +54,7 @@ import org.eclipse.lsp4j.services.LanguageServer;
 import org.eclipse.lsp4j.services.TextDocumentService;
 import org.eclipse.lsp4j.services.WorkspaceService;
 
+import io.github.vdassios.grailsls.api.Symbol;
 import io.github.vdassios.grailsls.compile.AnalysisJar;
 import io.github.vdassios.grailsls.compile.CompileService;
 import io.github.vdassios.grailsls.compile.Documents;
@@ -101,6 +117,9 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
     sync.setChange(TextDocumentSyncKind.Incremental);
     sync.setSave(new SaveOptions(false));
     capabilities.setTextDocumentSync(sync);
+    capabilities.setDefinitionProvider(true);
+    capabilities.setHoverProvider(true);
+    capabilities.setDocumentSymbolProvider(true);
     return CompletableFuture.completedFuture(new InitializeResult(capabilities, new ServerInfo("grails-language-server")));
   }
 
@@ -180,7 +199,58 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
         compiles.fileChanged(path);
       }
     }
+
+    @Override
+    public CompletableFuture<Either<List<? extends Location>, List<? extends LocationLink>>> definition(DefinitionParams params) {
+      Position at = params.getPosition();
+      return compiles.query(params.getTextDocument().getUri(), null, (analyzer, path) -> analyzer.definition(path, at.getLine(), at.getCharacter()))
+          .thenApply(location -> Either.forLeft(location == null ? List.of() : List.of(location(location))));
+    }
+
+    @Override
+    public CompletableFuture<Hover> hover(HoverParams params) {
+      Position at = params.getPosition();
+      return compiles.query(params.getTextDocument().getUri(), null, (analyzer, path) -> analyzer.hover(path, at.getLine(), at.getCharacter()))
+          .thenApply(markdown -> markdown == null ? null : new Hover(new MarkupContent(MarkupKind.MARKDOWN, markdown)));
+    }
+
+    @Override
+    public CompletableFuture<List<Either<SymbolInformation, DocumentSymbol>>> documentSymbol(DocumentSymbolParams params) {
+      String uri = params.getTextDocument().getUri();
+      return compiles.query(uri, List.<Symbol>of(), (analyzer, path) -> analyzer.symbols(path)).thenApply(symbols -> {
+        List<Either<SymbolInformation, DocumentSymbol>> result = new ArrayList<>();
+        for (Symbol symbol : symbols) {
+          result.add(Either.forLeft(new SymbolInformation(symbol.name, symbolKind(symbol.kind), new Location(uri, range(symbol.range)), symbol.container)));
+        }
+        return result;
+      });
+    }
   };
+
+  private static Location location(io.github.vdassios.grailsls.api.Location location) {
+    return new Location(Path.of(location.path).toUri().toString(), range(location.range));
+  }
+
+  private static Range range(io.github.vdassios.grailsls.api.Range range) {
+    return new Range(new Position(range.startLine, range.startColumn), new Position(range.endLine, range.endColumn));
+  }
+
+  private static SymbolKind symbolKind(Symbol.Kind kind) {
+    switch (kind) {
+      case CLASS:
+        return SymbolKind.Class;
+      case INTERFACE:
+        return SymbolKind.Interface;
+      case ENUM:
+        return SymbolKind.Enum;
+      case METHOD:
+        return SymbolKind.Method;
+      case FIELD:
+        return SymbolKind.Field;
+      default:
+        return SymbolKind.Variable;
+    }
+  }
 
   private final WorkspaceService workspace = new WorkspaceService() {
     @Override

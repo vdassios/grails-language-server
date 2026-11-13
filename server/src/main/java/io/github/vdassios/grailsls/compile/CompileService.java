@@ -4,13 +4,16 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BiFunction;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 import org.eclipse.lsp4j.Diagnostic;
 import org.eclipse.lsp4j.DiagnosticSeverity;
@@ -19,6 +22,7 @@ import org.eclipse.lsp4j.PublishDiagnosticsParams;
 import org.eclipse.lsp4j.Range;
 import org.eclipse.lsp4j.TextDocumentContentChangeEvent;
 
+import io.github.vdassios.grailsls.api.Analyzer;
 import io.github.vdassios.grailsls.api.CompileRequest;
 import io.github.vdassios.grailsls.api.CompileResult;
 import io.github.vdassios.grailsls.api.SourceLookup;
@@ -98,6 +102,33 @@ public final class CompileService {
     publish.accept(new PublishDiagnosticsParams(uri, List.of()));
   }
 
+  /**
+   * Runs a query on the last compile of an open document, given the analyzer and the document's path. Waits for the
+   * document's pending compile and starts it at once if it is still in its debounce delay, so the answer is about the
+   * current text. Completes with {@code none} when the document is not open or not in a Groovy source set.
+   */
+  public <T> CompletableFuture<T> query(String uri, T none, BiFunction<Analyzer, String, T> query) {
+    Path path = Documents.path(uri);
+    return path == null ? CompletableFuture.completedFuture(none) : afterCompiles(path, () -> {
+      Workspace current = workspace;
+      CompileContext context = current == null || documents.get(path) == null ? null : current.contextOf(path);
+      if (context == null) {
+        return CompletableFuture.completedFuture(none);
+      }
+      return context.query(analyzer -> query.apply(analyzer, path.toString()));
+    });
+  }
+
+  private <T> CompletableFuture<T> afterCompiles(Path path, Supplier<CompletableFuture<T>> query) {
+    Pending task = pending.get(path);
+    if (task == null) {
+      return query.get();
+    }
+    task.startNow(() -> run(path, task));
+    // an edit during the compile replaces it: wait for that one too
+    return task.done.thenCompose(done -> afterCompiles(path, query));
+  }
+
   /** A file was saved, created, changed on disk or deleted: re-read its declarations. */
   public void fileChanged(Path path) {
     Workspace current = workspace;
@@ -121,36 +152,55 @@ public final class CompileService {
     if (previous != null) {
       previous.cancel();
     }
-    next.timer = timer.schedule(() -> run(path, next), delay, TimeUnit.MILLISECONDS);
+    next.scheduled = timer.schedule(() -> run(path, next), delay, TimeUnit.MILLISECONDS);
   }
 
   private void run(Path path, Pending task) {
+    if (!task.started.compareAndSet(false, true)) {
+      return;
+    }
     Document document = documents.get(path);
     Workspace current = workspace;
     if (document == null || current == null || task.cancelled.get()) {
+      finish(path, task);
       return;
     }
     CompileContext context = current.contextOf(path);
     if (context == null) {
-      return; // not a source file of a Groovy module
+      finish(path, task); // not a source file of a Groovy module
+      return;
     }
     SourceLookup lookup = current.lookup(context, file -> {
       Document open = documents.get(file);
       return open == null ? null : open.text;
     });
     context.compile(new CompileRequest(path.toString(), document.text, lookup, task.cancelled::get)).whenComplete((result, error) -> {
-      pending.remove(path, task);
-      if (error != null) {
-        if (!task.cancelled.get() && workspace == current) {
-          System.err.println("grails-language-server: compile of " + path + " failed: " + error);
-        }
-        return;
-      }
-      Document now = documents.get(path);
-      if (!result.cancelled && !task.cancelled.get() && now != null && now.version == document.version) {
-        publish.accept(diagnostics(document, result));
+      try {
+        report(path, task, document, current, result, error);
+      } finally {
+        finish(path, task);
       }
     });
+  }
+
+  /** Publishes the diagnostics of a compile still current, or logs why it failed. */
+  private void report(Path path, Pending task, Document document, Workspace current, CompileResult result, Throwable error) {
+    if (error != null) {
+      if (!task.cancelled.get() && workspace == current) {
+        System.err.println("grails-language-server: compile of " + path + " failed: " + error);
+      }
+      return;
+    }
+    Document now = documents.get(path);
+    if (!result.cancelled && !task.cancelled.get() && now != null && now.version == document.version) {
+      publish.accept(diagnostics(document, result));
+    }
+  }
+
+  /** The compile is over (done, cancelled or skipped): queries waiting for it go on. */
+  private void finish(Path path, Pending task) {
+    pending.remove(path, task);
+    task.done.complete(null);
   }
 
   private static PublishDiagnosticsParams diagnostics(Document document, CompileResult result) {
@@ -171,15 +221,26 @@ public final class CompileService {
   }
 
   /** One scheduled or running compile of a document. */
-  private static final class Pending {
+  private final class Pending {
     final AtomicBoolean cancelled = new AtomicBoolean();
-    volatile ScheduledFuture<?> timer;
+    final AtomicBoolean started = new AtomicBoolean();
+    /** Completes when the compile is over or will never run. */
+    final CompletableFuture<Void> done = new CompletableFuture<>();
+    volatile ScheduledFuture<?> scheduled;
 
     void cancel() {
       cancelled.set(true);
-      ScheduledFuture<?> scheduled = timer;
-      if (scheduled != null) {
-        scheduled.cancel(false);
+      ScheduledFuture<?> delay = scheduled;
+      if (delay != null && delay.cancel(false) && started.compareAndSet(false, true)) {
+        done.complete(null); // never ran
+      }
+    }
+
+    /** Ends the debounce delay: runs the compile now unless it has started. */
+    void startNow(Runnable compile) {
+      ScheduledFuture<?> delay = scheduled;
+      if (!started.get() && delay != null && delay.cancel(false)) {
+        timer.execute(compile);
       }
     }
   }

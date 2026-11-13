@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.Function;
 
 import io.github.vdassios.grailsls.api.Analyzer;
 import io.github.vdassios.grailsls.api.CompileRequest;
@@ -82,6 +83,21 @@ public final class CompileContext implements AutoCloseable {
       executor = thread;
     }
     return CompletableFuture.supplyAsync(() -> CompilerOutput.muted(() -> analyzer().compile(request)), executor);
+  }
+
+  /** Runs a query on the analyzer on this context's thread, after the compiles submitted before it. */
+  public <T> CompletableFuture<T> query(Function<Analyzer, T> query) {
+    ExecutorService executor;
+    synchronized (this) {
+      if (closed) {
+        return CompletableFuture.failedFuture(new IllegalStateException(name + " is closed"));
+      }
+      if (thread == null) {
+        start();
+      }
+      executor = thread;
+    }
+    return CompletableFuture.supplyAsync(() -> CompilerOutput.muted(() -> query.apply(analyzer())), executor);
   }
 
   /** Drops what the analyzer keeps for a closed document. */

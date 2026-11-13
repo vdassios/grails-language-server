@@ -24,6 +24,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import io.github.vdassios.grailsls.api.Symbol;
 import io.github.vdassios.grailsls.project.ModuleRecord;
 import io.github.vdassios.grailsls.project.ModuleRecord.SourceSetRecord;
 import io.github.vdassios.grailsls.project.ProjectModel;
@@ -156,5 +157,35 @@ class CompileServiceTest {
     service.setWorkspace(workspace());
     assertEquals(List.of(), messages(next()), "recompiled in the new workspace");
     assertTrue(Gc.collected(loader), "the old module loader (and the Groovy it loaded) is garbage");
+  }
+
+  /** A query right after an edit answers about the edited text: it ends the debounce delay instead of waiting it out. */
+  @Test
+  void aQueryRunsThePendingCompileAtOnce() throws Exception {
+    CompileService slow = new CompileService(published::add, 60_000);
+    try {
+      slow.setWorkspace(workspace());
+      slow.open(uri("A.groovy"), "class A {\n}\n", 1);
+      assertEquals(List.of("CLASS A"), symbols(slow, "A.groovy"));
+      Position end = new Position(0, 9);
+      slow.change(uri("A.groovy"), List.of(new TextDocumentContentChangeEvent(new Range(end, end), 0, "\n  int count() { 1 }")), 2);
+      assertEquals(List.of("CLASS A", "METHOD count"), symbols(slow, "A.groovy"));
+    } finally {
+      slow.shutdown();
+    }
+  }
+
+  @Test
+  void aQueryOnADocumentThatIsNotOpenFindsNothing() throws Exception {
+    assertEquals(List.of(), symbols(service, "A.groovy"));
+    service.open(uri("A.groovy"), "class A {}\n", 1);
+    assertEquals(List.of("CLASS A"), symbols(service, "A.groovy"));
+    service.close(uri("A.groovy"));
+    assertEquals(List.of(), symbols(service, "A.groovy"));
+  }
+
+  private List<String> symbols(CompileService compiles, String relative) throws Exception {
+    List<Symbol> symbols = compiles.query(uri(relative), List.<Symbol>of(), (analyzer, path) -> analyzer.symbols(path)).get(10, TimeUnit.SECONDS);
+    return symbols.stream().map(s -> s.kind + " " + s.name).collect(Collectors.toList());
   }
 }

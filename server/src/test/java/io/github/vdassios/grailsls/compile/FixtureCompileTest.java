@@ -13,6 +13,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.function.Function;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
@@ -20,10 +21,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 
+import io.github.vdassios.grailsls.api.Analyzer;
 import io.github.vdassios.grailsls.api.CompileRequest;
 import io.github.vdassios.grailsls.api.CompileResult;
 import io.github.vdassios.grailsls.api.CompiledClass;
 import io.github.vdassios.grailsls.api.Diagnostic;
+import io.github.vdassios.grailsls.api.Location;
 import io.github.vdassios.grailsls.project.Fixtures;
 import io.github.vdassios.grailsls.project.ProjectModel;
 
@@ -96,6 +99,81 @@ class FixtureCompileTest {
       CompiledClass self = workspace.contextOf(controller).analyzer().compiledClass(controller.toString(), "fixture.library.BookController");
       assertTrue(self.interfaces.contains("grails.artefact.Controller"), self.interfaces.toString());
       assertTrue(self.methods.containsAll(List.of("render", "redirect", "getParams")), self.methods.toString());
+    }
+  }
+
+  /** Runs a query on the context thread of the file, after compiling it. */
+  private static <T> T query(Workspace workspace, Path path, Function<Analyzer, T> query) throws Exception {
+    assertEquals(List.of(), errors(compile(workspace, path)));
+    return workspace.contextOf(path).query(query).get(60, TimeUnit.SECONDS);
+  }
+
+  /** Line and column of {@code needle} in the file, plus {@code offset} columns; the needle must occur once. */
+  private static int[] at(Path file, String needle, int offset) throws Exception {
+    String text = Files.readString(file);
+    int index = text.indexOf(needle);
+    assertTrue(index >= 0 && text.indexOf(needle, index + 1) < 0, needle + " occurs once");
+    int line = (int) text.substring(0, index).chars().filter(c -> c == '\n').count();
+    return new int[] { line, index - (text.lastIndexOf('\n', index) + 1) + offset };
+  }
+
+  private static String definition(Workspace workspace, Path file, String needle, int offset) throws Exception {
+    int[] p = at(file, needle, offset);
+    Location location = query(workspace, file, a -> a.definition(file.toString(), p[0], p[1]));
+    return location == null ? null : Path.of(location.path).getFileName() + ":" + (location.range.startLine + 1);
+  }
+
+  @Test
+  void definitionFromAControllerReachesEveryShapeInSource() throws Exception {
+    ProjectModel model = Fixtures.built("grails4", "GLS_TEST_JDK11");
+    try (Workspace workspace = workspace(model)) {
+      Path controller = file(model, ":app", "grails-app/controllers/fixture/library/BookController.groovy");
+      Map<String, String> found = new TreeMap<>();
+      found.put("domain class", definition(workspace, controller, "Book.get(id)", 0));
+      found.put("nested enum", definition(workspace, controller, "Format.PAPERBACK", 0));
+      found.put("file of another name", definition(workspace, controller, "TitleCase.of", 0));
+      found.put("package unlike its directory", definition(workspace, controller, "Shelf(format", 0)); // its constructor
+      found.put("service method", definition(workspace, controller, "store(book)", 0));
+      found.put("joint-compiled Java", definition(workspace, controller, "Isbn.normalize", 0));
+      Map<String, String> expected = new TreeMap<>();
+      expected.put("domain class", "Book.groovy:3");
+      expected.put("nested enum", "Book.groovy:5");
+      expected.put("file of another name", "Formatting.groovy:4");
+      expected.put("package unlike its directory", "Shelf.groovy:7");
+      expected.put("service method", "BookService.groovy:8");
+      expected.put("joint-compiled Java", null); // from its class file: no source yet (library sources come later)
+      assertEquals(expected, found);
+    }
+  }
+
+  /** Members the Grails transformations add, on the open file and on a domain class pulled in from source. */
+  @Test
+  void hoverShowsMembersAddedByGrails() throws Exception {
+    ProjectModel model = Fixtures.built("grails4", "GLS_TEST_JDK11");
+    try (Workspace workspace = workspace(model)) {
+      Path controller = file(model, ":app", "grails-app/controllers/fixture/library/BookController.groovy");
+      Path service = file(model, ":app", "grails-app/services/fixture/library/BookService.groovy");
+      Map<String, String> hovers = new TreeMap<>();
+      // render(...) and redirect(...) in actions (implicit this) are not found yet: phase 13b1 notes
+      for (Object[] probe : new Object[][] { { controller, "list()" }, { service, "save(" } }) {
+        Path file = (Path) probe[0];
+        int[] p = at(file, (String) probe[1], 1);
+        String hover = query(workspace, file, a -> a.hover(file.toString(), p[0], p[1]));
+        hovers.put((String) probe[1], hover == null ? null : hover.split("\n")[1]);
+      }
+      assertEquals(Map.of("list()", "public static List list()", "save(", "public Book save(Map param1)"), hovers);
+    }
+  }
+
+  @Test
+  void symbolsOfAControllerAreItsOwnDeclarations() throws Exception {
+    ProjectModel model = Fixtures.built("grails4", "GLS_TEST_JDK11");
+    try (Workspace workspace = workspace(model)) {
+      Path controller = file(model, ":app", "grails-app/controllers/fixture/library/BookController.groovy");
+      List<String> symbols = query(workspace, controller, a -> a.symbols(controller.toString())).stream()
+          .map(s -> s.kind + " " + s.name + " " + (s.range.startLine + 1)).collect(Collectors.toList());
+      assertEquals(List.of("CLASS fixture.library.BookController 7", "FIELD bookService 8", "METHOD index 10", "METHOD show 14", "METHOD save 20"), symbols,
+          "no members added by Grails");
     }
   }
 
