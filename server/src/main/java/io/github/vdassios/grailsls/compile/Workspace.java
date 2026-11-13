@@ -14,12 +14,15 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import io.github.vdassios.grailsls.api.SourceLookup;
+import io.github.vdassios.grailsls.api.Symbol;
 import io.github.vdassios.grailsls.index.DeclarationIndex;
 import io.github.vdassios.grailsls.index.Declarations;
+import io.github.vdassios.grailsls.index.SymbolIndex;
 import io.github.vdassios.grailsls.project.ModuleRecord;
 import io.github.vdassios.grailsls.project.ModuleRecord.SourceSetRecord;
 import io.github.vdassios.grailsls.project.ProjectModel;
@@ -36,7 +39,11 @@ import io.github.vdassios.grailsls.project.ProjectModel;
  */
 public final class Workspace implements AutoCloseable {
   private final List<CompileContext> contexts = new ArrayList<>();
+  /** Files parsed per call when filling the symbol index. */
+  public static final int SYMBOL_BATCH = 50;
+
   private final DeclarationIndex index = new DeclarationIndex();
+  private final SymbolIndex symbols = new SymbolIndex();
 
   public Workspace(ProjectModel model, Path analysisJar) {
     for (ModuleRecord module : model.modules) {
@@ -60,6 +67,50 @@ public final class Workspace implements AutoCloseable {
 
   public DeclarationIndex declarations() {
     return index;
+  }
+
+  public SymbolIndex symbols() {
+    return symbols;
+  }
+
+  /**
+   * Fills the symbol index in the background: each context parses its own files, {@link #SYMBOL_BATCH} at a time on its
+   * compile thread, so a compile waits for one batch at most. Completes when every context is done (or closed).
+   */
+  public CompletableFuture<Void> indexSymbols() {
+    List<CompletableFuture<Void>> all = new ArrayList<>();
+    for (CompileContext context : contexts) {
+      List<Path> files = index.sources(context.ownRoots).stream().filter(file -> contextOf(file) == context).collect(Collectors.toList());
+      all.add(indexSymbols(context, files, 0));
+    }
+    return CompletableFuture.allOf(all.toArray(new CompletableFuture<?>[0]));
+  }
+
+  private CompletableFuture<Void> indexSymbols(CompileContext context, List<Path> files, int from) {
+    if (from >= files.size()) {
+      return CompletableFuture.completedFuture(null);
+    }
+    List<String> batch = files.subList(from, Math.min(from + SYMBOL_BATCH, files.size())).stream().map(Path::toString).collect(Collectors.toList());
+    return context.query(analyzer -> analyzer.declarations(batch)).thenCompose(found -> {
+      found.forEach((file, declared) -> symbols.put(Path.of(file), declared));
+      return indexSymbols(context, files, from + SYMBOL_BATCH);
+    }).exceptionally(error -> null); // closed: a newer workspace indexes again
+  }
+
+  /** Re-reads the symbols of a file that was saved, created or deleted, in the background. */
+  public void reindexSymbols(Path file) {
+    CompileContext context = contextOf(file);
+    if (context == null || !file.toString().endsWith(".groovy")) {
+      return;
+    }
+    context.query(analyzer -> analyzer.declarations(List.of(file.toString()))).thenAccept(found -> {
+      List<Symbol> declared = found.get(file.toString());
+      if (Files.isRegularFile(file) && declared != null) {
+        symbols.put(file, declared);
+      } else {
+        symbols.remove(file);
+      }
+    });
   }
 
   public List<CompileContext> contexts() {
@@ -93,6 +144,11 @@ public final class Workspace implements AutoCloseable {
       @Override
       public String openText(String file) {
         return openText.apply(Path.of(file));
+      }
+
+      @Override
+      public List<Symbol> types() {
+        return symbols.types(context.searchRoots);
       }
     };
   }

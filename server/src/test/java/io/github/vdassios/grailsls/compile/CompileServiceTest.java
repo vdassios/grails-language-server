@@ -124,6 +124,40 @@ class CompileServiceTest {
     assertEquals(List.of("3: unable to resolve class Missing"), messages(next()), "the open text, not the file");
   }
 
+  private List<String> found(String query) {
+    return service.workspace().symbols().search(query).stream().map(f -> src.relativize(f.file) + " " + f.symbol.kind + " " + f.symbol.name)
+        .sorted().collect(Collectors.toList());
+  }
+
+  private void awaitFound(String query, List<String> expected) throws InterruptedException {
+    for (int i = 0; i < 300 && !found(query).equals(expected); i++) {
+      Thread.sleep(100);
+    }
+    assertEquals(expected, found(query));
+  }
+
+  /** Filled in the background after the project resolves, then kept current by saves, creates and deletes. */
+  @Test
+  void theSymbolIndexFollowsTheFiles() throws Exception {
+    Path names = src.resolve("lib/Names.groovy");
+    Files.createDirectories(names.getParent());
+    Files.writeString(names, "package lib\nclass Author {\n  String name\n  String initials() { name[0] }\n}\n");
+    Files.writeString(src.resolve("Broken.groovy"), "class Broken {\n  void x( }\n");
+    Workspace workspace = workspace();
+    service.setWorkspace(workspace);
+    workspace.indexSymbols().get(60, TimeUnit.SECONDS);
+    assertEquals(List.of("lib/Names.groovy CLASS lib.Author", "lib/Names.groovy FIELD name", "lib/Names.groovy METHOD initials"), found(""));
+    assertEquals(2, workspace.symbols().files(), "the file that does not parse is indexed with no symbols");
+
+    Files.writeString(names, "package lib\nclass Writer {\n  String pen\n}\n");
+    service.fileChanged(names);
+    awaitFound("er", List.of("lib/Names.groovy CLASS lib.Writer"));
+
+    Files.delete(names);
+    service.fileChanged(names);
+    awaitFound("", List.of());
+  }
+
   @Test
   void closingClearsTheDiagnostics() throws Exception {
     service.open(uri("Broken.groovy"), "class Broken { void x( }\n", 1);

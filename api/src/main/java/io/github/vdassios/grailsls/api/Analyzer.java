@@ -1,6 +1,7 @@
 package io.github.vdassios.grailsls.api;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * Compiles Groovy for one module. Implemented by the {@code analysis} layer and loaded inside the module's class loader,
@@ -51,6 +52,13 @@ public interface Analyzer extends AutoCloseable {
    * {@link #completion}, an unfinished call is answered from a copy with the closing parenthesis added.
    */
   SignatureHelp signatureHelp(CompileRequest request, int line, int column);
+
+  /**
+   * The classes and members each file declares, as {@link #symbols} gives them for an open document, from a parse only:
+   * no class is resolved and no transformation runs, so this is fast and works before anything compiles. A file that
+   * does not parse, or cannot be read, maps to an empty list. Nothing is kept.
+   */
+  Map<String, List<Symbol>> declarations(List<String> paths);
 
   /** Drops the result kept for a document. */
   void forget(String documentPath);

@@ -67,6 +67,7 @@ class LatencyTest {
       long start = System.nanoTime();
       workspace.index();
       record("index", start);
+      symbolIndex(workspace);
       List<Path> files = sample(artefactFiles(model), limit);
       count("files", files.size());
       for (Path file : files) {
@@ -81,6 +82,34 @@ class LatencyTest {
     System.out.println(report);
     write(report);
     assertFalse(timings.getOrDefault("completion", List.of()).isEmpty(), "nothing measured:\n" + report);
+  }
+
+  /**
+   * Fills the symbol index as the server does (every context at once), then parses each context's files again batch
+   * by batch: a compile submitted while the index fills waits for one batch at most. Then a few searches.
+   */
+  private void symbolIndex(Workspace workspace) throws Exception {
+    long start = System.nanoTime();
+    workspace.indexSymbols().get(30, TimeUnit.MINUTES);
+    record("symbol index, all contexts", start);
+    count("symbol index files", workspace.symbols().files());
+    count("symbols", workspace.symbols().search("").size());
+    for (CompileContext context : workspace.contexts()) {
+      List<Path> files = workspace.declarations().sources(context.ownRoots);
+      for (int from = 0; from < files.size(); from += Workspace.SYMBOL_BATCH) {
+        List<String> batch = files.subList(from, Math.min(from + Workspace.SYMBOL_BATCH, files.size())).stream().map(Path::toString).collect(Collectors.toList());
+        start = System.nanoTime();
+        context.query(a -> a.declarations(batch)).get(5, TimeUnit.MINUTES);
+        record("symbol batch of " + Workspace.SYMBOL_BATCH, start);
+      }
+    }
+    for (String query : List.of("", "e", "service")) {
+      start = System.nanoTime();
+      workspace.symbols().search(query);
+      record("workspace symbol search", start);
+    }
+    System.gc();
+    count("heap MB after the symbol index, after GC", (int) ((Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) >> 20));
   }
 
   private void measure(Workspace workspace, CompileContext context, Path file) throws Exception {

@@ -152,6 +152,7 @@ public final class CompileService {
     Workspace current = workspace;
     if (current != null) {
       current.declarations().update(path);
+      current.reindexSymbols(path);
     }
   }
 

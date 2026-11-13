@@ -29,9 +29,11 @@ import org.eclipse.lsp4j.PublishDiagnosticsParams;
 import org.eclipse.lsp4j.ShowMessageRequestParams;
 import org.eclipse.lsp4j.SignatureHelp;
 import org.eclipse.lsp4j.SignatureHelpParams;
+import org.eclipse.lsp4j.SymbolInformation;
 import org.eclipse.lsp4j.TextDocumentIdentifier;
 import org.eclipse.lsp4j.TextDocumentItem;
 import org.eclipse.lsp4j.WorkspaceFolder;
+import org.eclipse.lsp4j.WorkspaceSymbolParams;
 import org.eclipse.lsp4j.jsonrpc.Launcher;
 import org.eclipse.lsp4j.jsonrpc.services.JsonRequest;
 import org.eclipse.lsp4j.services.LanguageServer;
@@ -194,6 +196,26 @@ class ProtocolTest {
     SignatureHelp help = server.getTextDocumentService().signatureHelp(new SignatureHelpParams(new TextDocumentIdentifier(other), new Position(2, 21))).get(30, TimeUnit.SECONDS);
     assertEquals("public int count(String what)", help.getSignatures().get(0).getLabel());
     assertEquals(0, help.getActiveParameter());
+  }
+
+  @Test
+  void workspaceSymbolsComeFromEveryFileOnceIndexed() throws Exception {
+    Path root = groovyProject();
+    Files.writeString(root.resolve("src/Shelf.groovy"), "package lib\nclass Shelf {\n  int shelfSize() { 1 }\n}\n");
+    start(root, trustedOptions());
+    assertEquals(StatusParams.RESOLVING, next().state);
+    assertEquals(StatusParams.INDEXING, next().state);
+    assertEquals(StatusParams.READY, next().state);
+
+    List<? extends SymbolInformation> found = List.of();
+    for (int i = 0; i < 300 && found.size() < 2; i++) {
+      found = server.getWorkspaceService().symbol(new WorkspaceSymbolParams("shelf")).get(10, TimeUnit.SECONDS);
+      Thread.sleep(100);
+    }
+    assertEquals(List.of("Class lib.Shelf null 1", "Method shelfSize lib.Shelf 2"),
+        found.stream().map(s -> s.getKind() + " " + s.getName() + " " + s.getContainerName() + " " + s.getLocation().getRange().getStart().getLine()).sorted()
+            .collect(java.util.stream.Collectors.toList()));
+    assertEquals(root.resolve("src/Shelf.groovy").toUri().toString(), found.get(0).getLocation().getUri());
   }
 
   private final class RecordingClient implements GrailsLanguageClient {

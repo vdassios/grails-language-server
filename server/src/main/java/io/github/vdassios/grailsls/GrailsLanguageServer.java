@@ -63,6 +63,7 @@ import org.eclipse.lsp4j.services.LanguageClient;
 import org.eclipse.lsp4j.services.LanguageClientAware;
 import org.eclipse.lsp4j.services.LanguageServer;
 import org.eclipse.lsp4j.services.TextDocumentService;
+import org.eclipse.lsp4j.WorkspaceSymbolParams;
 import org.eclipse.lsp4j.services.WorkspaceService;
 
 import io.github.vdassios.grailsls.api.Completion;
@@ -71,6 +72,7 @@ import io.github.vdassios.grailsls.compile.AnalysisJar;
 import io.github.vdassios.grailsls.compile.CompileService;
 import io.github.vdassios.grailsls.compile.Documents;
 import io.github.vdassios.grailsls.compile.Workspace;
+import io.github.vdassios.grailsls.index.SymbolIndex;
 import io.github.vdassios.grailsls.project.GradleBridge;
 import io.github.vdassios.grailsls.project.ProjectService;
 
@@ -117,6 +119,7 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
       Workspace workspace = new Workspace(model, AnalysisJar.extract(cacheDir));
       workspace.index();
       compiles.setWorkspace(workspace);
+      workspace.indexSymbols();
       return workspace.summary();
     });
     watchFiles = params.getCapabilities() != null && params.getCapabilities().getWorkspace() != null
@@ -132,6 +135,7 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
     capabilities.setDefinitionProvider(true);
     capabilities.setHoverProvider(true);
     capabilities.setDocumentSymbolProvider(true);
+    capabilities.setWorkspaceSymbolProvider(true);
     capabilities.setCompletionProvider(new CompletionOptions(true, List.of(".")));
     capabilities.setSignatureHelpProvider(new SignatureHelpOptions(List.of("(", ",")));
     return CompletableFuture.completedFuture(new InitializeResult(capabilities, new ServerInfo("grails-language-server")));
@@ -367,6 +371,20 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
   private final WorkspaceService workspace = new WorkspaceService() {
     @Override
     public void didChangeConfiguration(DidChangeConfigurationParams params) {}
+
+    /** Classes and members of every Groovy source file whose name contains the query, from the symbol index. */
+    @Override
+    public CompletableFuture<List<? extends SymbolInformation>> symbol(WorkspaceSymbolParams params) {
+      Workspace current = compiles == null ? null : compiles.workspace();
+      List<SymbolInformation> result = new ArrayList<>();
+      if (current != null) {
+        for (SymbolIndex.Found found : current.symbols().search(params.getQuery())) {
+          Location location = new Location(found.file.toUri().toString(), range(found.symbol.range));
+          result.add(new SymbolInformation(found.symbol.name, symbolKind(found.symbol.kind), location, found.symbol.container));
+        }
+      }
+      return CompletableFuture.completedFuture(result);
+    }
 
     @Override
     public void didChangeWatchedFiles(DidChangeWatchedFilesParams params) {

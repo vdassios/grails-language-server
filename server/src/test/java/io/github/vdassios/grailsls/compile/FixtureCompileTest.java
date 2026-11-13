@@ -200,6 +200,25 @@ class FixtureCompileTest {
     }
   }
 
+  /** Workspace symbols and completion of classes not imported yet, from the symbol index of every module. */
+  @Test
+  void theSymbolIndexCoversEveryModule() throws Exception {
+    ProjectModel model = Fixtures.built("grails4", "GLS_TEST_JDK11");
+    try (Workspace workspace = workspace(model)) {
+      workspace.indexSymbols().get(120, TimeUnit.SECONDS);
+      List<String> weekday = workspace.symbols().search("weekDAY").stream()
+          .map(f -> f.file.getFileName() + " " + f.symbol.kind + " " + f.symbol.container + " " + f.symbol.name).collect(Collectors.toList());
+      assertEquals(List.of("Clock.groovy METHOD fixture.support.Clock weekday"), weekday);
+      List<String> types = workspace.symbols().search("Initials").stream().map(f -> f.file.getFileName() + " " + f.symbol.name).collect(Collectors.toList());
+      assertEquals(List.of("Formatting.groovy fixture.text.Initials"), types, "a class in a file of another name");
+
+      Path controller = file(model, ":app", "grails-app/controllers/fixture/library/BookController.groovy");
+      List<String> labels = completion(workspace, controller, "Initi");
+      assertTrue(labels.contains("Initials"), "not imported, not pulled in by the compile: " + labels);
+      assertTrue(completion(workspace, controller, "Clo").contains("Clock"), "a sibling module's class");
+    }
+  }
+
   @Test
   void signatureHelpOnRenderInAnAction() throws Exception {
     ProjectModel model = Fixtures.built("grails4", "GLS_TEST_JDK11");

@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -28,6 +29,7 @@ import io.github.vdassios.grailsls.api.CompletionDetail;
 import io.github.vdassios.grailsls.api.CompletionList;
 import io.github.vdassios.grailsls.api.Diagnostic;
 import io.github.vdassios.grailsls.api.Location;
+import io.github.vdassios.grailsls.api.Range;
 import io.github.vdassios.grailsls.api.SignatureHelp;
 import io.github.vdassios.grailsls.api.SourceLookup;
 import io.github.vdassios.grailsls.api.Symbol;
@@ -51,7 +53,14 @@ class GroovyAnalyzerTest {
     public String openText(String path) {
       return open.get(path);
     }
+
+    @Override
+    public List<Symbol> types() {
+      return types;
+    }
   };
+  /** The symbol index's classes, as the server would give them. */
+  private final List<Symbol> types = new ArrayList<>();
 
   @AfterEach
   void close() {
@@ -389,6 +398,36 @@ class GroovyAnalyzerTest {
     Completion widget = list.items.stream().filter(c -> c.label.equals("Widget")).findFirst().orElseThrow();
     assertEquals("other", widget.detail);
     assertEquals("[2:1-2:1 import other.Widget\n]", widget.additionalEdits.toString());
+  }
+
+  /** Classes the compile does not contain yet (the symbol index's) are offered too, with their import. */
+  @Test
+  void aClassNotImportedYetComesFromTheLookupsTypes() {
+    types.add(new Symbol("other.Gadget", Symbol.Kind.ENUM, null, new Range(1, 0, 1, 10)));
+    types.add(new Symbol("TopLevel", Symbol.Kind.CLASS, null, new Range(0, 0, 0, 10)));
+    String path = tmp.resolve("src/app/A.groovy").toString();
+    CompletionList list = complete(path, "package app\n\nclass A {\n  def run() {\n    Gad\n  }\n}\n", 4, 7);
+    Completion gadget = list.items.stream().filter(c -> c.label.equals("Gadget")).findFirst().orElseThrow();
+    assertEquals(Completion.Kind.ENUM, gadget.kind);
+    assertEquals("other", gadget.detail);
+    assertEquals("[2:1-2:1 import other.Gadget\n]", gadget.additionalEdits.toString());
+
+    CompletionList imports = complete(path, "package app\nimport oth\nclass A {}\n", 1, 10);
+    assertTrue(labels(imports).containsAll(List.of("other", "other.Gadget")), labels(imports).toString());
+  }
+
+  /** The symbol index's parse: declarations only, no class resolved, no transformation run. */
+  @Test
+  void declarationsComeFromAParseOfEachFile() throws IOException {
+    String a = write("src/p/A.groovy", "package p\n@groovy.transform.ToString\nclass A {\n  Missing m\n  void run() {}\n  static class In {}\n}\n");
+    String broken = write("src/p/B.groovy", "class B {\n  void run( {\n}\n");
+    String missing = tmp.resolve("src/p/Gone.groovy").toString();
+    Map<String, List<Symbol>> found = analyzer.declarations(List.of(a, broken, missing));
+    List<String> symbols = found.get(a).stream().map(s -> s.kind + " " + s.container + " " + s.name).collect(Collectors.toList());
+    assertEquals(List.of("CLASS null p.A", "FIELD p.A m", "METHOD p.A run", "CLASS null p.A$In"), symbols, "no toString: @ToString did not run");
+    assertEquals(4, found.get(a).get(2).range.startLine);
+    assertEquals(List.of(), found.get(broken));
+    assertEquals(List.of(), found.get(missing));
   }
 
   @Test

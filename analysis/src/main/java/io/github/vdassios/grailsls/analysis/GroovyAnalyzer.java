@@ -4,6 +4,7 @@ import java.io.File;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -32,11 +33,13 @@ import io.github.vdassios.grailsls.api.Analyzer;
 import io.github.vdassios.grailsls.api.CompileRequest;
 import io.github.vdassios.grailsls.api.CompileResult;
 import io.github.vdassios.grailsls.api.CompiledClass;
+import io.github.vdassios.grailsls.api.Completion;
 import io.github.vdassios.grailsls.api.CompletionDetail;
 import io.github.vdassios.grailsls.api.CompletionList;
 import io.github.vdassios.grailsls.api.Diagnostic;
 import io.github.vdassios.grailsls.api.Location;
 import io.github.vdassios.grailsls.api.SignatureHelp;
+import io.github.vdassios.grailsls.api.SourceLookup;
 import io.github.vdassios.grailsls.api.Symbol;
 import net.prominic.groovyls.compiler.ast.ASTNodeVisitor;
 import net.prominic.groovyls.compiler.control.io.StringReaderSourceWithURI;
@@ -155,11 +158,12 @@ public final class GroovyAnalyzer implements Analyzer {
 
   @Override
   public CompletionList completion(CompileRequest request, int line, int column) {
+    ClasspathTypes types = sourceTypes(request.lookup);
     Kept kept = current(request);
-    Completions found = kept == null ? null : Completions.at(kept.ast(), kept.uri, null, line, column);
+    Completions found = kept == null ? null : Completions.at(kept.ast(), kept.uri, types, line, column);
     if (found == null) {
       kept = compileCopy(request, line, column, Completions.placeholder(lineBefore(request.text, line, column)));
-      found = kept == null ? null : Completions.at(kept.ast(), kept.uri, null, line, column);
+      found = kept == null ? null : Completions.at(kept.ast(), kept.uri, types, line, column);
     }
     if (found == null) {
       completions.remove(request.path);
@@ -218,6 +222,58 @@ public final class GroovyAnalyzer implements Analyzer {
   private static String lineBefore(String text, int line, int column) {
     int offset = offset(text, line, column);
     return text.substring(text.lastIndexOf('\n', offset - 1) + 1, offset);
+  }
+
+  @Override
+  public Map<String, List<Symbol>> declarations(List<String> paths) {
+    CompilerConfiguration config = new CompilerConfiguration();
+    config.setSourceEncoding("UTF-8");
+    // a parse only, outside any compilation unit: no class is resolved, no transformation runs
+    GroovyClassLoader loader = new GroovyClassLoader(GroovyAnalyzer.class.getClassLoader(), config, false);
+    ASTNodeVisitor ast = new ASTNodeVisitor();
+    Map<String, List<Symbol>> result = new LinkedHashMap<>();
+    for (String path : paths) {
+      File file = new File(path);
+      SourceUnit source = new SourceUnit(file, config, loader, new ErrorCollector(config));
+      try {
+        source.parse();
+        source.completePhase();
+        source.convert();
+        ast.visitSourceUnit(source);
+        result.put(path, Navigation.symbols(ast, source.getSource().getURI()));
+      } catch (GroovyBugError | RuntimeException | LinkageError e) {
+        result.put(path, List.of()); // does not parse, or no file
+      }
+    }
+    return result;
+  }
+
+  /** The top-level classes of the request's lookup, for completion; the compile's own classes come first anyway. */
+  private static ClasspathTypes sourceTypes(SourceLookup lookup) {
+    List<ClasspathTypes.Type> types = new ArrayList<>();
+    Set<String> packages = new TreeSet<>();
+    for (Symbol symbol : lookup.types()) {
+      int dot = symbol.name.lastIndexOf('.');
+      String packageName = dot < 0 ? "" : symbol.name.substring(0, dot);
+      Completion.Kind kind = symbol.kind == Symbol.Kind.INTERFACE ? Completion.Kind.INTERFACE
+          : symbol.kind == Symbol.Kind.ENUM ? Completion.Kind.ENUM : Completion.Kind.CLASS;
+      types.add(new ClasspathTypes.Type(symbol.name, symbol.name.substring(dot + 1), packageName, kind));
+      if (!packageName.isEmpty()) {
+        packages.add(packageName);
+      }
+    }
+    List<String> packageList = new ArrayList<>(packages);
+    return new ClasspathTypes() {
+      @Override
+      public List<Type> types() {
+        return types;
+      }
+
+      @Override
+      public List<String> packages() {
+        return packageList;
+      }
+    };
   }
 
   @Override

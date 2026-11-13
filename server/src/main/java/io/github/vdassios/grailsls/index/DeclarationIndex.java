@@ -10,6 +10,7 @@ import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -54,6 +55,18 @@ public final class DeclarationIndex {
         root.reindex(file);
       }
     }
+  }
+
+  /** The Groovy files indexed below {@code paths}, each once. */
+  public List<Path> sources(List<Path> paths) {
+    Set<Path> files = new LinkedHashSet<>();
+    for (Path path : paths) {
+      Root root = roots.get(path);
+      if (root != null) {
+        files.addAll(root.files());
+      }
+    }
+    return new ArrayList<>(files);
   }
 
   /** Names indexed over all roots. */
@@ -114,6 +127,10 @@ public final class DeclarationIndex {
         throw new UncheckedIOException(e);
       }
       return root;
+    }
+
+    synchronized List<Path> files() {
+      return new ArrayList<>(namesByFile.keySet());
     }
 
     synchronized void reindex(Path file) {
