@@ -1,0 +1,2 @@
+// The class-loader boundary between `server` and `analysis`: interfaces and plain data objects only, no dependencies.
+// `server` loads these classes; each module loader delegates this package to it, so both sides see the same types.
