@@ -6,6 +6,7 @@ import java.io.PrintStream;
 import java.net.URI;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 import com.google.gson.JsonElement;
@@ -16,13 +17,20 @@ import org.eclipse.lsp4j.DidChangeTextDocumentParams;
 import org.eclipse.lsp4j.DidChangeWatchedFilesParams;
 import org.eclipse.lsp4j.DidCloseTextDocumentParams;
 import org.eclipse.lsp4j.DidOpenTextDocumentParams;
+import org.eclipse.lsp4j.DidChangeWatchedFilesRegistrationOptions;
 import org.eclipse.lsp4j.DidSaveTextDocumentParams;
+import org.eclipse.lsp4j.FileEvent;
+import org.eclipse.lsp4j.FileSystemWatcher;
 import org.eclipse.lsp4j.InitializeParams;
 import org.eclipse.lsp4j.InitializeResult;
 import org.eclipse.lsp4j.InitializedParams;
+import org.eclipse.lsp4j.Registration;
+import org.eclipse.lsp4j.RegistrationParams;
+import org.eclipse.lsp4j.SaveOptions;
 import org.eclipse.lsp4j.ServerCapabilities;
 import org.eclipse.lsp4j.ServerInfo;
 import org.eclipse.lsp4j.TextDocumentSyncKind;
+import org.eclipse.lsp4j.TextDocumentSyncOptions;
 import org.eclipse.lsp4j.jsonrpc.Launcher;
 import org.eclipse.lsp4j.jsonrpc.services.JsonRequest;
 import org.eclipse.lsp4j.services.LanguageClient;
@@ -31,6 +39,10 @@ import org.eclipse.lsp4j.services.LanguageServer;
 import org.eclipse.lsp4j.services.TextDocumentService;
 import org.eclipse.lsp4j.services.WorkspaceService;
 
+import io.github.vdassios.grailsls.compile.AnalysisJar;
+import io.github.vdassios.grailsls.compile.CompileService;
+import io.github.vdassios.grailsls.compile.Documents;
+import io.github.vdassios.grailsls.compile.Workspace;
 import io.github.vdassios.grailsls.project.GradleBridge;
 import io.github.vdassios.grailsls.project.ProjectService;
 
@@ -56,6 +68,8 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
 
   private GrailsLanguageClient client;
   private ProjectService project;
+  private CompileService compiles;
+  private boolean watchFiles;
 
   @Override
   public void connect(LanguageClient client) {
@@ -70,15 +84,33 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
     int timeout = gradle.has("timeoutSeconds") ? gradle.get("timeoutSeconds").getAsInt() : DEFAULT_TIMEOUT_SECONDS;
     Path cacheDir = options.has("cacheDir") ? Path.of(options.get("cacheDir").getAsString()) : GradleBridge.defaultCacheDir();
     GradleBridge bridge = new GradleBridge(cacheDir, GradleBridge.defaultJavaHome(), Duration.ofSeconds(timeout));
-    project = new ProjectService(bridge, workspaceRoot(params), trusted, status -> client.status(status));
+    compiles = new CompileService(diagnostics -> client.publishDiagnostics(diagnostics), CompileService.DEBOUNCE_MILLIS);
+    project = new ProjectService(bridge, workspaceRoot(params), trusted, status -> client.status(status), model -> {
+      Workspace workspace = new Workspace(model, AnalysisJar.extract(cacheDir));
+      workspace.index();
+      compiles.setWorkspace(workspace);
+      return workspace.summary();
+    });
+    watchFiles = params.getCapabilities() != null && params.getCapabilities().getWorkspace() != null
+        && params.getCapabilities().getWorkspace().getDidChangeWatchedFiles() != null
+        && Boolean.TRUE.equals(params.getCapabilities().getWorkspace().getDidChangeWatchedFiles().getDynamicRegistration());
 
     ServerCapabilities capabilities = new ServerCapabilities();
-    capabilities.setTextDocumentSync(TextDocumentSyncKind.Incremental);
+    TextDocumentSyncOptions sync = new TextDocumentSyncOptions();
+    sync.setOpenClose(true);
+    sync.setChange(TextDocumentSyncKind.Incremental);
+    sync.setSave(new SaveOptions(false));
+    capabilities.setTextDocumentSync(sync);
     return CompletableFuture.completedFuture(new InitializeResult(capabilities, new ServerInfo("grails-language-server")));
   }
 
   @Override
   public void initialized(InitializedParams params) {
+    if (watchFiles) {
+      // keeps the declaration index current when files change outside the editor (checkout, generators)
+      DidChangeWatchedFilesRegistrationOptions options = new DidChangeWatchedFilesRegistrationOptions(List.of(new FileSystemWatcher("**/*.groovy")));
+      client.registerCapability(new RegistrationParams(List.of(new Registration("groovy-files", "workspace/didChangeWatchedFiles", options))));
+    }
     project.start();
   }
 
@@ -92,6 +124,9 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
   public CompletableFuture<Object> shutdown() {
     if (project != null) {
       project.stop();
+    }
+    if (compiles != null) {
+      compiles.shutdown();
     }
     return CompletableFuture.completedFuture(null);
   }
@@ -124,16 +159,27 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
 
   private final TextDocumentService textDocuments = new TextDocumentService() {
     @Override
-    public void didOpen(DidOpenTextDocumentParams params) {}
+    public void didOpen(DidOpenTextDocumentParams params) {
+      compiles.open(params.getTextDocument().getUri(), params.getTextDocument().getText(), params.getTextDocument().getVersion());
+    }
 
     @Override
-    public void didChange(DidChangeTextDocumentParams params) {}
+    public void didChange(DidChangeTextDocumentParams params) {
+      compiles.change(params.getTextDocument().getUri(), params.getContentChanges(), params.getTextDocument().getVersion());
+    }
 
     @Override
-    public void didClose(DidCloseTextDocumentParams params) {}
+    public void didClose(DidCloseTextDocumentParams params) {
+      compiles.close(params.getTextDocument().getUri());
+    }
 
     @Override
-    public void didSave(DidSaveTextDocumentParams params) {}
+    public void didSave(DidSaveTextDocumentParams params) {
+      Path path = Documents.path(params.getTextDocument().getUri());
+      if (path != null) {
+        compiles.fileChanged(path);
+      }
+    }
   };
 
   private final WorkspaceService workspace = new WorkspaceService() {
@@ -141,6 +187,13 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
     public void didChangeConfiguration(DidChangeConfigurationParams params) {}
 
     @Override
-    public void didChangeWatchedFiles(DidChangeWatchedFilesParams params) {}
+    public void didChangeWatchedFiles(DidChangeWatchedFilesParams params) {
+      for (FileEvent event : params.getChanges()) {
+        Path path = Documents.path(event.getUri());
+        if (path != null) {
+          compiles.fileChanged(path);
+        }
+      }
+    }
   };
 }

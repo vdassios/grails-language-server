@@ -1,6 +1,7 @@
 package io.github.vdassios.grailsls;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.PipedInputStream;
@@ -15,12 +16,14 @@ import java.util.concurrent.TimeUnit;
 
 import com.google.gson.JsonObject;
 
+import org.eclipse.lsp4j.DidOpenTextDocumentParams;
 import org.eclipse.lsp4j.InitializeParams;
 import org.eclipse.lsp4j.InitializedParams;
 import org.eclipse.lsp4j.MessageActionItem;
 import org.eclipse.lsp4j.MessageParams;
 import org.eclipse.lsp4j.PublishDiagnosticsParams;
 import org.eclipse.lsp4j.ShowMessageRequestParams;
+import org.eclipse.lsp4j.TextDocumentItem;
 import org.eclipse.lsp4j.WorkspaceFolder;
 import org.eclipse.lsp4j.jsonrpc.Launcher;
 import org.eclipse.lsp4j.jsonrpc.services.JsonRequest;
@@ -40,6 +43,7 @@ class ProtocolTest {
   Path tmp;
 
   private final BlockingQueue<StatusParams> statuses = new LinkedBlockingQueue<>();
+  private final BlockingQueue<PublishDiagnosticsParams> diagnostics = new LinkedBlockingQueue<>();
   private GrailsServerProxy server;
 
   /** The server as the client sees it, with the custom request. */
@@ -101,6 +105,9 @@ class ProtocolTest {
     server.reloadProject().get(10, TimeUnit.SECONDS);
     assertEquals(StatusParams.FAILED, next().state);
     assertEquals(0, FakeWrapper.runs(root));
+
+    server.getTextDocumentService().didOpen(new DidOpenTextDocumentParams(new TextDocumentItem(root.resolve("A.groovy").toUri().toString(), "groovy", 1, "class A {\n")));
+    assertNull(diagnostics.poll(1, TimeUnit.SECONDS), "no compile, so no project code ran");
   }
 
   @Test
@@ -110,10 +117,12 @@ class ProtocolTest {
     start(root, trustedOptions());
 
     assertEquals(StatusParams.RESOLVING, next().state);
+    assertEquals(new StatusParams(StatusParams.INDEXING, "1 module"), next());
     assertEquals(new StatusParams(StatusParams.READY, "1 module"), next());
 
     server.reloadProject().get(30, TimeUnit.SECONDS);
     assertEquals(StatusParams.RESOLVING, next().state);
+    assertEquals(StatusParams.INDEXING, next().state);
     assertEquals(new StatusParams(StatusParams.READY, "1 module"), next(), "reload ignores the cache");
     assertEquals(2, FakeWrapper.runs(root));
   }
@@ -139,7 +148,9 @@ class ProtocolTest {
     public void telemetryEvent(Object object) {}
 
     @Override
-    public void publishDiagnostics(PublishDiagnosticsParams diagnostics) {}
+    public void publishDiagnostics(PublishDiagnosticsParams params) {
+      diagnostics.add(params);
+    }
 
     @Override
     public void showMessage(MessageParams messageParams) {}

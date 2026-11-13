@@ -6,12 +6,14 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.function.Consumer;
+import java.util.function.Function;
 
 import io.github.vdassios.grailsls.StatusParams;
 
 /**
  * Resolves the project model in the background, one run at a time, and reports progress as {@code grails/status}.
- * Does nothing for an untrusted workspace: resolving runs the project's build scripts.
+ * Does nothing for an untrusted workspace: resolving runs the project's build scripts. Each new model goes to
+ * {@code onModel} (state {@code indexing}) before the project is reported ready.
  */
 public final class ProjectService {
   static final String UNTRUSTED = "workspace not trusted: the client must send initializationOptions.trusted = true";
@@ -25,14 +27,20 @@ public final class ProjectService {
   private final Path workspaceRoot;
   private final boolean trusted;
   private final Consumer<StatusParams> status;
+  private final Function<ProjectModel, String> onModel;
   private Future<?> running;
   private volatile ProjectModel model;
 
-  public ProjectService(GradleBridge bridge, Path workspaceRoot, boolean trusted, Consumer<StatusParams> status) {
+  /**
+   * @param onModel takes each resolved model (indexes it, sets up compiling) and returns detail for the ready message,
+   *                e.g. ", 2 Java files not built", or an empty string
+   */
+  public ProjectService(GradleBridge bridge, Path workspaceRoot, boolean trusted, Consumer<StatusParams> status, Function<ProjectModel, String> onModel) {
     this.bridge = bridge;
     this.workspaceRoot = workspaceRoot;
     this.trusted = trusted;
     this.status = status;
+    this.onModel = onModel;
   }
 
   /** The last model resolved, or null. */
@@ -87,7 +95,9 @@ public final class ProjectService {
     try {
       ProjectModel resolved = bridge.resolve(workspaceRoot, force);
       model = resolved;
-      status.accept(new StatusParams(StatusParams.READY, summary(resolved)));
+      status.accept(new StatusParams(StatusParams.INDEXING, summary(resolved)));
+      String detail = onModel.apply(resolved);
+      status.accept(new StatusParams(StatusParams.READY, summary(resolved) + detail));
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
     } catch (BridgeException e) {
