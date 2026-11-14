@@ -7,10 +7,10 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Static caches of Grails and GORM AST transformations, keyed by class nodes or class names, emptied after every
- * compile. They are filled during a compile and never emptied, so each one keeps every AST it ever saw (measured: a
- * sweep of a Grails 4 module grew the heap to 2.5 GB with nothing kept), and a later compile could read class nodes
- * of an older one. A compile needs them only while it runs. Fields missing in the project's Grails version are skipped.
+ * Static caches of Grails, GORM and Micronaut AST transformations, keyed by AST nodes or class names, emptied after
+ * every compile. They are filled during a compile and never emptied, so each one keeps every AST it ever saw
+ * (measured: a sweep of a Grails 4 module grew the heap to 2.5 GB with nothing kept), and a later compile could read
+ * class nodes of an older one. A compile needs them only while it runs. Fields missing in the project are skipped.
  */
 final class TransformCaches {
   private static final String[][] FIELDS = {
@@ -20,6 +20,12 @@ final class TransformCaches {
       // GORM (Grails 4 to 7): a @Memoized method, and properties by class name
       {"org.grails.datastore.mapping.reflect.AstUtils", "memoizedMethodClosure$isDomainClassClassNode"},
       {"org.grails.datastore.gorm.transform.AstPropertyResolveUtils", "cachedClassProperties"},
+      // Micronaut's Groovy visitors (Micronaut 1 to 4, in apps that use them): annotation metadata by AST node
+      // (measured: 126,114 entries after two dozen compiles of a Grails 7 app, holding every compile's AST)
+      {"io.micronaut.inject.annotation.AbstractAnnotationMetadataBuilder", "MUTATED_ANNOTATION_METADATA"},
+      // Micronaut OpenAPI's visitor: endpoints and constructors, as AST elements
+      {"io.micronaut.openapi.visitor.Utils", "endpointInfos"},
+      {"io.micronaut.openapi.visitor.Utils", "creatorConstructorsCache"},
   };
 
   private final ClassLoader loader;
