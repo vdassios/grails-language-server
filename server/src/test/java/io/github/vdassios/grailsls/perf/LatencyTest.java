@@ -55,6 +55,7 @@ class LatencyTest {
   /** A member access in code: receiver, dot, member. */
   private static final Pattern ACCESS = Pattern.compile("\\b([a-z]\\w*)\\.([a-zA-Z]\\w*)");
   private static final Pattern STATIC = Pattern.compile("@(Grails)?CompileStatic\\b");
+  private static final Pattern TRANSACTIONAL = Pattern.compile("(?m)^[ \\t]*@Transactional\\b");
   private static final List<String> ARTEFACT_DIRS = List.of("controllers", "services", "domain", "taglib");
 
   @TempDir
@@ -186,31 +187,39 @@ class LatencyTest {
 
   /**
    * For an artefact file, whether the members Grails adds are on its class (named like the file) after the compile:
-   * a counter name, or null for other files.
+   * a counter name, or null for other files. Files Grails does not take as artefacts are counted apart: no class named
+   * like the file (an enum, a trait), a controllers-dir class not named {@code *Controller}, a service with no
+   * {@code @Transactional} outside comments.
    */
   private static String traitFound(CompileContext context, Path file, String text, String kind) throws Exception {
+    String simple = file.getFileName().toString().replace(".groovy", "");
+    boolean artefact = Pattern.compile("\\bclass\\s+" + Pattern.quote(simple) + "\\b").matcher(text).find();
     String expected;
     switch (kind) {
       case "controllers":
+        artefact &= simple.endsWith("Controller");
         expected = "grails.artefact.Controller";
         break;
       case "domain":
         expected = "org.grails.datastore.gorm.GormEntity";
         break;
       case "taglib":
+        artefact &= simple.endsWith("TagLib");
         expected = "grails.artefact.TagLibrary";
         break;
       case "services":
-        expected = text.contains("@Transactional") ? "getTransactionManager" : null;
+        if (!TRANSACTIONAL.matcher(text).find()) {
+          return "services without @Transactional";
+        }
+        expected = "getTransactionManager";
         break;
       default:
         return null;
     }
-    if (expected == null) {
-      return "services without @Transactional";
+    if (!artefact) {
+      return kind + ": not an artefact (no class named like the file, or not named by the convention)";
     }
     Matcher packageLine = Pattern.compile("(?m)^package\\s+([\\w.]+)").matcher(text);
-    String simple = file.getFileName().toString().replace(".groovy", "");
     String className = packageLine.find() ? packageLine.group(1) + "." + simple : simple;
     CompiledClass compiled = context.query(a -> a.compiledClass(file.toString(), className)).get(1, TimeUnit.MINUTES);
     if (compiled == null) {
