@@ -121,6 +121,25 @@ abstract class ArtefactMembersTest {
     }
   }
 
+  /**
+   * Grails's class injectors remember the classes they transformed and skip them later: without emptying that, the
+   * second compile that pulls in a domain class lost the {@code (Map)} constructor Grails adds, and statically compiled
+   * {@code new Book(map)} failed.
+   */
+  @Test
+  void aDomainClassKeepsItsMapConstructorInLaterCompiles() throws Exception {
+    try (Workspace workspace = workspace()) {
+      String domainClass = app().domainClass;
+      String packageName = domainClass.substring(0, domainClass.lastIndexOf('.'));
+      String simpleName = domainClass.substring(packageName.length() + 1);
+      Path path = file("grails-app/services/" + packageName.replace('.', '/') + "/MakerService.groovy");
+      String text = "package " + packageName + "\n@groovy.transform.CompileStatic\nclass MakerService {\n    " + simpleName + " make(Map data) { new "
+          + simpleName + "(data) }\n}\n";
+      assertEquals(List.of(), errors(compile(workspace, path, text)), "first compile");
+      assertEquals(List.of(), errors(compile(workspace, path, text)), "second compile");
+    }
+  }
+
   /** The file's text with {@code def probe() { <typed> }} added as the last member of its class, and the position after {@code typed}. */
   private static Object[] withProbe(String saved, String typed) {
     int end = saved.lastIndexOf('}');
