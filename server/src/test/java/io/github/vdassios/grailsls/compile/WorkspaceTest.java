@@ -93,6 +93,27 @@ class WorkspaceTest {
   }
 
   @Test
+  void aSiblingAddsOnlyArtifactsTheModuleDoesNotHave() throws IOException {
+    Path groovy3011 = touch("gradle/caches/modules-2/files-2.1/org.codehaus.groovy/groovy/3.0.11/a1/groovy-3.0.11.jar", "");
+    Path groovy3014 = touch("gradle/caches/modules-2/files-2.1/org.codehaus.groovy/groovy/3.0.14/b2/groovy-3.0.14.jar", "");
+    Path xml3014 = touch("gradle/caches/modules-2/files-2.1/org.codehaus.groovy/groovy-xml/3.0.14/c3/groovy-xml-3.0.14.jar", "");
+    Path tests3014 = touch("gradle/caches/modules-2/files-2.1/org.codehaus.groovy/groovy/3.0.14/d4/groovy-3.0.14-tests.jar", "");
+    Path old = touch("m2/repository/org/example/tool/1.0/tool-1.0.jar", "");
+    Path newer = touch("m2/repository/org/example/tool/2.0/tool-2.0.jar", "");
+    Path flat = touch("lib/libs/vendored-1.0.jar", "");
+    Path app = tmp.resolve("app");
+    Path lib = tmp.resolve("lib");
+    SourceSetRecord appMain = sourceSet("main", List.of(app.resolve("src/main/groovy")), List.of(groovy3011, old), List.of(), List.of());
+    SourceSetRecord libMain = sourceSet("main", List.of(lib.resolve("src/main/groovy")), List.of(groovy3014, xml3014, tests3014, newer, flat), List.of(), List.of());
+    ModuleRecord root = module(":", tmp, null, List.of());
+    try (Workspace workspace = new Workspace(new ProjectModel(tmp, List.of(root, module(":app", app, "3.0.11", List.of(":lib"), appMain), module(":lib", lib, "3.0.14", List.of(), libMain)), false),
+        tmp.resolve("analysis.jar"))) {
+      assertEquals(List.of(tmp.resolve("analysis.jar"), groovy3011, old, xml3014, tests3014, flat), workspace.contexts().get(0).classpath(),
+          "app's own versions only; lib's other artifacts, a classifier and a jar of unknown layout added");
+    }
+  }
+
+  @Test
   void onlyClassesOfJavaSourcesAreServedFromTheClassOutput() throws IOException {
     try (Workspace workspace = workspace()) {
       CompileContext appMain = workspace.contexts().get(0);

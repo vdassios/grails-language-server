@@ -34,8 +34,8 @@ import io.github.vdassios.grailsls.project.ProjectModel;
  * declaration index of all their roots. Replaced as a whole when the project model changes.
  *
  * <p>Per source set: the loader holds its compile classpath without any module's build output, the class
- * directories of sibling modules it depends on, those siblings' own dependencies (after its own, so its versions
- * win), and the compiled classes of its own {@code .java} files. Groovy classes resolve from source: its own roots,
+ * directories of sibling modules it depends on, those siblings' own dependencies (only artifacts it does not have:
+ * its own versions stay the only ones), and the compiled classes of its own {@code .java} files. Groovy classes resolve from source: its own roots,
  * then {@code main}'s (for other source sets), then the siblings'. A sibling's class pulled in from source compiles
  * in this loader, so it needs the sibling's {@code implementation} dependencies, which Gradle keeps off this classpath.
  */
@@ -207,10 +207,20 @@ public final class Workspace implements AutoCloseable {
         siblingMain.classesDirs.forEach(dir -> classpath.add(Path.of(dir)));
       }
     }
+    // Gradle resolves one version of each artifact per source set; a sibling's other version would sit next to it
+    // (two Groovy versions stop Groovy's runtime from starting), so a sibling adds only artifacts not yet there
+    Set<String> artifacts = classpath.stream().map(Workspace::artifact).filter(a -> a != null).collect(Collectors.toSet());
     for (ModuleRecord sibling : siblings) {
       SourceSetRecord siblingMain = sibling.sourceSet("main");
       if (siblingMain != null) {
-        addOutsideBuildDirs(classpath, siblingMain.compileClasspath, buildDirs);
+        Set<Path> extra = new LinkedHashSet<>();
+        addOutsideBuildDirs(extra, siblingMain.compileClasspath, buildDirs);
+        for (Path jar : extra) {
+          String artifact = artifact(jar);
+          if (artifact == null || artifacts.add(artifact)) {
+            classpath.add(jar);
+          }
+        }
       }
     }
 
@@ -272,6 +282,28 @@ public final class Workspace implements AutoCloseable {
         classpath.add(path);
       }
     }
+  }
+
+  /**
+   * Group, artifact and classifier of a jar in Gradle's cache ({@code files-2.1/<group>/<artifact>/<version>/<hash>/})
+   * or a Maven repository ({@code .../<artifact>/<version>/<artifact>-<version>[-<classifier>].jar}), without the
+   * version; null for any other file.
+   */
+  static String artifact(Path jar) {
+    String file = jar.getFileName().toString();
+    int n = jar.getNameCount();
+    if (n >= 6 && jar.getName(n - 6).toString().equals("files-2.1")) {
+      String artifact = jar.getName(n - 4).toString();
+      String prefix = artifact + "-" + jar.getName(n - 3);
+      return jar.getName(n - 5) + ":" + artifact + ":" + (file.startsWith(prefix) ? file.substring(prefix.length()) : file);
+    }
+    Path versionDir = jar.getParent();
+    Path artifactDir = versionDir == null ? null : versionDir.getParent();
+    if (artifactDir == null || artifactDir.getFileName() == null) {
+      return null;
+    }
+    String prefix = artifactDir.getFileName() + "-" + versionDir.getFileName();
+    return file.startsWith(prefix) ? artifactDir + ":" + file.substring(prefix.length()) : null;
   }
 
   /** Source roots without build output and tool directories below the module. */
