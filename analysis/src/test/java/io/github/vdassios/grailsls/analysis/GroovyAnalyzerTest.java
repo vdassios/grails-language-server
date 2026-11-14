@@ -200,6 +200,32 @@ class GroovyAnalyzerTest {
     assertTrue(((Map<?, ?>) field.get(null)).isEmpty());
   }
 
+  /**
+   * Groovy checks type argument bounds before the trait transformation turns a trait's {@code extends} into
+   * {@code implements}: against compiled traits the check passes, with the traits pulled in as sources it failed.
+   */
+  @Test
+  void aTypeArgumentMeetsABoundThroughATraitThatExtendsATrait() throws IOException {
+    index.put("lib.Diffable", write("src/lib/Diffable.groovy", "package lib\ntrait Diffable<T extends Diffable> {}\n"));
+    index.put("lib.Catalogued", write("src/lib/Catalogued.groovy", "package lib\ntrait Catalogued<D extends Diffable> implements Diffable<D> {}\n"));
+    index.put("lib.Item", write("src/lib/Item.groovy", "package lib\ntrait Item<D extends Diffable> extends Catalogued<D> {}\n"));
+    String document = tmp.resolve("src/lib/Part.groovy").toString();
+    CompileResult result = compile(document, "package lib\nclass Part implements Item<Part> {\n  List<Item<Part>> parts\n}\n");
+    assertEquals(List.of(), errors(result));
+    assertEquals(4, result.sources);
+  }
+
+  /** A bound that does not hold stays an error. */
+  @Test
+  void aTypeArgumentOutsideItsBoundIsStillAnError() throws IOException {
+    index.put("lib.Diffable", write("src/lib/Diffable.groovy", "package lib\ntrait Diffable<T extends Diffable> {}\n"));
+    index.put("lib.Item", write("src/lib/Item.groovy", "package lib\ntrait Item<D extends Diffable> extends Diffable<D> {}\n"));
+    String document = tmp.resolve("src/lib/Part.groovy").toString();
+    List<String> errors = errors(compile(document, "package lib\nclass Part implements Item<String> {}\n"));
+    assertEquals(1, errors.size(), errors.toString());
+    assertTrue(errors.get(0).contains("The type String is not a valid substitute for the bounded parameter"), errors.toString());
+  }
+
   @Test
   void keptCompilesHoldNoParseTree() throws IOException {
     String author = write("src/lib/Author.groovy", "package lib\nclass Author {\n  String name\n  Author(String name) { this.name = name }\n"

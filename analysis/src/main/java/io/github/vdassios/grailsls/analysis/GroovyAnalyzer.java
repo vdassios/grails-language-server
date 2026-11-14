@@ -141,7 +141,7 @@ public final class GroovyAnalyzer implements Analyzer {
     if (injections != null) {
       injections.mark(unit);
     }
-    collect(unit.getErrorCollector(), request.path, diagnostics);
+    collect(unit.getErrorCollector(), TypeBounds.stale(document, unit.getErrorCollector(), config, loader), request.path, diagnostics);
     return new Kept(unit, request.text, document.getSource().getURI(), resolver.sources(), Math.min(phase, last), false);
   }
 
@@ -361,16 +361,23 @@ public final class GroovyAnalyzer implements Analyzer {
     return new SourceUnit(path, new StringReaderSourceWithURI(text, new File(path).toURI(), config), config, loader, errors);
   }
 
-  /** Groovy reports some errors once per generated node (a property's field and accessors): keep one of each. */
+  /**
+   * Groovy reports some errors once per generated node (a property's field and accessors): keep one of each. Errors
+   * in {@code stale} no longer hold ({@link TypeBounds}).
+   */
   @SuppressWarnings("unchecked") // Groovy 2.5 returns raw lists
-  private static void collect(ErrorCollector collector, String documentPath, List<Diagnostic> out) {
+  private static void collect(ErrorCollector collector, Set<Object> stale, String documentPath, List<Diagnostic> out) {
     Set<String> seen = new HashSet<>();
     for (Diagnostic diagnostic : out) {
       seen.add(diagnostic.toString());
     }
     List<Object> messages = new ArrayList<>();
     if (collector.getErrors() != null) {
-      messages.addAll(collector.getErrors());
+      for (Object error : (List<Object>) collector.getErrors()) {
+        if (!stale.contains(error)) {
+          messages.add(error);
+        }
+      }
     }
     int warningsFrom = messages.size();
     if (collector.getWarnings() != null) {

@@ -140,6 +140,23 @@ abstract class ArtefactMembersTest {
     }
   }
 
+  /**
+   * GORM adds {@code GormEntity} to a domain class at canonicalization, after Groovy checked type argument bounds: with
+   * the domain class pulled in from source, a type bounded by {@code GormEntity} rejected it.
+   */
+  @Test
+  void aDomainClassFromSourceMeetsAGormEntityBound() throws Exception {
+    try (Workspace workspace = workspace()) {
+      String domainClass = app().domainClass;
+      String packageName = domainClass.substring(0, domainClass.lastIndexOf('.'));
+      String simpleName = domainClass.substring(packageName.length() + 1);
+      Path path = file("src/main/groovy/" + packageName.replace('.', '/') + "/EntityHolder.groovy");
+      String text = "package " + packageName + "\nimport org.grails.datastore.gorm.GormEntity\nclass EntityHolder<D extends GormEntity> {\n    D entity\n}\n"
+          + "class Holders {\n    EntityHolder<" + simpleName + "> holder\n}\n";
+      assertEquals(List.of(), errors(compile(workspace, path, text)));
+    }
+  }
+
   /** The file's text with {@code def probe() { <typed> }} added as the last member of its class, and the position after {@code typed}. */
   private static Object[] withProbe(String saved, String typed) {
     int end = saved.lastIndexOf('}');
