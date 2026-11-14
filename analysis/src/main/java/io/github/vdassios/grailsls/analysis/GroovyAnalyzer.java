@@ -57,6 +57,7 @@ public final class GroovyAnalyzer implements Analyzer {
   /** The last completion per document, for resolve; dropped by the next compile of the document. */
   private final Map<String, LastCompletion> completions = new ConcurrentHashMap<>();
   private final TransformCaches caches = new TransformCaches(GroovyAnalyzer.class.getClassLoader());
+  private final ParserCache parserCache = new ParserCache(GroovyAnalyzer.class.getClassLoader());
   /** Parent of each compile's class loader: the module loader that loaded this class. */
   private final ClassLoader parent;
 
@@ -69,6 +70,7 @@ public final class GroovyAnalyzer implements Analyzer {
     this.parent = parent;
     // @Grab would download and load code at compile time
     System.setProperty("groovy.grape.enable", "false");
+    ParserCache.keep();
   }
 
   @Override
@@ -96,6 +98,7 @@ public final class GroovyAnalyzer implements Analyzer {
       return runUnit(request, diagnostics);
     } finally {
       caches.clear();
+      parserCache.trim();
     }
   }
 

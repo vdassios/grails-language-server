@@ -200,6 +200,33 @@ class GroovyAnalyzerTest {
     assertTrue(((Map<?, ?>) field.get(null)).isEmpty());
   }
 
+  /** Groovy 3 and 4 empty the parser's prediction cache after every 64 parsed files: mid-compile for a large closure. */
+  @Test
+  void theParserCacheOutlivesManyParsedFiles() {
+    ParserCache cache = new ParserCache(GroovyAnalyzer.class.getClassLoader());
+    compile(tmp.resolve("src/lib/Rich.groovy").toString(), "package lib\nclass Rich {\n  Map<String, List<Integer>> byName = [:]\n"
+        + "  int total(String name) {\n    int sum = 0\n    for (int n in byName[name] ?: []) { if (n > 0) { sum += n } else { sum -= 1 } }\n"
+        + "    try { return byName.values().flatten().findAll { it != null }.size() + sum } finally { byName.clear() }\n  }\n}\n");
+    int afterRich = cache.states();
+    for (int i = 0; i < 70; i++) {
+      compile(tmp.resolve("src/lib/Plain" + i + ".groovy").toString(), "package lib\nclass Plain" + i + " {}\n");
+    }
+    assertTrue(cache.states() >= afterRich, cache.states() + " states left of " + afterRich);
+  }
+
+  /** The server empties the cache itself, between compiles, once it is over a limit. */
+  @Test
+  void aParserCacheOverItsLimitIsEmptied() {
+    compile(tmp.resolve("src/lib/Shelf.groovy").toString(), "package lib\nclass Shelf {\n  List<String> items = []\n}\n");
+    ClassLoader loader = GroovyAnalyzer.class.getClassLoader();
+    ParserCache cache = new ParserCache(loader);
+    int filled = cache.states();
+    new ParserCache(loader, Integer.MAX_VALUE).trim();
+    assertEquals(filled, cache.states());
+    new ParserCache(loader, 1).trim();
+    assertTrue(cache.states() <= 0, cache.states() + " states left"); // -1: Groovy 2.5 has no such cache
+  }
+
   /**
    * Groovy checks type argument bounds before the trait transformation turns a trait's {@code extends} into
    * {@code implements}: against compiled traits the check passes, with the traits pulled in as sources it failed.
