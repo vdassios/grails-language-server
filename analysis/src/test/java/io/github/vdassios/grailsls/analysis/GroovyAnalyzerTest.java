@@ -8,9 +8,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.lang.reflect.Field;
+import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -198,6 +201,36 @@ class GroovyAnalyzerTest {
     Field field = Class.forName("org.codehaus.groovy.ast.tools.GenericsUtils").getDeclaredField("PARAMETERIZED_TYPE_CACHE");
     field.setAccessible(true);
     assertTrue(((Map<?, ?>) field.get(null)).isEmpty());
+  }
+
+  /**
+   * Micronaut 4's global transformation reads annotation members through the annotation type's methods; Grails 7's
+   * {@code @GrailsCompileStatic(TypeCheckingMode.SKIP)} is an alias with none until Groovy expands it, after the global
+   * transformations of the same phase. The server runs that transformation after the expansion.
+   */
+  @Test
+  void aGlobalTransformThatReadsAliasMembersRunsAfterTheAliasIsExpanded() throws Exception {
+    Path services = tmp.resolve("services");
+    Files.writeString(services, io.micronaut.ast.groovy.TypeElementVisitorTransform.class.getName() + "\n");
+    String name = "META-INF/services/org.codehaus.groovy.transform.ASTTransformation";
+    ClassLoader registering = new ClassLoader(GroovyAnalyzer.class.getClassLoader()) {
+      @Override
+      protected Enumeration<URL> findResources(String resource) throws IOException {
+        return resource.equals(name) ? Collections.enumeration(List.of(services.toUri().toURL())) : super.findResources(resource);
+      }
+    };
+    String source = "import groovy.transform.AnnotationCollector\nimport groovy.transform.CompileStatic\nimport groovy.transform.TypeCheckingMode\n"
+        + "@AnnotationCollector([CompileStatic])\n@interface Fast {}\n"
+        + "class A {\n  @Fast(TypeCheckingMode.SKIP)\n  def b(x) { x.foo }\n}\n";
+    GroovyAnalyzer registered = new GroovyAnalyzer(registering);
+    try {
+      int before = io.micronaut.ast.groovy.TypeElementVisitorTransform.METHODS_READ.get();
+      CompileResult result = registered.compile(new CompileRequest(tmp.resolve("A.groovy").toString(), source, lookup, () -> false));
+      assertEquals(List.of(), errors(result));
+      assertTrue(io.micronaut.ast.groovy.TypeElementVisitorTransform.METHODS_READ.get() > before, "the transformation ran");
+    } finally {
+      registered.close();
+    }
   }
 
   /** Groovy 3 and 4 empty the parser's prediction cache after every 64 parsed files: mid-compile for a large closure. */

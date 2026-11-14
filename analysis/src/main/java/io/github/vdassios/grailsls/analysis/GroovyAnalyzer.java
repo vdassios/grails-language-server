@@ -60,6 +60,7 @@ public final class GroovyAnalyzer implements Analyzer {
   private final ParserCache parserCache = new ParserCache(GroovyAnalyzer.class.getClassLoader());
   /** Parent of each compile's class loader: the module loader that loaded this class. */
   private final ClassLoader parent;
+  private final LateTransforms lateTransforms;
 
   public GroovyAnalyzer() {
     this(GroovyAnalyzer.class.getClassLoader());
@@ -68,6 +69,7 @@ public final class GroovyAnalyzer implements Analyzer {
   /** With another parent loader, for tests. */
   GroovyAnalyzer(ClassLoader parent) {
     this.parent = parent;
+    this.lateTransforms = new LateTransforms(parent);
     // @Grab would download and load code at compile time
     System.setProperty("groovy.grape.enable", "false");
     ParserCache.keep();
@@ -111,10 +113,12 @@ public final class GroovyAnalyzer implements Analyzer {
     // a name without a class file is not loaded as a class next: of the thousands of names the resolver tries per
     // compile, almost all exist nowhere, and each such load searched every jar again and threw through four loaders
     config.getOptimizationOptions().put("classLoaderResolving", false);
+    lateTransforms.disable(config);
     GroovyClassLoader loader = new GroovyClassLoader(parent, config, false);
     // source lookup goes through the resolver only, never through the loader (no URL-named sources)
     loader.setResourceLoader(name -> null);
     DocumentUnit unit = new DocumentUnit(config, loader);
+    lateTransforms.add(unit);
     SourceUnit document = unit.addSource(source(request.path, request.text, config, loader, unit.getErrorCollector()));
     PathResolver resolver = new PathResolver(request.lookup, document);
     unit.setClassNodeResolver(resolver);
