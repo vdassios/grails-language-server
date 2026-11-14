@@ -3,6 +3,8 @@ package io.github.vdassios.grailsls.perf;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 
 import java.io.IOException;
+import java.lang.management.ManagementFactory;
+import java.lang.ref.WeakReference;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -171,6 +173,132 @@ class LatencyTest {
     }
     write(report(), "sweep.txt");
     System.out.println(report());
+  }
+
+  /**
+   * Memory and loader lifetime (C6 budget: under 1.5 GB resident with ten files open; C1: loaders closed), in the
+   * context with the most artefact files: ten artefact files compiled and kept, as ten open documents (controllers
+   * first, then domain classes, services, taglibs); fifty compiles each of the median and the slowest file of its first
+   * artefact kind; then the workspace closed, and whether the context's loader is collected. Writes
+   * {@code server/build/perf/memory.txt}.
+   */
+  @Test
+  void keptFilesRepeatsAndClose() throws Exception {
+    ProjectModel model = model();
+    Workspace workspace = new Workspace(model, AnalysisJar.extract(tmp));
+    workspace.index();
+    count("heap max MB", (int) (Runtime.getRuntime().maxMemory() >> 20));
+    count("contexts", workspace.contexts().size());
+    CompileContext context = null;
+    Map<String, List<Path>> artefacts = null;
+    for (CompileContext candidate : workspace.contexts()) {
+      Map<String, List<Path>> files = artefactFiles(workspace, candidate);
+      if (artefacts == null || size(files) > size(artefacts)) {
+        context = candidate;
+        artefacts = files;
+      }
+    }
+    artefacts.forEach((kind, files) -> count("measured context: " + kind, files.size()));
+    count("measured context: Java classes from build output", context.javaClasses());
+    count("RSS MB before compiling", rssMb());
+
+    List<Path> ten = new ArrayList<>();
+    for (List<Path> files : artefacts.values()) {
+      ten.addAll(files.subList(0, Math.min(files.size(), 10 - ten.size())));
+    }
+    long start = System.nanoTime();
+    for (Path file : ten) {
+      count("ten files: errors", errors(compile(workspace, context, file), file));
+    }
+    record("ten files, all compiles", start);
+    count("ten files: files", ten.size());
+    count("ten files: RSS MB", rssMb());
+    count("ten files: heap MB after GC", heapMb());
+
+    List<Path> kind = artefacts.values().stream().filter(files -> !files.isEmpty()).findFirst().orElse(List.of());
+    Map<Path, Long> once = new LinkedHashMap<>();
+    for (Path file : kind) {
+      once.put(file, compile(workspace, context, file).millis);
+      if (!ten.contains(file)) {
+        context.forget(file.toString());
+      }
+    }
+    List<Path> byTime = kind.stream().sorted((a, b) -> Long.compare(once.get(a), once.get(b))).collect(Collectors.toList());
+    for (String which : byTime.isEmpty() ? List.<String>of() : List.of("median", "slowest")) {
+      Path file = byTime.get(which.equals("median") ? byTime.size() / 2 : byTime.size() - 1);
+      List<Integer> heap = new ArrayList<>();
+      for (int k = 1; k <= 50; k++) {
+        timings.computeIfAbsent("repeat x50, " + which + " file", n -> new ArrayList<>()).add(compile(workspace, context, file).millis);
+        if (k % 10 == 0) {
+          heap.add(heapMb());
+        }
+      }
+      count("repeat x50, " + which + " file: heap MB after GC, after 10 compiles", heap.get(0));
+      count("repeat x50, " + which + " file: heap MB after GC, after 50 compiles", heap.get(4));
+    }
+    count("RSS MB before close", rssMb());
+
+    // the analyzer is loaded by the context's module loader
+    WeakReference<ClassLoader> loader = new WeakReference<>(context.analyzer().getClass().getClassLoader());
+    int heapBefore = heapMb();
+    int classesBefore = ManagementFactory.getClassLoadingMXBean().getLoadedClassCount();
+    workspace.close();
+    context = null;
+    workspace = null;
+    for (int k = 0; k < 40 && loader.get() != null; k++) {
+      System.gc();
+      Thread.sleep(100);
+    }
+    count("close: loader collected (1 = yes)", loader.get() == null ? 1 : 0);
+    count("close: heap MB after GC, before", heapBefore);
+    count("close: heap MB after GC, after", heapMb());
+    count("close: loaded classes, before", classesBefore);
+    count("close: loaded classes, after", ManagementFactory.getClassLoadingMXBean().getLoadedClassCount());
+    count("close: RSS MB", rssMb());
+    write(report(), "memory.txt");
+    System.out.println(report());
+  }
+
+  /** The context's own Groovy artefact files by kind: controllers, domain, services, taglib. */
+  private static Map<String, List<Path>> artefactFiles(Workspace workspace, CompileContext context) {
+    Map<String, List<Path>> files = new LinkedHashMap<>();
+    for (String kind : List.of("controllers", "domain", "services", "taglib")) {
+      files.put(kind, new ArrayList<>());
+    }
+    for (Path file : workspace.declarations().sources(context.ownRoots)) {
+      List<Path> ofKind = files.get(kind(file));
+      if (ofKind != null && file.toString().endsWith(".groovy") && workspace.contextOf(file) == context) {
+        ofKind.add(file);
+      }
+    }
+    files.values().forEach(Collections::sort);
+    return files;
+  }
+
+  private static int size(Map<String, List<Path>> files) {
+    return files.values().stream().mapToInt(List::size).sum();
+  }
+
+  private static CompileResult compile(Workspace workspace, CompileContext context, Path file) throws Exception {
+    CompileRequest request = new CompileRequest(file.toString(), Files.readString(file), workspace.lookup(context, p -> null), () -> false);
+    return context.compile(request).get(5, TimeUnit.MINUTES);
+  }
+
+  private static int errors(CompileResult result, Path file) {
+    return (int) result.diagnostics.stream().filter(d -> d.severity == Diagnostic.ERROR && d.path.equals(file.toString())).count();
+  }
+
+  private static int rssMb() throws IOException {
+    Process ps = new ProcessBuilder("ps", "-o", "rss=", "-p", String.valueOf(ProcessHandle.current().pid())).start();
+    return (int) (Long.parseLong(new String(ps.getInputStream().readAllBytes()).trim()) >> 10);
+  }
+
+  private static int heapMb() throws InterruptedException {
+    for (int i = 0; i < 3; i++) {
+      System.gc();
+      Thread.sleep(100);
+    }
+    return (int) (ManagementFactory.getMemoryMXBean().getHeapMemoryUsage().getUsed() >> 20);
   }
 
   /** The artefact directory below {@code grails-app}, or {@code other}. */
