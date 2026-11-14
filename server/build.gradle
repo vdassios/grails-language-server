@@ -74,4 +74,7 @@ tasks.register("perfTest", Test) {
   systemProperty "gls.fixtures", rootProject.file("fixtures").absolutePath
   testLogging { showStandardStreams = true }
   outputs.upToDateWhen { false }
+  // The heap `java -jar` gives the server (a quarter of the RAM), not Gradle's 512 MB test default, under which large
+  // projects spend their time in GC or run out. GLS_PERF_HEAP (e.g. 2g) sets another.
+  maxHeapSize = System.getenv("GLS_PERF_HEAP") ?: "${java.lang.management.ManagementFactory.operatingSystemMXBean.totalMemorySize >> 22}m"
 }
