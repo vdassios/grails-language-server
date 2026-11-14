@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -184,6 +185,19 @@ class GroovyAnalyzerTest {
     assertNotNull(compiled);
     assertEquals(author, compiled.sourcePath, "a file path, not a file: URL (Grails decides artefacts from it)");
     assertEquals(document, analyzer.compiledClass(document, "lib.Book").sourcePath);
+  }
+
+  /** Groovy's static cache of parameterized types keeps class nodes, and with them the whole compile, in its keys. */
+  @Test
+  void compilesLeaveNoParameterizedTypeInGroovysCache() throws Exception {
+    String document = tmp.resolve("src/lib/Shelf.groovy").toString();
+    assertEquals(List.of(), errors(compile(document, "package lib\n@groovy.transform.CompileStatic\nclass Shelf<T extends Comparable<T>> {\n"
+        + "  List<T> items = new ArrayList<T>()\n  Map<String, List<T>> byName(Map<String, T> named) {\n"
+        + "    named.collectEntries { String k, T v -> [(k): [v]] } as Map<String, List<T>>\n  }\n"
+        + "  T first() { items.sort { T a, T b -> a <=> b }.first() }\n}\n")));
+    Field field = Class.forName("org.codehaus.groovy.ast.tools.GenericsUtils").getDeclaredField("PARAMETERIZED_TYPE_CACHE");
+    field.setAccessible(true);
+    assertTrue(((Map<?, ?>) field.get(null)).isEmpty());
   }
 
   @Test

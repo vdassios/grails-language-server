@@ -10,10 +10,10 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Static caches of Grails, GORM and Micronaut AST transformations, keyed by AST nodes or class names, emptied after
- * every compile. They are filled during a compile and never emptied, so each one keeps every AST it ever saw
- * (measured: a sweep of a Grails 4 module grew the heap to 2.5 GB with nothing kept), and a later compile could read
- * class nodes of an older one. A compile needs them only while it runs. Fields missing in the project are skipped.
+ * Static caches of Groovy's compiler and of Grails, GORM and Micronaut AST transformations, keyed by AST nodes or class
+ * names, emptied after every compile. They are filled during a compile and never emptied, so each one keeps every AST
+ * it ever saw (measured: a sweep of a Grails 4 module grew the heap to 2.5 GB with nothing kept), and a later compile
+ * could read class nodes of an older one. A compile needs them only while it runs. Fields missing in the project are skipped.
  * Grails's class injectors also remember what they did, and skip it in the next compile: emptied too.
  */
 final class TransformCaches {
@@ -30,6 +30,13 @@ final class TransformCaches {
       // Micronaut OpenAPI's visitor: endpoints and constructors, as AST elements
       {"io.micronaut.openapi.visitor.Utils", "endpointInfos"},
       {"io.micronaut.openapi.visitor.Utils", "creatorConstructorsCache"},
+      // Micronaut's type element visitors: emptied by its transform at the end of a full compile, which the server
+      // never reaches; holds the compile unit (a static map in Micronaut 1, a thread-local in 3 and 4)
+      {"io.micronaut.ast.groovy.TypeElementVisitorTransform", "loadedVisitors"},
+      {"io.micronaut.ast.groovy.TypeElementVisitorTransform", "beanDefinitionBuilders"},
+      // Groovy 2.5 to 5: parameterized types by generics placeholders; the keys hold class nodes, up to 64 per loader
+      // (measured: with 51 contexts, mdm-core's sweep filled 4 GB of heap after ~550 compiles)
+      {"org.codehaus.groovy.ast.tools.GenericsUtils", "PARAMETERIZED_TYPE_CACHE"},
   };
 
   /** Grails's class injectors, created once per loader and kept in these static arrays (Grails 4 to 7). */
@@ -56,6 +63,10 @@ final class TransformCaches {
     for (Field field : fields()) {
       try {
         Object value = field.get(null);
+        if (value instanceof ThreadLocal) {
+          ((ThreadLocal<?>) value).remove();
+          continue;
+        }
         Map<?, ?> map = value instanceof Map ? (Map<?, ?>) value : memoizeCache(value);
         if (map != null) {
           map.clear();
