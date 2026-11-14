@@ -15,7 +15,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+import org.codehaus.groovy.ast.ClassCodeVisitorSupport;
+import org.codehaus.groovy.ast.ClassNode;
+import org.codehaus.groovy.ast.MethodNode;
+import org.codehaus.groovy.ast.ModuleNode;
+import org.codehaus.groovy.ast.Parameter;
+import org.codehaus.groovy.ast.expr.ClosureExpression;
 import org.codehaus.groovy.control.Phases;
+import org.codehaus.groovy.control.SourceUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -177,6 +184,45 @@ class GroovyAnalyzerTest {
     assertNotNull(compiled);
     assertEquals(author, compiled.sourcePath, "a file path, not a file: URL (Grails decides artefacts from it)");
     assertEquals(document, analyzer.compiledClass(document, "lib.Book").sourcePath);
+  }
+
+  @Test
+  void keptCompilesHoldNoParseTree() throws IOException {
+    String author = write("src/lib/Author.groovy", "package lib\nclass Author {\n  String name\n  Author(String name) { this.name = name }\n"
+        + "  String greet(String other) { [other].collect { String s -> s + name }.join() }\n}\n");
+    index.put("lib.Author", author);
+    String document = tmp.resolve("src/lib/Book.groovy").toString();
+    compile(document, "package lib\nclass Book {\n  Closure sort = { a, b -> a <=> b }\n  Author author(String name) { new Author(name) }\n"
+        + "  Runnable task(int n) { new Runnable() { void run() { [n].each { int i -> i } } } }\n}\n");
+    List<Parameter> parameters = new ArrayList<>();
+    for (ModuleNode module : analyzer.unit(document).getAST().getModules()) {
+      for (ClassNode type : module.getClasses()) {
+        new ClassCodeVisitorSupport() {
+          @Override
+          protected SourceUnit getSourceUnit() {
+            return module.getContext();
+          }
+
+          @Override
+          protected void visitConstructorOrMethod(MethodNode node, boolean isConstructor) {
+            parameters.addAll(List.of(node.getParameters()));
+            super.visitConstructorOrMethod(node, isConstructor);
+          }
+
+          @Override
+          public void visitClosureExpression(ClosureExpression expression) {
+            parameters.addAll(List.of(expression.getParameters()));
+            super.visitClosureExpression(expression);
+          }
+        }.visitClass(type);
+      }
+    }
+    assertTrue(parameters.size() >= 7, "parameters found: " + parameters.size());
+    // Groovy 4 and 5 put each parameter's parse tree context, whose parents hold the file's whole tree, on the node
+    for (Parameter parameter : parameters) {
+      assertNull(parameter.getNodeMetaData("_PARAMETER_CONTEXT"), parameter.getName());
+      assertNull(parameter.getNodeMetaData("_PARAMETER_MODIFIER_MANAGER"), parameter.getName());
+    }
   }
 
   @Test

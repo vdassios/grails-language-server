@@ -102,7 +102,7 @@ public final class GroovyAnalyzer implements Analyzer {
   private Kept runUnit(CompileRequest request, List<Diagnostic> diagnostics) {
     CompilerConfiguration config = new CompilerConfiguration();
     config.setSourceEncoding("UTF-8");
-    config.addCompilationCustomizers(new AstTestRemover());
+    config.addCompilationCustomizers(new AstTestRemover(), new ParseTreeRemover());
     // attaches Groovydoc comments to nodes for hover (CompilerConfiguration.GROOVYDOC, Groovy 3+; 2.5 has none)
     config.getOptimizationOptions().put("groovydoc", true);
     // a name without a class file is not loaded as a class next: of the thousands of names the resolver tries per
@@ -176,6 +176,12 @@ public final class GroovyAnalyzer implements Analyzer {
   int phase(String documentPath) {
     Kept kept = units.get(documentPath);
     return kept == null ? -1 : kept.phase;
+  }
+
+  /** The kept compile of a document, or null. For tests. */
+  CompilationUnit unit(String documentPath) {
+    Kept kept = units.get(documentPath);
+    return kept == null ? null : kept.unit;
   }
 
   @Override
