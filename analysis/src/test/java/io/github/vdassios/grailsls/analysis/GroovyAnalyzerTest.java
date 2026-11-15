@@ -275,6 +275,22 @@ class GroovyAnalyzerTest {
     assertEquals(4, result.sources);
   }
 
+  /**
+   * Groovy 4 restarts resolving when a type names a source not yet in the unit, as each one the index adds does. A
+   * restart from inside a declaration's type left the resolver checking the type of every variable the next class
+   * reads, and a property typed by a superclass's type parameter failed (rundeck: "unable to resolve class ID").
+   */
+  @Test
+  void aSourceAddedForADeclarationsTypeLeavesOtherClassesVariablesUnchecked() throws IOException {
+    index.put("p.Helper", write("src/p/Helper.groovy", "package p\nclass Helper {\n  def run() { q.Other other = null }\n}\n"));
+    index.put("q.Other", write("src/q/Other.groovy", "package q\nclass Other {}\n"));
+    String document = tmp.resolve("src/p/Entry.groovy").toString();
+    CompileResult result = compile(document, "package p\nclass Entry extends AbstractMap.SimpleEntry<String, String> {\n  Entry() { super('k', 'v') }\n"
+        + "  Helper helper\n  int length() { key.length() }\n}\n");
+    assertEquals(List.of(), errors(result));
+    assertEquals(3, result.sources);
+  }
+
   /** A bound that does not hold stays an error. */
   @Test
   void aTypeArgumentOutsideItsBoundIsStillAnError() throws IOException {

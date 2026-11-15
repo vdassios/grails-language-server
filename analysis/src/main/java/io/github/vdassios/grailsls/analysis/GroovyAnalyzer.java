@@ -1,6 +1,7 @@
 package io.github.vdassios.grailsls.analysis;
 
 import java.io.File;
+import java.lang.reflect.Field;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -23,6 +24,7 @@ import org.codehaus.groovy.control.CompilationUnit;
 import org.codehaus.groovy.control.CompilerConfiguration;
 import org.codehaus.groovy.control.ErrorCollector;
 import org.codehaus.groovy.control.Phases;
+import org.codehaus.groovy.control.ResolveVisitor;
 import org.codehaus.groovy.control.SourceUnit;
 import org.codehaus.groovy.control.messages.ExceptionMessage;
 import org.codehaus.groovy.control.messages.Message;
@@ -481,6 +483,15 @@ public final class GroovyAnalyzer implements Analyzer {
 
   /** A unit whose errors do not stop it: the following phases still run, so one unresolved name hides nothing else. */
   private static final class DocumentUnit extends CompilationUnit {
+    /**
+     * Groovy 4 and 5 restart resolving when a type names a source not yet in the unit, as each one {@link PathResolver}
+     * adds does, and a restart from inside a declaration's type leaves this flag of the resolver set: the next class
+     * resolved then resolves the type of every variable it reads, and a property typed by a superclass's type
+     * parameter fails ("unable to resolve class ID"). Plain groovyc fails the same way with sources on its source path.
+     * Null when the field is missing.
+     */
+    private static final Field DECLARATION_CHECK = declarationCheck();
+
     DocumentUnit(CompilerConfiguration config, GroovyClassLoader loader) {
       super(config, null, loader);
       this.errorCollector = new ErrorCollector(config) {
@@ -489,6 +500,30 @@ public final class GroovyAnalyzer implements Analyzer {
         @Override
         protected void failIfErrors() {}
       };
+    }
+
+    /** True when queued sources were just added, as after each restart: no declaration is being resolved then. */
+    @Override
+    protected boolean dequeued() throws CompilationFailedException {
+      boolean dequeued = super.dequeued();
+      if (dequeued && DECLARATION_CHECK != null) {
+        try {
+          DECLARATION_CHECK.setBoolean(resolveVisitor, false);
+        } catch (IllegalAccessException e) {
+          // cannot happen: made accessible
+        }
+      }
+      return dequeued;
+    }
+
+    private static Field declarationCheck() {
+      try {
+        Field field = ResolveVisitor.class.getDeclaredField("checkingVariableTypeInDeclaration");
+        field.setAccessible(true);
+        return field;
+      } catch (ReflectiveOperationException | RuntimeException e) {
+        return null;
+      }
     }
   }
 }
