@@ -50,6 +50,9 @@ class FixtureModelTest {
     assertTrue(names(main.compileClasspath).contains("grails-core-4.1.4.jar"));
     assertTrue(names(main.compileClasspath).contains("groovy-2.5.14.jar"));
     assertNotNull(app.sourceSet("test"));
+    assertEquals(List.of("main"), app.sourceSet("test").outputsOf);
+    assertEquals(List.of("main", "test"), app.sourceSet("integrationTest").outputsOf, "added by Grails' integration test plugin");
+    assertEquals(List.of(), main.outputsOf);
 
     ModuleRecord support = model.module(":support");
     assertEquals("2.5.14", support.groovyVersion);

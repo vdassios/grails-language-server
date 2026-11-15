@@ -31,6 +31,14 @@ allprojects { p ->
         }
         artifacts.failures.each { f -> record.errors << "${ss.name}: ${f.message}".toString() }
       }
+      // other source sets whose output a build script adds to this one's classpath (Grails: integrationTest gets test's);
+      // such additions are not in the configuration. Resolving the whole classpath is strict: on a failure, none listed
+      def outputsOf = []
+      try {
+        def files = ss.compileClasspath.files
+        outputsOf = sourceSets.findAll { o -> o.name != ss.name && o.output.classesDirs.files.any { it in files } }*.name
+      } catch (Exception ignored) {
+      }
       def resourceDirs = ss.resources.srcDirs
       record.sourceSets << [
         name: ss.name,
@@ -39,6 +47,7 @@ allprojects { p ->
         compileClasspath: classpath,
         classesDirs: ss.output.classesDirs.files*.absolutePath.sort(),
         javaFiles: ss.allJava.files*.absolutePath.sort(),
+        outputsOf: outputsOf,
       ]
     }
     def file = p.path == ':' ? '_root' : p.path.substring(1).replace(':', '__')

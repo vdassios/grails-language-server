@@ -190,6 +190,10 @@ public final class Workspace implements AutoCloseable {
     if (main != null) {
       search.addAll(ownRoots(module, main));
     }
+    List<SourceSetRecord> others = others(module, sourceSet);
+    for (SourceSetRecord other : others) {
+      search.addAll(ownRoots(module, other));
+    }
     for (ModuleRecord sibling : siblings) {
       SourceSetRecord siblingMain = sibling.sourceSet("main");
       if (siblingMain != null) {
@@ -228,6 +232,9 @@ public final class Workspace implements AutoCloseable {
     int notBuilt = javaClasses(sourceSet, classFiles);
     if (main != null) {
       javaClasses(main, classFiles); // main's are counted by main's own context
+    }
+    for (SourceSetRecord other : others) {
+      javaClasses(other, classFiles);
     }
     // Gradle puts main's output (classes and resources) on the other source sets' classpath and siblings' jars on
     // every one, so their extension modules apply: statically compiled code calls their methods
@@ -304,6 +311,15 @@ public final class Workspace implements AutoCloseable {
     }
     String prefix = artifactDir.getFileName() + "-" + versionDir.getFileName();
     return file.startsWith(prefix) ? artifactDir + ":" + file.substring(prefix.length()) : null;
+  }
+
+  /**
+   * The module's source sets other than main whose output Gradle adds to this one's classpath, such as {@code test} for
+   * Grails' {@code integrationTest}: their sources are searched like main's, since their output is build output.
+   */
+  private static List<SourceSetRecord> others(ModuleRecord module, SourceSetRecord sourceSet) {
+    return sourceSet.outputsOf.stream().filter(name -> !name.equals("main")).map(module::sourceSet).filter(s -> s != null)
+        .collect(Collectors.toList());
   }
 
   /** Source roots without build output and tool directories below the module. */

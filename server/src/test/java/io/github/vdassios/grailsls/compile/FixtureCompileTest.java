@@ -87,6 +87,15 @@ class FixtureCompileTest {
   }
 
   @Test
+  void anIntegrationTestUsesAClassFromTestSources() throws Exception {
+    ProjectModel model = Fixtures.built("grails4", "GLS_TEST_JDK11");
+    try (Workspace workspace = workspace(model)) {
+      Path shelving = file(model, ":app", "src/integration-test/groovy/fixture/library/BookShelving.groovy");
+      assertEquals(List.of(), errors(compile(workspace, shelving)), "BookFactory is in src/test, not built by ./gradlew classes");
+    }
+  }
+
+  @Test
   void aDomainClassPulledInByAControllerCarriesGormMembers() throws Exception {
     ProjectModel model = Fixtures.built("grails4", "GLS_TEST_JDK11");
     try (Workspace workspace = workspace(model)) {

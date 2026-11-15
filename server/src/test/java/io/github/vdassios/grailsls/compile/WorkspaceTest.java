@@ -142,6 +142,22 @@ class WorkspaceTest {
   }
 
   @Test
+  void aSourceSetWithAnotherOnesOutputOnItsClasspathAlsoSearchesItsRoots() throws IOException {
+    Path app = tmp.resolve("app");
+    SourceSetRecord main = sourceSet("main", List.of(app.resolve("src/main/groovy")), List.of(), List.of(app.resolve("build/classes/groovy/main")), List.of());
+    SourceSetRecord test = sourceSet("test", List.of(app.resolve("src/test/groovy")), List.of(), List.of(app.resolve("build/classes/groovy/test")), List.of());
+    test.outputsOf.add("main");
+    SourceSetRecord integrationTest = sourceSet("integrationTest", List.of(app.resolve("src/integration-test/groovy")), List.of(), List.of(), List.of());
+    integrationTest.outputsOf.addAll(List.of("main", "test"));
+    ProjectModel model = new ProjectModel(tmp, List.of(module(":app", app, "2.5.14", List.of(), main, test, integrationTest)), false);
+    try (Workspace workspace = new Workspace(model, tmp.resolve("analysis.jar"))) {
+      assertEquals(List.of(app.resolve("src/test/groovy"), app.resolve("src/main/groovy")), workspace.contexts().get(1).searchRoots);
+      assertEquals(List.of(app.resolve("src/integration-test/groovy"), app.resolve("src/main/groovy"), app.resolve("src/test/groovy")),
+          workspace.contexts().get(2).searchRoots, "Grails puts test's output on integrationTest's classpath");
+    }
+  }
+
+  @Test
   void filesMapToTheirSourceSet() throws IOException {
     try (Workspace workspace = workspace()) {
       assertSame(workspace.contexts().get(0), workspace.contextOf(tmp.resolve("app/grails-app/domain/a/Book.groovy")));
