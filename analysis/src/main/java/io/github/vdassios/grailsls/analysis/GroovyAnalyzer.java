@@ -146,7 +146,7 @@ public final class GroovyAnalyzer implements Analyzer {
     Injections injections = null;
     for (; phase <= last; phase++) {
       if (request.cancelled.getAsBoolean()) {
-        return new Kept(unit, request.text, document.getSource().getURI(), resolver.sources(), phase - 1, true);
+        return new Kept(unit, request.text, document.getSource().getURI(), request.lookup, resolver.sources(), phase - 1, true);
       }
       try {
         unit.compile(phase);
@@ -162,13 +162,13 @@ public final class GroovyAnalyzer implements Analyzer {
       }
     }
     if (early.addAll(resolver.early())) {
-      return new Kept(unit, request.text, document.getSource().getURI(), resolver.sources(), Math.min(phase, last), false);
+      return new Kept(unit, request.text, document.getSource().getURI(), request.lookup, resolver.sources(), Math.min(phase, last), false);
     }
     if (injections != null) {
       injections.mark(unit);
     }
     collect(unit.getErrorCollector(), TypeBounds.stale(document, unit.getErrorCollector(), config, loader), request.path, diagnostics);
-    return new Kept(unit, request.text, document.getSource().getURI(), resolver.sources(), Math.min(phase, last), false);
+    return new Kept(unit, request.text, document.getSource().getURI(), request.lookup, resolver.sources(), Math.min(phase, last), false);
   }
 
   /**
@@ -232,13 +232,13 @@ public final class GroovyAnalyzer implements Analyzer {
   @Override
   public Location definition(String documentPath, int line, int column) {
     Kept kept = units.get(documentPath);
-    return kept == null ? null : Navigation.definition(kept.ast(), kept.uri, line, column);
+    return kept == null ? null : Navigation.definition(kept.ast(), kept.uri, kept.lookup, line, column);
   }
 
   @Override
   public String hover(String documentPath, int line, int column) {
     Kept kept = units.get(documentPath);
-    return kept == null ? null : Navigation.hover(kept.ast(), kept.uri, line, column);
+    return kept == null ? null : Navigation.hover(kept.ast(), kept.uri, kept.lookup, line, column);
   }
 
   @Override
@@ -463,6 +463,8 @@ public final class GroovyAnalyzer implements Analyzer {
     final CompilationUnit unit;
     final String text;
     final URI uri;
+    /** Finds the source of classes the compile read from class files, for definition and hover. */
+    final SourceLookup lookup;
     /** Sources the compile read: the document and those pulled in. */
     final int sources;
     /** The last phase compiled. */
@@ -470,10 +472,11 @@ public final class GroovyAnalyzer implements Analyzer {
     final boolean cancelled;
     private ASTNodeVisitor ast;
 
-    Kept(CompilationUnit unit, String text, URI uri, int sources, int phase, boolean cancelled) {
+    Kept(CompilationUnit unit, String text, URI uri, SourceLookup lookup, int sources, int phase, boolean cancelled) {
       this.unit = unit;
       this.text = text;
       this.uri = uri;
+      this.lookup = lookup;
       this.sources = sources;
       this.phase = phase;
       this.cancelled = cancelled;

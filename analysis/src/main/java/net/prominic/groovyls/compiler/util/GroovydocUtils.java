@@ -88,7 +88,8 @@ public class GroovydocUtils {
 		markdownBuilder.append("\n");
 	}
 
-	private static String reformatLine(String line) {
+	/** Markdown for the HTML of one line of a documentation comment. */
+	public static String reformatLine(String line) {
 		// remove all attributes (including namespaced)
 		line = line.replaceAll("<(\\w+)(?:\\s+\\w+(?::\\w+)?=(\"|\')[^\"\']*\\2)*\\s*(\\/{0,1})>", "<$1$3>");
 		line = line.replaceAll("<pre>", "\n\n```\n");

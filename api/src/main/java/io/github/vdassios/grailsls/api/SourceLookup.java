@@ -25,4 +25,13 @@ public interface SourceLookup {
   default List<String> classesNamed(String simpleName) {
     return List.of();
   }
+
+  /**
+   * File holding the source of a class the compile reads from a class file, by the binary name of its top-level class:
+   * a {@code .java} file of the project, or a file extracted from a library's sources jar or the JDK's
+   * {@code src.zip}. Null when no such source is on disk.
+   */
+  default String classSource(String className) {
+    return null;
+  }
 }

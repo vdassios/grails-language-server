@@ -146,13 +146,15 @@ class FixtureCompileTest {
       found.put("package unlike its directory", definition(workspace, controller, "Shelf(format", 0)); // its constructor
       found.put("service method", definition(workspace, controller, "store(book)", 0));
       found.put("joint-compiled Java", definition(workspace, controller, "Isbn.normalize", 0));
+      found.put("joint-compiled Java's method", definition(workspace, controller, "Isbn.normalize", 5));
       Map<String, String> expected = new TreeMap<>();
       expected.put("domain class", "Book.groovy:3");
       expected.put("nested enum", "Book.groovy:5");
       expected.put("file of another name", "Formatting.groovy:4");
       expected.put("package unlike its directory", "Shelf.groovy:7");
       expected.put("service method", "BookService.groovy:8");
-      expected.put("joint-compiled Java", null); // from its class file: no source yet (library sources come later)
+      expected.put("joint-compiled Java", "Isbn.java:4"); // read from its class file, declared in the project's Java source
+      expected.put("joint-compiled Java's method", "Isbn.java:7");
       assertEquals(expected, found);
     }
   }

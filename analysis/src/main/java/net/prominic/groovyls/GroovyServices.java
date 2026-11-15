@@ -225,7 +225,7 @@ public class GroovyServices implements TextDocumentService, WorkspaceService, La
 		recompileIfContextChanged(uri);
 
 		String markdown = astVisitor == null ? null
-				: Navigation.hover(astVisitor, uri, params.getPosition().getLine(), params.getPosition().getCharacter());
+				: Navigation.hover(astVisitor, uri, null, params.getPosition().getLine(), params.getPosition().getCharacter());
 		return CompletableFuture.completedFuture(markdown == null ? null : new Hover(new MarkupContent(MarkupKind.MARKDOWN, markdown)));
 	}
 
@@ -292,7 +292,7 @@ public class GroovyServices implements TextDocumentService, WorkspaceService, La
 		recompileIfContextChanged(uri);
 
 		io.github.vdassios.grailsls.api.Location location = astVisitor == null ? null
-				: Navigation.definition(astVisitor, uri, params.getPosition().getLine(), params.getPosition().getCharacter());
+				: Navigation.definition(astVisitor, uri, null, params.getPosition().getLine(), params.getPosition().getCharacter());
 		List<Location> locations = location == null ? Collections.emptyList() : Collections.singletonList(toLocation(location));
 		return CompletableFuture.completedFuture(Either.forLeft(locations));
 	}

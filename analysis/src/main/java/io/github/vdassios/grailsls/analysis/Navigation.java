@@ -15,6 +15,7 @@ import org.codehaus.groovy.ast.Variable;
 
 import io.github.vdassios.grailsls.api.Location;
 import io.github.vdassios.grailsls.api.Range;
+import io.github.vdassios.grailsls.api.SourceLookup;
 import io.github.vdassios.grailsls.api.Symbol;
 import net.prominic.groovyls.compiler.ast.ASTNodeVisitor;
 import net.prominic.groovyls.compiler.util.GroovyASTUtils;
@@ -28,14 +29,16 @@ import net.prominic.groovyls.util.GroovyNodeToStringUtils;
 public final class Navigation {
   private Navigation() {}
 
-  public static Location definition(ASTNodeVisitor ast, URI document, int line, int column) {
+  public static Location definition(ASTNodeVisitor ast, URI document, SourceLookup lookup, int line, int column) {
     ASTNode offsetNode = ast.getNodeAtLineAndColumn(document, line, column);
     if (offsetNode == null) {
       return null;
     }
     ASTNode definition = GroovyASTUtils.getDefinition(offsetNode, true, ast);
     if (definition == null || definition.getLineNumber() == -1 || definition.getColumnNumber() == -1) {
-      return null;
+      // not declared in the compile's sources: a class file's source, when one is on disk
+      ClassFileSource source = ClassFileSource.of(definition != null ? definition : GroovyASTUtils.getDefinition(offsetNode, false, ast), lookup);
+      return source == null ? null : new Location(source.path, source.range);
     }
     URI uri = ast.getURI(definition);
     String path = path(uri == null ? document : uri);
@@ -43,7 +46,7 @@ public final class Navigation {
     return path == null || range == null ? null : new Location(path, range);
   }
 
-  public static String hover(ASTNodeVisitor ast, URI document, int line, int column) {
+  public static String hover(ASTNodeVisitor ast, URI document, SourceLookup lookup, int line, int column) {
     ASTNode offsetNode = ast.getNodeAtLineAndColumn(document, line, column);
     if (offsetNode == null) {
       return null;
@@ -55,6 +58,10 @@ public final class Navigation {
     }
     StringBuilder markdown = new StringBuilder("```groovy\n").append(content).append("\n```");
     String documentation = definition instanceof AnnotatedNode ? GroovydocUtils.groovydocToMarkdownDescription((AnnotatedNode) definition) : null;
+    if (documentation == null) {
+      ClassFileSource source = ClassFileSource.of(definition, lookup);
+      documentation = source == null ? null : source.documentation;
+    }
     if (documentation != null) {
       markdown.append("\n\n---\n\n").append(documentation);
     }

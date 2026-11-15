@@ -3,6 +3,7 @@ package io.github.vdassios.grailsls.compile;
 import java.io.IOException;
 import java.io.Reader;
 import java.io.UncheckedIOException;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
@@ -46,8 +47,11 @@ public final class Workspace implements AutoCloseable {
 
   private final DeclarationIndex index = new DeclarationIndex();
   private final SymbolIndex symbols = new SymbolIndex();
+  private final ClassSources classSources;
 
+  /** @param analysisJar the analysis layer's jar, in the server's cache directory; library sources are extracted next to it */
   public Workspace(ProjectModel model, Path analysisJar) {
+    classSources = new ClassSources(analysisJar.resolveSibling("sources"));
     for (ModuleRecord module : model.modules) {
       if (module.groovyVersion == null) {
         continue;
@@ -156,6 +160,22 @@ public final class Workspace implements AutoCloseable {
       @Override
       public List<String> classesNamed(String simpleName) {
         return index.classesNamed(simpleName, context.searchRoots);
+      }
+
+      @Override
+      public String classSource(String className) {
+        String resource = className.replace('.', '/');
+        // the project's own Java, compiled by Gradle
+        for (Path root : context.searchRoots) {
+          Path file = root.resolve(resource + ".java");
+          if (Files.isRegularFile(file)) {
+            return file.toString();
+          }
+        }
+        ClassLoader loader = context.loader();
+        URL classFile = loader == null ? null : loader.getResource(resource + ".class");
+        Path source = classFile == null ? null : classSources.sourceOf(className, classFile);
+        return source == null ? null : source.toString();
       }
     };
   }

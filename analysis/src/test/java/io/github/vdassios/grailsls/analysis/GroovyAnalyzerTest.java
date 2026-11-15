@@ -70,7 +70,14 @@ class GroovyAnalyzerTest {
     public List<Symbol> types() {
       return types;
     }
+
+    @Override
+    public String classSource(String className) {
+      return classSources.get(className);
+    }
   };
+  /** Source files of classes that come from class files, as the server would find them in sources jars. */
+  private final Map<String, String> classSources = new HashMap<>();
   /** The symbol index's classes, as the server would give them. */
   private final List<Symbol> types = new ArrayList<>();
 
@@ -507,6 +514,58 @@ class GroovyAnalyzerTest {
     String path = tmp.resolve("A.groovy").toString();
     compile(path, "class A {\n  def run() { 'x'.toUpperCase() }\n}\n");
     assertNull(analyzer.definition(path, 1, 19)); // on toUpperCase
+  }
+
+  /** A class read from a class file: its source file, when the lookup has one, and the comment there. */
+  @Test
+  void definitionAndHoverOfAJdkMemberUseItsSourceFile() throws IOException {
+    String source = write("jdk/java/lang/String.java", "package java.lang;\n\n/** A string. */\npublic final class String {\n"
+        + "  /**\n   * Upper case, by the rules of {@code locale}.\n   * @param locale the rules\n   */\n  public String toUpperCase(Locale locale) { return this; }\n\n"
+        + "  /** Upper case, by the default locale's rules. */\n  public String toUpperCase() {\n    return toUpperCase(Locale.getDefault());\n  }\n}\n");
+    classSources.put("java.lang.String", source);
+    String path = tmp.resolve("A.groovy").toString();
+    compile(path, "class A {\n  def run() { 'x'.toUpperCase() }\n  def all() { String.valueOf(1) }\n}\n");
+
+    Location method = analyzer.definition(path, 1, 19); // on toUpperCase
+    assertNotNull(method);
+    assertEquals(source + ":11:16", method.path + ":" + method.range.startLine + ":" + method.range.startColumn);
+    String hover = analyzer.hover(path, 1, 19);
+    assertTrue(hover.endsWith("---\n\nUpper case, by the default locale's rules."), hover);
+
+    Location type = analyzer.definition(path, 2, 15); // on String
+    assertNotNull(type);
+    assertEquals(source + ":3", type.path + ":" + type.range.startLine);
+    Location missing = analyzer.definition(path, 2, 22); // valueOf: not in that file, so its class
+    assertNotNull(missing);
+    assertEquals(3, missing.range.startLine);
+  }
+
+  /** Grails's render and save: the class of the compile has only a generated bridge; the trait's source declares it. */
+  @Test
+  void definitionOfAMethodFromACompiledTraitIsInTheTraitsSource() throws Exception {
+    String trait = write("lib/lib/Greets.groovy", "package lib\n\ntrait Greets {\n  /** Says hello. */\n  String greet(String name) { 'hello ' + name }\n}\n");
+    Path classes = tmp.resolve("classes");
+    org.codehaus.groovy.control.CompilerConfiguration config = new org.codehaus.groovy.control.CompilerConfiguration();
+    config.setTargetDirectory(classes.toFile());
+    org.codehaus.groovy.control.CompilationUnit compiled = new org.codehaus.groovy.control.CompilationUnit(config);
+    compiled.addSource(new java.io.File(trait));
+    compiled.compile();
+    classSources.put("lib.Greets", trait);
+
+    try (java.net.URLClassLoader loader = new java.net.URLClassLoader(new URL[] { classes.toUri().toURL() }, getClass().getClassLoader())) {
+      GroovyAnalyzer built = new GroovyAnalyzer(loader);
+      try {
+        String document = tmp.resolve("src/A.groovy").toString();
+        CompileResult result = built.compile(new CompileRequest(document, "class A implements lib.Greets {\n  def run() { greet('x') }\n}\n", lookup, () -> false));
+        assertEquals(List.of(), errors(result));
+        Location location = built.definition(document, 1, 15); // on greet
+        assertNotNull(location);
+        assertEquals(trait + ":4", location.path + ":" + location.range.startLine);
+        assertTrue(built.hover(document, 1, 15).endsWith("Says hello."), built.hover(document, 1, 15));
+      } finally {
+        built.close();
+      }
+    }
   }
 
   @Test

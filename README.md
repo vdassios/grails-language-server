@@ -2,7 +2,7 @@
 
 A [language server](https://microsoft.github.io/language-server-protocol/) for Groovy with Grails support, usable from any LSP editor. It compiles each open file with the **project's own** Groovy and Grails jars, so the members Grails adds at compile time (`render`, `params`, `save`, `get`, finders, ...) are visible to completion, hover and navigation.
 
-**Status: pre-alpha, milestone M2 (Grails artefacts).** The server resolves the Gradle project model in the background, reports progress through `grails/status`, compiles each open Groovy file and publishes its diagnostics. It answers completion (with resolve, including types not imported yet), hover, signature help, definition, document symbols and workspace symbols. Controllers, domain classes, services and taglibs get the members Grails adds (tested on Grails 4 and Grails 7), and `def fooService` is typed as the service of that name. GORM dynamic finders and DSL blocks, conventions (views, templates, actions) and GSP come in later milestones.
+**Status: pre-alpha, milestone M2 (Grails artefacts).** The server resolves the Gradle project model in the background, reports progress through `grails/status`, compiles each open Groovy file and publishes its diagnostics. It answers completion (with resolve, including types not imported yet), hover, signature help, definition (into library and JDK sources too), document symbols and workspace symbols. Controllers, domain classes, services and taglibs get the members Grails adds (tested on Grails 4 and Grails 7), and `def fooService` is typed as the service of that name. GORM dynamic finders and DSL blocks, conventions (views, templates, actions) and GSP come in later milestones.
 
 ## Grails artefacts
 
@@ -11,6 +11,16 @@ Grails adds most artefact members through AST transformations and traits. Compil
 - A getter also completes as its property (`params`, `errors`, `out`), as Groovy code uses it.
 - A name the transformations add after Groovy binds variables (`log`, a trait's `params`) is resolved to that member, so `params.` and `log.` complete and hover with the member's type.
 - **Untyped injection.** A property `def fooService` in any class is typed as the service class `FooService` (declared under a `grails-app/services` source root, in any package, the only one of that name); the compile pulls that class in from source. Services from plugin jars are not looked up.
+
+## Library sources
+
+Definition and hover reach classes that have no source in the project: jars, the JDK and the project's own compiled Java.
+
+- A jar's sources are the `-sources.jar` already on disk for it: next to the jar (a Maven repository) or in Gradle's module cache, where an IDE or a `sources` download put it. **Nothing is downloaded**; a library without one has no definition, as before. JDK classes come from `lib/src.zip` of the JDK the server runs on.
+- The file is extracted once, read-only, under `<cacheDir>/sources/` and returned as an ordinary `file:` location, so every editor opens it with no client support.
+- A method Grails adds through a trait (`render`, `redirect`, `save`, `list`) goes to the trait's source, e.g. `ResponseRenderer.groovy` or `GormEntity.groovy`.
+- Hover shows the declaration's documentation comment, also on Groovy 2.5, which keeps none on its nodes.
+- The declaration is found by scanning the source text for its names, since the project's Groovy parses no Java: among overloads, the one with the same number of parameters and the most matching type names. A member the scan misses (a record component, a property that exists only as a getter) goes to its class.
 
 ## How it works
 
