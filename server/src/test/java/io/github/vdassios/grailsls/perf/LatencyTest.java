@@ -250,6 +250,10 @@ class LatencyTest {
       Thread.sleep(100);
     }
     count("close: loader collected (1 = yes)", loader.get() == null ? 1 : 0);
+    if (loader.get() != null) {
+      clearSoftReferences();
+    }
+    count("close: loader collected once soft references are cleared (1 = yes)", loader.get() == null ? 1 : 0);
     count("close: heap MB after GC, before", heapBefore);
     count("close: heap MB after GC, after", heapMb());
     count("close: loaded classes, before", classesBefore);
@@ -299,6 +303,22 @@ class LatencyTest {
       Thread.sleep(100);
     }
     return (int) (ManagementFactory.getMemoryMXBean().getHeapMemoryUsage().getUsed() >> 20);
+  }
+
+  /**
+   * Fills the heap until it runs out: the JVM clears every soft reference before it throws {@link OutOfMemoryError}, so
+   * whatever a soft cache alone still held (on hoist-core, the loader) can be collected afterwards.
+   */
+  private static void clearSoftReferences() throws InterruptedException {
+    List<byte[]> fill = new ArrayList<>();
+    try {
+      while (true) {
+        fill.add(new byte[16 << 20]);
+      }
+    } catch (OutOfMemoryError expected) {
+      fill.clear();
+    }
+    heapMb();
   }
 
   /** The artefact directory below {@code grails-app}, or {@code other}. */
