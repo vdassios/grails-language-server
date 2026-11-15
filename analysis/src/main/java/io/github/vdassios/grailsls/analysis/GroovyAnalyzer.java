@@ -6,6 +6,7 @@ import java.net.URI;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -98,15 +99,27 @@ public final class GroovyAnalyzer implements Analyzer {
 
   /** Compiles a document to its last phase ({@link #lastPhase}), each phase only if the request is not cancelled. */
   private Kept run(CompileRequest request, List<Diagnostic> diagnostics) {
-    try {
-      return runUnit(request, diagnostics);
-    } finally {
-      caches.clear();
-      parserCache.trim();
+    // sources a class file named before they were converted (PathResolver): compiled again with them there from the
+    // start. Each further compile has at least one more of them, so this ends
+    Set<String> early = new LinkedHashSet<>();
+    while (true) {
+      List<Diagnostic> found = new ArrayList<>();
+      int known = early.size();
+      Kept kept;
+      try {
+        kept = runUnit(request, found, early);
+      } finally {
+        caches.clear();
+        parserCache.trim();
+      }
+      if (kept.cancelled || early.size() == known) {
+        diagnostics.addAll(found);
+        return kept;
+      }
     }
   }
 
-  private Kept runUnit(CompileRequest request, List<Diagnostic> diagnostics) {
+  private Kept runUnit(CompileRequest request, List<Diagnostic> diagnostics, Set<String> early) {
     CompilerConfiguration config = new CompilerConfiguration();
     config.setSourceEncoding("UTF-8");
     config.addCompilationCustomizers(new AstTestRemover(), new ParseTreeRemover());
@@ -124,6 +137,7 @@ public final class GroovyAnalyzer implements Analyzer {
     SourceUnit document = unit.addSource(source(request.path, request.text, config, loader, unit.getErrorCollector()));
     PathResolver resolver = new PathResolver(request.lookup, document);
     unit.setClassNodeResolver(resolver);
+    early.forEach(path -> resolver.add(path, unit));
 
     // the last phase depends on the document's own annotations, known once it is converted: decided then and kept,
     // because transformations add statically compiled members to classes that are not (Grails's controller traits)
@@ -146,6 +160,9 @@ public final class GroovyAnalyzer implements Analyzer {
         last = lastPhase(document);
         injections = Injections.queue(document, request.lookup, resolver, unit);
       }
+    }
+    if (early.addAll(resolver.early())) {
+      return new Kept(unit, request.text, document.getSource().getURI(), resolver.sources(), Math.min(phase, last), false);
     }
     if (injections != null) {
       injections.mark(unit);

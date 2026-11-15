@@ -291,6 +291,42 @@ class GroovyAnalyzerTest {
     assertEquals(3, result.sources);
   }
 
+  /**
+   * A class file's member types resolve through Groovy's reader of class files, which throws {@code NoClassDefFoundError}
+   * for a class whose source is added but not converted yet. Here the static import reads {@code Module}'s methods
+   * before anything else named {@code Settings} (rundeck: a spec's Spock transformation read the methods of a built
+   * Java class that returns a service; "internal compiler error in phase 4").
+   */
+  @Test
+  void aClassFileMayReferToAClassStillInSource() throws Exception {
+    Path java = Files.createDirectories(tmp.resolve("java/app"));
+    Files.writeString(java.resolve("Module.java"), "package app;\npublic class Module {\n  public static Settings settings() { return null; }\n"
+        + "  public static int port() { return 1; }\n}\n");
+    Files.writeString(java.resolve("Settings.java"), "package app;\npublic class Settings {}\n");
+    Path classes = tmp.resolve("classes");
+    assertEquals(0, javax.tools.ToolProvider.getSystemJavaCompiler().run(null, null, null, "-d", classes.toString(),
+        java.resolve("Module.java").toString(), java.resolve("Settings.java").toString()));
+    Files.delete(classes.resolve("app/Settings.class"));
+    index.put("app.Settings", write("src/app/Settings.groovy", "package app\nclass Settings {\n  String host\n}\n"));
+
+    try (java.net.URLClassLoader loader = new java.net.URLClassLoader(new URL[] { classes.toUri().toURL() }, getClass().getClassLoader())) {
+      GroovyAnalyzer built = new GroovyAnalyzer(loader);
+      try {
+        String document = tmp.resolve("src/app/Entry.groovy").toString();
+        String text = "package app\nimport static app.Module.port\nclass Entry {\n  int run() { port() }\n  def host() { Module.settings().host }\n}\n";
+        CompileResult result = built.compile(new CompileRequest(document, text, lookup, () -> false));
+        assertEquals(List.of(), errors(result));
+        assertEquals(2, result.sources);
+        org.codehaus.groovy.control.CompilationUnit unit = built.unit(document);
+        MethodNode settings = unit.getClassNodeResolver().resolveName("app.Module", unit).getClassNode().getMethods("settings").get(0);
+        assertEquals(List.of("host"), settings.getReturnType().getFields().stream().map(f -> f.getName()).collect(Collectors.toList()),
+            "the class from source");
+      } finally {
+        built.close();
+      }
+    }
+  }
+
   /** A bound that does not hold stays an error. */
   @Test
   void aTypeArgumentOutsideItsBoundIsStillAnError() throws IOException {
