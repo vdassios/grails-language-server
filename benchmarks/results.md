@@ -15,7 +15,7 @@ Measurements of the server on the five projects of [corpus.md](corpus.md), again
 | Completion within 300 ms, compiled document | all five (max 4 ms) | |
 | Completion within 300 ms, after a typed dot (the editor waits for the compile of the copy) | cherokeedictionary (p90 136) | hoist-core (p90 608), mod-agreements (599), mdm-core (2372), rundeck (4597) |
 | RSS under 1.5 GB with ten files | cherokeedictionary 442, mdm-core 1087, mod-agreements 1069, hoist-core 1017 | rundeck 2874 |
-| Loader released on close | cherokeedictionary, mdm-core, mod-agreements; hoist-core once soft references are cleared | rundeck: a leak (see Known problems) |
+| Loader released on close | cherokeedictionary, mdm-core, mod-agreements; hoist-core once soft references are cleared | rundeck on JDK 17: a JDK limit (see Known problems); released once soft references are cleared when the server runs on JDK 21 |
 
 Errors on valid code: 0 on cherokeedictionary, mod-agreements and hoist-core; mdm-core 4 and rundeck 30 (sweep) and 1 (static test), all attributed below. Grails members (artefact traits and GORM methods) are found on every controller, domain class, taglib and `@Transactional` service of every project.
 
@@ -127,7 +127,7 @@ Every timed file got diagnostics, none with errors.
 
 ## Known problems found
 
-- **rundeck leaks its compile context's loader.** After close the loader survives even once soft references are cleared: heap 1634 → 682 MB, and only 668 of 11651 loaded classes unloaded. rundeck only (Grails 7.2.2, Groovy 4.0.33, JDK 17); not investigated.
+- **Known limit: on a JDK 17 server process, rundeck's compile context loader is not released.** After close the loader survives even once soft references are cleared: heap 1634 → 682 MB, and only 668 of 11651 loaded classes unloaded. A heap dump after close shows the cause in the JDK, not the server: `MethodHandle.asTypeCache` is a strong field on JDK 17, and method handles kept in JDK statics (`java.lang.runtime.ObjectMethods.OBJECT_EQ` and `OBJECTS_HASHCODE`, used by record classes; `MethodHandleImpl.ARRAYS`, reached from Groovy 4's `invokedynamic` call sites) keep the last type they were adapted to, whose classes belong to the context's loader (Micronaut's source generation records, Groovy's AST classes). JDK 21 keeps such types behind a soft reference: the same test with the server's JVM on 21.0.13 (the project still on JDK 17, 0 errors) gives no / yes, heap after close 10 MB, loaded classes 11245 → 4698 (that run compiled each repeated file once, not 50 times). Seen on rundeck only, the one Groovy 4 project measured on JDK 17. Nothing to fix in the server; the launcher should prefer JDK 21 or newer for the server process.
 - **Java build output that links to Groovy sources.** A Java class served from build output whose class graph reaches a Groovy class fails to link (rundeck's `JettyCombinedLdapLoginModuleSpec` above).
 - **Budget misses on larger projects:** first diagnostics above 3 s on mdm-core, mod-agreements, rundeck and partly hoist-core; completion after a typed dot above 300 ms at p90 on all but cherokeedictionary; RSS with ten files above 1.5 GB on rundeck.
 
