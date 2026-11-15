@@ -2,17 +2,22 @@ package net.prominic.groovyls.compiler.ast;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.net.URI;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.codehaus.groovy.ast.ASTNode;
 import org.codehaus.groovy.ast.ClassNode;
 import org.codehaus.groovy.ast.MethodNode;
 import org.codehaus.groovy.ast.expr.ConstantExpression;
+import org.codehaus.groovy.ast.expr.ElvisOperatorExpression;
 import org.codehaus.groovy.ast.stmt.BlockStatement;
 import org.codehaus.groovy.ast.stmt.ExpressionStatement;
 import org.codehaus.groovy.control.CompilationUnit;
@@ -94,5 +99,27 @@ class ASTNodeVisitorTest {
     assertEquals(b, visitor.getURI(go));
     assertNull(visitor.getParent(go));
     assertNull(visitor.getURI(ClassNode.SUPER), "a class of no source in the unit");
+  }
+
+  /**
+   * Groovy's visitor hands an Elvis expression on to visitTernaryExpression; pushed by both, it became its own parent,
+   * and every walk up from inside it (the query's node sort, signature help) spun forever.
+   */
+  @Test
+  void anElvisExpressionIsNotItsOwnParent() {
+    CompilerConfiguration config = new CompilerConfiguration();
+    CompilationUnit unit = new CompilationUnit(config);
+    URI uri = URI.create("file:/src/A.groovy");
+    unit.addSource(new SourceUnit("A.groovy", new StringReaderSourceWithURI("class A {\n  def run(a, c) {\n    a.b ?: c\n  }\n}\n", uri, config), config,
+        unit.getClassLoader(), unit.getErrorCollector()));
+    unit.compile(Phases.CANONICALIZATION);
+
+    ASTNodeVisitor visitor = new ASTNodeVisitor();
+    visitor.visitDocument(unit, uri);
+    ASTNode elvis = visitor.getNodes(uri).stream().filter(n -> n instanceof ElvisOperatorExpression).findFirst().orElseThrow();
+    assertNotSame(elvis, visitor.getParent(elvis));
+    // on "b": a property expression and the Elvis's boolean test share that range, so the sort walks up from both
+    ASTNode found = assertTimeoutPreemptively(Duration.ofSeconds(10), () -> visitor.getNodeAtLineAndColumn(uri, 2, 6));
+    assertEquals("b", found.getText());
   }
 }

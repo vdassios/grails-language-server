@@ -52,7 +52,6 @@ import org.codehaus.groovy.ast.expr.ClosureExpression;
 import org.codehaus.groovy.ast.expr.ClosureListExpression;
 import org.codehaus.groovy.ast.expr.ConstantExpression;
 import org.codehaus.groovy.ast.expr.ConstructorCallExpression;
-import org.codehaus.groovy.ast.expr.ElvisOperatorExpression;
 import org.codehaus.groovy.ast.expr.FieldExpression;
 import org.codehaus.groovy.ast.expr.GStringExpression;
 import org.codehaus.groovy.ast.expr.ListExpression;
@@ -622,14 +621,16 @@ public class ASTNodeVisitor extends ClassCodeVisitorSupport {
 		}
 	}
 
-	public void visitShortTernaryExpression(ElvisOperatorExpression node) {
-		pushASTNode(node);
-		try {
-			super.visitShortTernaryExpression(node);
-		} finally {
-			popASTNode();
-		}
-	}
+	// this calls visitTernaryExpression(), which pushes the node: pushed here too, it would be its own parent, and every
+	// walk up from inside it would never end
+	// public void visitShortTernaryExpression(ElvisOperatorExpression node) {
+	// pushASTNode(node);
+	// try {
+	// super.visitShortTernaryExpression(node);
+	// } finally {
+	// popASTNode();
+	// }
+	// }
 
 	public void visitPostfixExpression(PostfixExpression node) {
 		pushASTNode(node);
