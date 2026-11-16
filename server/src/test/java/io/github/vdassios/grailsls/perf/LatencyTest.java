@@ -157,6 +157,9 @@ class LatencyTest {
           count("errors " + kind, errors.size());
           count("files with errors " + kind, errors.isEmpty() ? 0 : 1);
           errors.forEach(e -> errorsOut.append(file).append(": ").append(e).append('\n'));
+          List<Diagnostic> warnings = result.diagnostics.stream().filter(d -> d.severity == Diagnostic.WARNING && d.path.equals(file.toString())).collect(Collectors.toList());
+          count("warnings " + kind, warnings.size());
+          warnings.forEach(w -> errorsOut.append(file).append(": warning: ").append(w).append('\n'));
           String trait = traitFound(context, file, text, kind(file));
           if (trait != null) {
             count(trait, 1);
