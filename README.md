@@ -2,7 +2,7 @@
 
 A [language server](https://microsoft.github.io/language-server-protocol/) for Groovy with Grails support, usable from any LSP editor. It compiles each open file with the **project's own** Groovy and Grails jars, so the members Grails adds at compile time (`render`, `params`, `save`, `get`, finders, ...) are visible to completion, hover and navigation.
 
-**Status: pre-alpha, milestone M2 (Grails artefacts).** The server resolves the Gradle project model in the background, reports progress through `grails/status`, compiles each open Groovy file and publishes its diagnostics. It answers completion (with resolve, including types not imported yet), hover, signature help, definition (into library and JDK sources too), document symbols and workspace symbols. Controllers, domain classes, services and taglibs get the members Grails adds (tested on Grails 4 and Grails 7), and `def fooService` is typed as the service of that name. GORM dynamic finders and DSL blocks, conventions (views, templates, actions) and GSP come in later milestones.
+**Status: pre-alpha, milestone M3 (GORM).** The server resolves the Gradle project model in the background, reports progress through `grails/status`, compiles each open Groovy file and publishes its diagnostics. It answers completion (with resolve, including types not imported yet), hover, signature help, definition (into library and JDK sources too), document symbols and workspace symbols. Controllers, domain classes, services and taglibs get the members Grails adds (tested on Grails 4 and Grails 7), and `def fooService` is typed as the service of that name. GORM dynamic finders, criteria, `where`, `constraints` and `mapping` blocks are understood. Conventions (views, templates, actions) and GSP come in later milestones.
 
 ## Grails artefacts
 
@@ -12,15 +12,28 @@ Grails adds most artefact members through AST transformations and traits. Compil
 - A name the transformations add after Groovy binds variables (`log`, a trait's `params`) is resolved to that member, so `params.` and `log.` complete and hover with the member's type.
 - **Untyped injection.** A property `def fooService` in any class is typed as the service class `FooService` (declared under a `grails-app/services` source root, in any package, the only one of that name); the compile pulls that class in from source. Services from plugin jars are not looked up.
 
+## GORM
+
+A domain class is any class the compile gave GORM's entity trait, from source or from a jar. Its persistent properties are read from the compiled class: the declared ones that are neither static nor transient, `id`, `version`, one per `hasMany`, `belongsTo` and `hasOne` entry, and the properties its traits give it.
+
+- **Dynamic finders** (`Book.findByTitleLikeAndAuthorIsNotNull(...)`) exist in no class; GORM resolves them at run time. The server reads the name against the properties (`findBy`, `findAllBy`, `countBy`, `findOrCreateBy`, `findOrSaveBy`, `listOrderBy`; every comparator; `And` or `Or`) and answers as if the method were declared: hover and signature help show its parameters and the query in words, the result is typed (the class, a list of it, a count), and definition goes from each condition to its property. Completion builds the name one step at a time: the prefixes, then the properties, then the comparators and connectors.
+- **Warnings** for a finder GORM would reject: a condition on no property of the class, `And` mixed with `Or`, the wrong number of arguments. A trailing map of query settings and a closure of further criteria are allowed.
+- **Criteria blocks** (`Book.withCriteria { }`, `Book.createCriteria().list { }`): calls in the block resolve against the closure's `@DelegatesTo` type, so `eq`, `like` and `order` complete, hover and show signatures. The same holds for any method whose closure parameter declares `@DelegatesTo` with a class. A string that names a property (`eq('title', x)`) completes and goes to the property, through association blocks too (`books { like('title', x) }`).
+- **`where` blocks** (`Book.where { title == wanted }`, `find` and `findAll` with a closure): GORM rewrites these closures at compile time and leaves no node of the original code, so the names are read from the text. Property names complete, hover and go to their declaration, along association paths (`author.name`).
+- **`constraints` and `mapping` blocks**: an entry (`title blank: false`) goes to its property, and the constraint names complete after it.
+- **Query settings**: `max`, `offset`, `sort`, `order` and the others complete as argument keys of a query, and the value of `sort:` completes and resolves as a property name.
+
+Named queries (`static namedQueries`) are not covered.
+
 ## Library sources
 
 Definition and hover reach classes that have no source in the project: jars, the JDK and the project's own compiled Java.
 
 - A jar's sources are the `-sources.jar` already on disk for it: next to the jar (a Maven repository) or in Gradle's module cache, where an IDE or a `sources` download put it. **Nothing is downloaded**; a library without one has no definition, as before. JDK classes come from `lib/src.zip` of the JDK the server runs on.
 - The file is extracted once, read-only, under `<cacheDir>/sources/` and returned as an ordinary `file:` location, so every editor opens it with no client support.
-- A method Grails adds through a trait (`render`, `redirect`, `save`, `list`) goes to the trait's source, e.g. `ResponseRenderer.groovy` or `GormEntity.groovy`.
-- Hover shows the declaration's documentation comment, also on Groovy 2.5, which keeps none on its nodes.
-- The declaration is found by scanning the source text for its names, since the project's Groovy parses no Java: among overloads, the one with the same number of parameters and the most matching type names. A member the scan misses (a record component, a property that exists only as a getter) goes to its class.
+- A method a class gets from a trait goes to the trait's source: Grails's `render`, `redirect`, `save`, `list` to `ResponseRenderer.groovy` or `GormEntity.groovy`, and a method or property of a trait of the project to that trait's file.
+- Hover, completion resolve and signature help show the declaration's documentation comment. For the project's own sources on Groovy 2.5, which keeps no comments on its nodes, it is read from the text each source was compiled from, the same way.
+- The declaration is found by scanning the source text for its names, since the project's Groovy parses no Java: among overloads, the one with the same number of parameters and the most matching type names. A getter or setter with no method of that name in the text goes to the property it reads or writes. A member the scan misses (a record component) goes to its class.
 
 ## How it works
 

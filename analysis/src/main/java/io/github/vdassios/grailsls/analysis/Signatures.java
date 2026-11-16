@@ -15,9 +15,9 @@ import org.codehaus.groovy.ast.expr.TupleExpression;
 
 import io.github.vdassios.grailsls.api.Range;
 import io.github.vdassios.grailsls.api.SignatureHelp;
+import io.github.vdassios.grailsls.api.SourceLookup;
 import net.prominic.groovyls.compiler.ast.ASTNodeVisitor;
 import net.prominic.groovyls.compiler.util.GroovyASTUtils;
-import net.prominic.groovyls.compiler.util.GroovydocUtils;
 import net.prominic.groovyls.util.GroovyNodeToStringUtils;
 
 /**
@@ -29,7 +29,7 @@ public final class Signatures {
   private Signatures() {}
 
   /** The overloads of the call whose arguments hold the position, or null when there is none or no node there. */
-  public static SignatureHelp at(ASTNodeVisitor ast, URI document, int line, int column) {
+  public static SignatureHelp at(ASTNodeVisitor ast, URI document, SourceLookup lookup, int line, int column) {
     ASTNode offsetNode = ast.getNodeAtLineAndColumn(document, line, column);
     TupleExpression arguments = null;
     MethodCall call = null;
@@ -55,7 +55,7 @@ public final class Signatures {
       for (Parameter parameter : method.getParameters()) {
         parameters.add(GroovyNodeToStringUtils.variableToString(parameter, ast));
       }
-      signatures.add(new SignatureHelp.Signature(GroovyNodeToStringUtils.methodToString(method, ast), parameters, GroovydocUtils.groovydocToMarkdownDescription(method)));
+      signatures.add(new SignatureHelp.Signature(GroovyNodeToStringUtils.methodToString(method, ast), parameters, Navigation.documentation(method, lookup)));
     }
     int activeParameter = arguments instanceof ArgumentListExpression ? activeParameter(arguments.getExpressions(), line, column) : 0;
     MethodNode best = GroovyASTUtils.getMethodFromCallExpression(call, ast, activeParameter);

@@ -1,6 +1,7 @@
 package io.github.vdassios.grailsls.analysis;
 
 import java.io.IOException;
+import java.io.Reader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
@@ -17,6 +18,7 @@ import org.codehaus.groovy.ast.Parameter;
 import org.codehaus.groovy.ast.PropertyNode;
 import org.codehaus.groovy.ast.expr.ClassExpression;
 import org.codehaus.groovy.ast.expr.Expression;
+import org.codehaus.groovy.control.SourceUnit;
 
 import io.github.vdassios.grailsls.api.Range;
 import io.github.vdassios.grailsls.api.SourceLookup;
@@ -24,7 +26,10 @@ import io.github.vdassios.grailsls.api.SourceLookup;
 /**
  * Where a class the compile read from a class file (a jar, the JDK, the project's compiled Java), or one of its members,
  * is declared in its source file, when {@link SourceLookup#classSource} has one. A method a trait gave to a class of
- * the compile (Grails's {@code render}, {@code save}) is looked up in the trait.
+ * the compile (Grails's {@code render}, {@code save}, or a trait of the project) is looked up in the trait.
+ *
+ * <p>A declaration of the compile's own sources is found the same way, in its source's text, for its documentation
+ * comment: Groovy 2.5 attaches none to its nodes.
  */
 final class ClassFileSource {
   private static final String TRAIT_BRIDGE = "org.codehaus.groovy.transform.trait.Traits$TraitBridge";
@@ -40,23 +45,30 @@ final class ClassFileSource {
     this.documentation = documentation;
   }
 
-  /** Null for a node declared in the compile's sources, and when the class has no source on disk. */
+  /** Null when the node is no class or member, and when its class has no source on disk. */
   static ClassFileSource of(ASTNode node, SourceLookup lookup) {
     ClassNode owner = owner(node);
-    if (owner == null || lookup == null) {
+    if (owner == null) {
       return null;
     }
     String name = owner.getName();
-    int nested = name.indexOf('$', name.lastIndexOf('.') + 1);
-    String topLevel = nested < 0 ? name : name.substring(0, nested);
-    String path = lookup.classSource(topLevel);
-    if (path == null) {
-      return null;
-    }
+    String path;
     String text;
-    try {
-      text = new String(Files.readAllBytes(Paths.get(path)), StandardCharsets.UTF_8);
-    } catch (IOException e) {
+    if (owner.getModule() != null) {
+      // a class of the compile: the text it was compiled from (the open document's is not the file's)
+      SourceUnit unit = owner.getModule().getContext();
+      path = unit == null ? null : Navigation.path(unit.getSource().getURI());
+      text = path == null ? null : text(unit);
+    } else {
+      int nested = name.indexOf('$', name.lastIndexOf('.') + 1);
+      path = lookup == null ? null : lookup.classSource(nested < 0 ? name : name.substring(0, nested));
+      try {
+        text = path == null ? null : new String(Files.readAllBytes(Paths.get(path)), StandardCharsets.UTF_8);
+      } catch (IOException e) {
+        text = null;
+      }
+    }
+    if (text == null) {
       return null;
     }
     // an anonymous or local class (Outer$1) is not found by name: its enclosing class instead
@@ -84,6 +96,12 @@ final class ClassFileSource {
       }
       String member = method instanceof ConstructorNode ? classes.get(classes.size() - 1) : method.getName();
       found = source.find(classes, member, true, parameterTypes);
+      String property = method instanceof ConstructorNode ? null : accessed(method);
+      SourceText.Found type = property == null || found == null ? null : source.find(classes, null, false, List.of());
+      if (type != null && type.range.startLine == found.range.startLine && type.range.startColumn == found.range.startColumn) {
+        // no such method in the text: the accessor of a Groovy property
+        found = source.find(classes, property, false, List.of());
+      }
     } else {
       String member = node instanceof FieldNode ? ((FieldNode) node).getName() : ((PropertyNode) node).getName();
       found = source.find(classes, member, false, List.of());
@@ -96,8 +114,9 @@ final class ClassFileSource {
   }
 
   /**
-   * The class whose source declares the node: the node itself or its declaring class when that comes from a class
-   * file, the trait when a class of the compile got the method from one. Null otherwise.
+   * The class whose source declares the node: the node itself or its declaring class, the trait when a class of the
+   * compile got the method from one. Null for a member of a source class that has no position (generated), and for
+   * anything that is not a class or a member.
    */
   private static ClassNode owner(ASTNode node) {
     if (node instanceof ClassNode) {
@@ -105,7 +124,7 @@ final class ClassFileSource {
       while (type.isArray()) {
         type = type.getComponentType().redirect();
       }
-      return type.getModule() == null && !type.isGenericsPlaceHolder() ? type : null;
+      return type.isGenericsPlaceHolder() ? null : type;
     }
     ClassNode declaring = node instanceof MethodNode ? ((MethodNode) node).getDeclaringClass()
         : node instanceof FieldNode ? ((FieldNode) node).getDeclaringClass() : node instanceof PropertyNode ? ((PropertyNode) node).getDeclaringClass() : null;
@@ -113,19 +132,41 @@ final class ClassFileSource {
       return null;
     }
     declaring = declaring.redirect();
-    if (declaring.getModule() == null) {
+    if (declaring.getModule() == null || node.getLineNumber() > 0) {
       return declaring;
     }
-    if (node instanceof MethodNode && node.getLineNumber() == -1) {
+    if (node instanceof MethodNode) {
       for (AnnotationNode annotation : ((MethodNode) node).getAnnotations()) {
         Expression trait = annotation.getClassNode().getName().equals(TRAIT_BRIDGE) ? annotation.getMember("traitClass") : null;
         if (trait instanceof ClassExpression) {
-          ClassNode type = trait.getType().redirect();
-          return type.getModule() == null ? type : null;
+          return trait.getType().redirect();
         }
       }
     }
     return null;
+  }
+
+  /** The property a method is the accessor of by its name and parameter count, or null. */
+  private static String accessed(MethodNode method) {
+    String name = method.getName();
+    int prefix = name.startsWith("is") ? 2 : name.startsWith("get") || name.startsWith("set") ? 3 : -1;
+    if (prefix < 0 || name.length() == prefix || method.getParameters().length != (name.startsWith("set") ? 1 : 0)) {
+      return null;
+    }
+    return Character.toLowerCase(name.charAt(prefix)) + name.substring(prefix + 1);
+  }
+
+  private static String text(SourceUnit unit) {
+    try (Reader reader = unit.getSource().getReader()) {
+      StringBuilder text = new StringBuilder();
+      char[] buffer = new char[8192];
+      for (int read = reader.read(buffer); read >= 0; read = reader.read(buffer)) {
+        text.append(buffer, 0, read);
+      }
+      return text.toString();
+    } catch (IOException | RuntimeException e) {
+      return null;
+    }
   }
 
   private static String simpleName(ClassNode type) {

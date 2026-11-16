@@ -225,7 +225,7 @@ public class GroovyServices implements TextDocumentService, WorkspaceService, La
 		recompileIfContextChanged(uri);
 
 		String markdown = astVisitor == null ? null
-				: Navigation.hover(astVisitor, uri, null, params.getPosition().getLine(), params.getPosition().getCharacter());
+				: Navigation.hover(astVisitor, uri, null, null, params.getPosition().getLine(), params.getPosition().getCharacter());
 		return CompletableFuture.completedFuture(markdown == null ? null : new Hover(new MarkupContent(MarkupKind.MARKDOWN, markdown)));
 	}
 
@@ -268,7 +268,7 @@ public class GroovyServices implements TextDocumentService, WorkspaceService, La
 		CompletableFuture<Either<List<CompletionItem>, CompletionList>> result = null;
 		try {
 			Completions completions = astVisitor == null ? null
-					: Completions.at(astVisitor, uri, classpathTypes(), position.getLine(), position.getCharacter());
+					: Completions.at(astVisitor, uri, classpathTypes(), position.getLine(), position.getCharacter(), "");
 			result = CompletableFuture.completedFuture(toCompletion(completions));
 		} finally {
 			if (originalSource != null) {
@@ -292,7 +292,7 @@ public class GroovyServices implements TextDocumentService, WorkspaceService, La
 		recompileIfContextChanged(uri);
 
 		io.github.vdassios.grailsls.api.Location location = astVisitor == null ? null
-				: Navigation.definition(astVisitor, uri, null, params.getPosition().getLine(), params.getPosition().getCharacter());
+				: Navigation.definition(astVisitor, uri, null, null, params.getPosition().getLine(), params.getPosition().getCharacter());
 		List<Location> locations = location == null ? Collections.emptyList() : Collections.singletonList(toLocation(location));
 		return CompletableFuture.completedFuture(Either.forLeft(locations));
 	}
@@ -328,7 +328,7 @@ public class GroovyServices implements TextDocumentService, WorkspaceService, La
 
 		try {
 			io.github.vdassios.grailsls.api.SignatureHelp help = astVisitor == null ? null
-					: Signatures.at(astVisitor, uri, position.getLine(), position.getCharacter());
+					: Signatures.at(astVisitor, uri, null, position.getLine(), position.getCharacter());
 			return CompletableFuture.completedFuture(toSignatureHelp(help));
 		} finally {
 			if (originalSource != null) {

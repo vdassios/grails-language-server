@@ -29,43 +29,64 @@ import net.prominic.groovyls.util.GroovyNodeToStringUtils;
 public final class Navigation {
   private Navigation() {}
 
-  public static Location definition(ASTNodeVisitor ast, URI document, SourceLookup lookup, int line, int column) {
+  public static Location definition(ASTNodeVisitor ast, URI document, SourceLookup lookup, String text, int line, int column) {
     ASTNode offsetNode = ast.getNodeAtLineAndColumn(document, line, column);
     if (offsetNode == null) {
       return null;
     }
-    ASTNode definition = GroovyASTUtils.getDefinition(offsetNode, true, ast);
+    Gorm.Target gorm = Gorm.target(offsetNode, ast, text, line, column);
+    ASTNode definition = gorm != null ? gorm.node : GroovyASTUtils.getDefinition(offsetNode, true, ast);
     if (definition == null || definition.getLineNumber() == -1 || definition.getColumnNumber() == -1) {
       // not declared in the compile's sources: a class file's source, when one is on disk
       ClassFileSource source = ClassFileSource.of(definition != null ? definition : GroovyASTUtils.getDefinition(offsetNode, false, ast), lookup);
       return source == null ? null : new Location(source.path, source.range);
     }
     URI uri = ast.getURI(definition);
+    if (uri == null && gorm != null) {
+      // a key of hasMany: in the source of its class
+      uri = ast.getURI(gorm.owner);
+    }
     String path = path(uri == null ? document : uri);
     Range range = NodeRanges.of(definition);
     return path == null || range == null ? null : new Location(path, range);
   }
 
-  public static String hover(ASTNodeVisitor ast, URI document, SourceLookup lookup, int line, int column) {
+  public static String hover(ASTNodeVisitor ast, URI document, SourceLookup lookup, String text, int line, int column) {
     ASTNode offsetNode = ast.getNodeAtLineAndColumn(document, line, column);
     if (offsetNode == null) {
       return null;
     }
     ASTNode definition = GroovyASTUtils.getDefinition(offsetNode, false, ast);
+    if (definition == null) {
+      definition = Gorm.described(offsetNode, ast, text, line, column);
+    }
     String content = definition == null ? null : signature(definition, ast);
     if (content == null) {
       return null;
     }
     StringBuilder markdown = new StringBuilder("```groovy\n").append(content).append("\n```");
-    String documentation = definition instanceof AnnotatedNode ? GroovydocUtils.groovydocToMarkdownDescription((AnnotatedNode) definition) : null;
-    if (documentation == null) {
-      ClassFileSource source = ClassFileSource.of(definition, lookup);
-      documentation = source == null ? null : source.documentation;
-    }
+    String documentation = documentation(definition, lookup);
     if (documentation != null) {
       markdown.append("\n\n---\n\n").append(documentation);
     }
     return markdown.toString();
+  }
+
+  /**
+   * The documentation of a declaration as markdown, or null: the Groovydoc on its node (Groovy 3 and later, the
+   * compile's sources), what GORM documents, else the comment before it in its source text (class files with a source
+   * on disk, and the compile's sources on Groovy 2.5).
+   */
+  static String documentation(ASTNode declaration, SourceLookup lookup) {
+    String documentation = declaration instanceof AnnotatedNode ? GroovydocUtils.groovydocToMarkdownDescription((AnnotatedNode) declaration) : null;
+    if (documentation == null) {
+      documentation = Gorm.documentation(declaration);
+    }
+    if (documentation == null) {
+      ClassFileSource source = ClassFileSource.of(declaration, lookup);
+      documentation = source == null ? null : source.documentation;
+    }
+    return documentation;
   }
 
   public static List<Symbol> symbols(ASTNodeVisitor ast, URI document) {

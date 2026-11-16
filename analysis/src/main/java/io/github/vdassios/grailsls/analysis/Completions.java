@@ -10,7 +10,6 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import org.codehaus.groovy.ast.ASTNode;
-import org.codehaus.groovy.ast.AnnotatedNode;
 import org.codehaus.groovy.ast.ClassHelper;
 import org.codehaus.groovy.ast.ClassNode;
 import org.codehaus.groovy.ast.FieldNode;
@@ -21,6 +20,7 @@ import org.codehaus.groovy.ast.PropertyNode;
 import org.codehaus.groovy.ast.Variable;
 import org.codehaus.groovy.ast.VariableScope;
 import org.codehaus.groovy.ast.expr.ClassExpression;
+import org.codehaus.groovy.ast.expr.ClosureExpression;
 import org.codehaus.groovy.ast.expr.ConstructorCallExpression;
 import org.codehaus.groovy.ast.expr.Expression;
 import org.codehaus.groovy.ast.expr.MethodCallExpression;
@@ -33,10 +33,10 @@ import io.github.vdassios.grailsls.api.Completion;
 import io.github.vdassios.grailsls.api.CompletionDetail;
 import io.github.vdassios.grailsls.api.CompletionList;
 import io.github.vdassios.grailsls.api.Range;
+import io.github.vdassios.grailsls.api.SourceLookup;
 import io.github.vdassios.grailsls.api.TextEdit;
 import net.prominic.groovyls.compiler.ast.ASTNodeVisitor;
 import net.prominic.groovyls.compiler.util.GroovyASTUtils;
-import net.prominic.groovyls.compiler.util.GroovydocUtils;
 
 /**
  * Completion over a visited compile. Ported from groovy-language-server's {@code CompletionProvider}, returning
@@ -65,14 +65,15 @@ public final class Completions {
    * The candidates at a position, or null when the compile has no node there (the text does not parse).
    *
    * @param classpath classes of the classpath to offer, or null for those of the compile only
+   * @param typed the text of the line before the position
    */
-  public static Completions at(ASTNodeVisitor ast, URI document, ClasspathTypes classpath, int line, int column) {
+  public static Completions at(ASTNodeVisitor ast, URI document, ClasspathTypes classpath, int line, int column, String typed) {
     ASTNode offsetNode = ast.getNodeAtLineAndColumn(document, line, column);
     if (offsetNode == null) {
       return null;
     }
     Completions completions = new Completions(ast, classpath);
-    completions.populate(offsetNode, line, column);
+    completions.populate(offsetNode, line, column, typed);
     return completions;
   }
 
@@ -91,13 +92,16 @@ public final class Completions {
   }
 
   /** Signature and documentation of a declaration. */
-  public static CompletionDetail detail(ASTNode declaration, ASTNodeVisitor ast) {
-    String documentation = declaration instanceof AnnotatedNode ? GroovydocUtils.groovydocToMarkdownDescription((AnnotatedNode) declaration) : null;
+  public static CompletionDetail detail(ASTNode declaration, ASTNodeVisitor ast, SourceLookup lookup) {
+    String documentation = Navigation.documentation(declaration, lookup);
     return new CompletionDetail(Navigation.signature(declaration, ast), documentation);
   }
 
-  private void populate(ASTNode offsetNode, int line, int column) {
+  private void populate(ASTNode offsetNode, int line, int column, String typed) {
     ASTNode parentNode = ast.getParent(offsetNode);
+    if (fromPropertyName(offsetNode, line, column)) {
+      return;
+    }
     if (offsetNode instanceof PropertyExpression) {
       fromPropertyExpression((PropertyExpression) offsetNode, line, column);
     } else if (parentNode instanceof PropertyExpression) {
@@ -112,7 +116,22 @@ public final class Completions {
       VariableExpression variable = (VariableExpression) offsetNode;
       Range range = NodeRanges.of(variable);
       if (range != null) {
-        fromScope(variable, prefix(variable.getName(), range, line, column));
+        String prefix = prefix(variable.getName(), range, line, column);
+        // a name GORM's transformation left alone in a where block
+        ASTNode block = GroovyASTUtils.getEnclosingNodeOfType(variable, ClosureExpression.class, ast);
+        ClassNode queried = block == null ? null : Gorm.whereDomain((ClosureExpression) block, ast);
+        if (queried != null) {
+          Set<String> names = new HashSet<>();
+          Gorm.properties(queried).keySet().forEach(property -> add(property, Completion.Kind.FIELD, null, prefix, names));
+        }
+        fromScope(variable, prefix);
+        // a key of named arguments GORM reads: title nullable: true, Book.list(max: 10); after the names in scope
+        Set<String> keys = new HashSet<>();
+        for (String key : Gorm.argumentKeys(variable, ast)) {
+          if (key.startsWith(prefix) && keys.add(key)) {
+            items.add(new Completion(key, Completion.Kind.FIELD, null, "~" + key, null, List.of(), -1));
+          }
+        }
       }
     } else if (offsetNode instanceof ImportNode) {
       fromImport((ImportNode) offsetNode, line, column);
@@ -120,7 +139,49 @@ public final class Completions {
       fromClassNode((ClassNode) offsetNode, line, column);
     } else if (offsetNode instanceof MethodNode || offsetNode instanceof Statement) {
       fromScope(offsetNode, "");
+    } else if (offsetNode instanceof ClosureExpression) {
+      fromWhereBlock((ClosureExpression) offsetNode, typed);
     }
+  }
+
+  /**
+   * In a {@code where} block the names are properties of its class. GORM's transformation leaves no node of the
+   * block's own code, so the name being typed is read from the text.
+   */
+  private void fromWhereBlock(ClosureExpression block, String typed) {
+    ClassNode domain = Gorm.whereDomain(block, ast);
+    if (domain == null) {
+      return;
+    }
+    int start = typed.length();
+    while (start > 0 && Character.isJavaIdentifierPart(typed.charAt(start - 1))) {
+      start--;
+    }
+    if (start > 0 && typed.charAt(start - 1) == '.') {
+      return;
+    }
+    String prefix = typed.substring(start);
+    Set<String> names = new HashSet<>();
+    for (String property : Gorm.properties(domain).keySet()) {
+      add(property, Completion.Kind.FIELD, null, prefix, names);
+    }
+    fromScope(block, prefix);
+  }
+
+  /** A string that names a property of a domain class: {@code eq('title', x)} in a criteria block, {@code sort: 'title'}. */
+  private boolean fromPropertyName(ASTNode offsetNode, int line, int column) {
+    List<String> properties = Gorm.propertyNames(offsetNode, ast);
+    Range range = properties == null ? null : NodeRanges.of(offsetNode);
+    if (range == null) {
+      return false;
+    }
+    // without the opening quote
+    String prefix = prefix(offsetNode.getText(), new Range(range.startLine, range.startColumn + 1, range.endLine, range.endColumn), line, column);
+    Set<String> names = new HashSet<>();
+    for (String property : properties) {
+      add(property, Completion.Kind.FIELD, null, prefix, names);
+    }
+    return true;
   }
 
   private void fromPropertyExpression(PropertyExpression expression, int line, int column) {
@@ -161,7 +222,23 @@ public final class Completions {
   private void fromReceiver(Expression receiver, ASTNode expression, String prefix) {
     ClassNode type = GroovyASTUtils.getTypeOfReceiver(receiver, expression, ast);
     if (type != null) {
+      if (receiver instanceof ClassExpression && Gorm.isDomain(type)) {
+        finders(type, prefix);
+      }
       members(type, receiver instanceof ClassExpression, prefix, new HashSet<>());
+    }
+  }
+
+  /**
+   * GORM's dynamic finders, one step of the name at a time: {@code findBy}, then {@code findByTitle}, then
+   * {@code findByTitleLike} or {@code findByTitleAnd}. Sorted before the members; a name that is a whole finder
+   * resolves to its signature.
+   */
+  private void finders(ClassNode domain, String prefix) {
+    for (String name : FinderName.continuations(prefix, Gorm.properties(domain).keySet())) {
+      Gorm.Finder finder = Gorm.finder(domain, name);
+      boolean whole = finder != null && finder.name.problems.isEmpty();
+      items.add(new Completion(name, Completion.Kind.METHOD, null, "0" + name, null, List.of(), whole ? remember(finder.method()) : -1));
     }
   }
 
@@ -175,6 +252,12 @@ public final class Completions {
         variables(((MethodNode) current).getVariableScope(), prefix, names);
       } else if (current instanceof BlockStatement) {
         variables(((BlockStatement) current).getVariableScope(), prefix, names);
+      } else if (current instanceof ClosureExpression) {
+        // calls without a receiver go to the closure's delegate: eq, like in Book.withCriteria { }
+        ClassNode delegate = Gorm.delegateOf((ClosureExpression) current, ast);
+        if (delegate != null) {
+          members(delegate, false, prefix, names);
+        }
       }
     }
     types(node, prefix, names);

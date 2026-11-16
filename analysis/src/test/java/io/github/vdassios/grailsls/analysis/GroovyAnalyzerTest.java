@@ -32,7 +32,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import groovy.lang.GroovyClassLoader;
-import groovy.lang.GroovySystem;
 import io.github.vdassios.grailsls.api.CompileRequest;
 import io.github.vdassios.grailsls.api.CompileResult;
 import io.github.vdassios.grailsls.api.CompiledClass;
@@ -569,14 +568,73 @@ class GroovyAnalyzerTest {
   }
 
   @Test
-  void hoverShowsTheSignatureAndOnGroovy3AndLaterTheGroovydoc() {
+  void hoverShowsTheSignatureAndTheDocumentationComment() {
     String path = tmp.resolve("A.groovy").toString();
     compile(path, "class A {\n  /** Counts things. */\n  int count(String what) { 1 }\n  def run() { count('x') }\n}\n");
     String hover = analyzer.hover(path, 3, 15);
     assertNotNull(hover);
     assertTrue(hover.startsWith("```groovy\npublic int count(String what)\n```"), hover);
-    boolean groovydoc = !GroovySystem.getVersion().startsWith("2.");
-    assertEquals(groovydoc, hover.contains("Counts things."), hover);
+    // Groovy 3 and later attach the comment to the node; on 2.5 it is read from the document's text
+    assertTrue(hover.endsWith("---\n\nCounts things."), hover);
+  }
+
+  /** The comment is read from the text each source was compiled from: a pulled-in file's, and the open document's own. */
+  @Test
+  void documentationOfProjectDeclarationsIsReadOnEveryGroovy() throws IOException {
+    index.put("app.Tally", write("src/app/Tally.groovy", "package app\n\n/** Keeps a tally. */\nclass Tally {\n  /** How many so far. */\n  int total\n\n"
+        + "  /**\n   * Adds to the tally.\n   * @param amount how much\n   */\n  @Deprecated\n  void add(int amount) { total += amount }\n  void reset() {}\n}\n"));
+    String path = tmp.resolve("src/app/A.groovy").toString();
+    String text = "package app\n\nclass A {\n  /** Not saved yet. */\n  int fresh() { 1 }\n  def run(Tally tally) {\n    tally.add(1)\n    tally.reset()\n    tally.total\n    fresh()\n    Tally.name\n  }\n}\n";
+    assertEquals(List.of(), errors(compile(path, text)));
+    assertTrue(analyzer.hover(path, 10, 5).endsWith("---\n\nKeeps a tally."), analyzer.hover(path, 10, 5)); // Tally
+    assertTrue(analyzer.hover(path, 6, 11).contains("---\n\nAdds to the tally."), analyzer.hover(path, 6, 11)); // add
+    assertFalse(analyzer.hover(path, 7, 11).contains("---"), analyzer.hover(path, 7, 11)); // reset has no comment
+    assertTrue(analyzer.hover(path, 8, 11).endsWith("---\n\nHow many so far."), analyzer.hover(path, 8, 11)); // total
+    assertTrue(analyzer.hover(path, 9, 5).endsWith("---\n\nNot saved yet."), analyzer.hover(path, 9, 5)); // fresh
+    SignatureHelp help = analyzer.signatureHelp(new CompileRequest(path, text, lookup, () -> false), 6, 14);
+    assertTrue(help.signatures.get(0).documentation.startsWith("Adds to the tally."), help.signatures.get(0).documentation);
+  }
+
+  /** A trait of the project: the class has only a generated bridge without a position, the trait's source declares the method. */
+  @Test
+  void aMethodFromATraitOfTheProjectIsFoundInTheTraitsSource() throws IOException {
+    String trait = write("src/app/Greets.groovy", "package app\n\ntrait Greets {\n  /** Who is greeted. */\n  String greeted\n\n  /** Says hello. */\n  String greet(String name) { 'hello ' + name }\n}\n");
+    index.put("app.Greets", trait);
+    String path = tmp.resolve("src/app/A.groovy").toString();
+    String text = "package app\n\nclass A implements Greets {\n  def run() {\n    greet('x')\n    getGreeted()\n  }\n}\n";
+    assertEquals(List.of(), errors(compile(path, text)));
+    Location method = analyzer.definition(path, 4, 6); // on greet
+    assertNotNull(method);
+    assertEquals(trait + ":7:9", method.path + ":" + method.range.startLine + ":" + method.range.startColumn);
+    assertTrue(analyzer.hover(path, 4, 6).endsWith("---\n\nSays hello."), analyzer.hover(path, 4, 6));
+    Location getter = analyzer.definition(path, 5, 6); // on getGreeted: the property
+    assertNotNull(getter);
+    assertEquals(trait + ":4:9", getter.path + ":" + getter.range.startLine + ":" + getter.range.startColumn);
+    assertTrue(analyzer.hover(path, 5, 6).endsWith("---\n\nWho is greeted."), analyzer.hover(path, 5, 6));
+    SignatureHelp help = analyzer.signatureHelp(new CompileRequest(path, text, lookup, () -> false), 4, 11);
+    assertEquals("Says hello.", help.signatures.get(0).documentation);
+  }
+
+  /** Completion resolve and signature help read the same comment as hover for a member that comes from a class file. */
+  @Test
+  void resolveAndSignatureHelpShowTheCommentOfAClassFilesMember() throws IOException {
+    classSources.put("java.lang.String", write("jdk/java/lang/String.java", "package java.lang;\n\npublic final class String {\n"
+        + "  /** Whether it starts with {@code prefix}. */\n  public boolean startsWith(String prefix) { return true; }\n\n"
+        + "  /** The same, from an offset. */\n  public boolean startsWith(String prefix, int offset) { return true; }\n}\n"));
+    String path = tmp.resolve("A.groovy").toString();
+    String text = "class A {\n  def run(String s) {\n    s.startsWith('x')\n    s.startsW\n  }\n}\n";
+    CompletionList list = complete(path, text, 3, 13);
+    Completion startsWith = list.items.stream().filter(c -> c.label.equals("startsWith")).findFirst().orElseThrow();
+    String documentation = analyzer.resolveCompletion(path, startsWith.id).documentation;
+    assertTrue(documentation != null && (documentation.startsWith("Whether it starts with") || documentation.startsWith("The same, from an offset.")), documentation);
+    SignatureHelp help = analyzer.signatureHelp(new CompileRequest(path, text.replace("    s.startsW\n", ""), lookup, () -> false), 2, 18);
+    List<String> documented = new ArrayList<>();
+    for (SignatureHelp.Signature signature : help.signatures) {
+      documented.add(signature.label + ": " + signature.documentation);
+    }
+    assertEquals(2, documented.size(), documented.toString());
+    assertTrue(documented.contains("public boolean startsWith(String arg0): Whether it starts with `prefix`."), documented.toString());
+    assertTrue(documented.contains("public boolean startsWith(String arg0, int arg1): The same, from an offset."), documented.toString());
   }
 
   /** Grails's idiom: render(view: 'x'), save(flush: true). Named arguments arrive as one map. */
@@ -678,7 +736,7 @@ class GroovyAnalyzerTest {
     assertNull(count.detail, "left to resolve");
     CompletionDetail detail = analyzer.resolveCompletion(path, count.id);
     assertEquals("public int count(String what)", detail.detail);
-    assertEquals(!GroovySystem.getVersion().startsWith("2."), detail.documentation != null && detail.documentation.contains("Counts things."));
+    assertEquals("Counts things.", detail.documentation);
     compile(path, text);
     assertNull(analyzer.resolveCompletion(path, count.id));
   }

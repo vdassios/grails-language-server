@@ -19,6 +19,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 package net.prominic.groovyls.compiler.util;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
@@ -37,6 +38,7 @@ import org.codehaus.groovy.ast.ClassHelper;
 import org.codehaus.groovy.ast.expr.BinaryExpression;
 import org.codehaus.groovy.ast.expr.ClassExpression;
 import org.codehaus.groovy.ast.expr.ConstantExpression;
+import org.codehaus.groovy.ast.expr.ClosureExpression;
 import org.codehaus.groovy.ast.expr.ConstructorCallExpression;
 import org.codehaus.groovy.ast.expr.DeclarationExpression;
 import org.codehaus.groovy.ast.expr.Expression;
@@ -49,6 +51,7 @@ import org.codehaus.groovy.ast.expr.VariableExpression;
 import org.codehaus.groovy.ast.stmt.ExpressionStatement;
 import org.codehaus.groovy.transform.stc.StaticTypesMarker;
 
+import io.github.vdassios.grailsls.analysis.Gorm;
 import io.github.vdassios.grailsls.analysis.Injections;
 import net.prominic.groovyls.compiler.ast.ASTNodeVisitor;
 
@@ -314,8 +317,24 @@ public class GroovyASTUtils {
         if (node instanceof MethodCallExpression) {
             MethodCallExpression methodCallExpr = (MethodCallExpression) node;
             ClassNode leftType = getTypeOfReceiver(methodCallExpr.getObjectExpression(), methodCallExpr, astVisitor);
-            if (leftType != null) {
-                return members(() -> leftType.getMethods(methodCallExpr.getMethod().getText()), Collections.emptyList());
+            String name = methodCallExpr.getMethod().getText();
+            List<MethodNode> methods = leftType == null ? Collections.emptyList() : members(() -> leftType.getMethods(name), Collections.emptyList());
+            if (!methods.isEmpty()) {
+                return methods;
+            }
+            // a GORM dynamic finder: no class declares it
+            Gorm.Finder finder = Gorm.finder(methodCallExpr, astVisitor);
+            if (finder != null) {
+                return Collections.singletonList(finder.method());
+            }
+            // a call without a receiver in a closure goes to the closure's delegate: Book.withCriteria { eq(...) }
+            if (methodCallExpr.isImplicitThis()) {
+                for (ClassNode delegate : delegates(methodCallExpr, astVisitor)) {
+                    List<MethodNode> delegated = members(() -> delegate.getMethods(name), Collections.emptyList());
+                    if (!delegated.isEmpty()) {
+                        return delegated;
+                    }
+                }
             }
         } else if (node instanceof ConstructorCallExpression) {
             ConstructorCallExpression constructorCallExpr = (ConstructorCallExpression) node;
@@ -326,6 +345,20 @@ public class GroovyASTUtils {
             }
         }
         return Collections.emptyList();
+    }
+
+    /** The {@code @DelegatesTo} types of the closures around a node, innermost first. */
+    public static List<ClassNode> delegates(ASTNode node, ASTNodeVisitor astVisitor) {
+        List<ClassNode> delegates = new ArrayList<>();
+        for (ASTNode current = astVisitor.getParent(node); current != null; current = astVisitor.getParent(current)) {
+            if (current instanceof ClosureExpression) {
+                ClassNode delegate = Gorm.delegateOf((ClosureExpression) current, astVisitor);
+                if (delegate != null) {
+                    delegates.add(delegate);
+                }
+            }
+        }
+        return delegates;
     }
 
     public static MethodNode getMethodFromCallExpression(MethodCall node, ASTNodeVisitor astVisitor) {

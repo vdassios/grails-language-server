@@ -168,6 +168,13 @@ public final class GroovyAnalyzer implements Analyzer {
       injections.mark(unit);
     }
     collect(unit.getErrorCollector(), TypeBounds.stale(document, unit.getErrorCollector(), config, loader), request.path, diagnostics);
+    if (document.getAST() != null) {
+      try {
+        diagnostics.addAll(Gorm.finderProblems(document.getAST(), request.path));
+      } catch (GroovyBugError | RuntimeException | LinkageError e) {
+        // a class the check reads cannot be loaded: no warnings rather than a failed compile
+      }
+    }
     return new Kept(unit, request.text, document.getSource().getURI(), request.lookup, resolver.sources(), Math.min(phase, last), false);
   }
 
@@ -232,13 +239,13 @@ public final class GroovyAnalyzer implements Analyzer {
   @Override
   public Location definition(String documentPath, int line, int column) {
     Kept kept = units.get(documentPath);
-    return kept == null ? null : Navigation.definition(kept.ast(), kept.uri, kept.lookup, line, column);
+    return kept == null ? null : Navigation.definition(kept.ast(), kept.uri, kept.lookup, kept.text, line, column);
   }
 
   @Override
   public String hover(String documentPath, int line, int column) {
     Kept kept = units.get(documentPath);
-    return kept == null ? null : Navigation.hover(kept.ast(), kept.uri, kept.lookup, line, column);
+    return kept == null ? null : Navigation.hover(kept.ast(), kept.uri, kept.lookup, kept.text, line, column);
   }
 
   @Override
@@ -251,10 +258,11 @@ public final class GroovyAnalyzer implements Analyzer {
   public CompletionList completion(CompileRequest request, int line, int column) {
     ClasspathTypes types = sourceTypes(request.lookup);
     Kept kept = current(request);
-    Completions found = kept == null ? null : Completions.at(kept.ast(), kept.uri, types, line, column);
+    String typed = lineBefore(request.text, line, column);
+    Completions found = kept == null ? null : Completions.at(kept.ast(), kept.uri, types, line, column, typed);
     if (found == null) {
-      kept = compileCopy(request, line, column, Completions.placeholder(lineBefore(request.text, line, column)));
-      found = kept == null ? null : Completions.at(kept.ast(), kept.uri, types, line, column);
+      kept = compileCopy(request, line, column, Completions.placeholder(typed));
+      found = kept == null ? null : Completions.at(kept.ast(), kept.uri, types, line, column, typed);
     }
     if (found == null) {
       completions.remove(request.path);
@@ -268,18 +276,18 @@ public final class GroovyAnalyzer implements Analyzer {
   public CompletionDetail resolveCompletion(String documentPath, int id) {
     LastCompletion last = completions.get(documentPath);
     ASTNode declaration = last == null ? null : last.completions.declaration(id);
-    return declaration == null ? null : Completions.detail(declaration, last.compile.ast());
+    return declaration == null ? null : Completions.detail(declaration, last.compile.ast(), last.compile.lookup);
   }
 
   @Override
   public SignatureHelp signatureHelp(CompileRequest request, int line, int column) {
     Kept kept = current(request);
     if (kept != null && kept.ast().getNodeAtLineAndColumn(kept.uri, line, column) != null) {
-      return Signatures.at(kept.ast(), kept.uri, line, column);
+      return Signatures.at(kept.ast(), kept.uri, kept.lookup, line, column);
     }
     // an unfinished call, "render(", does not parse
     Kept copy = compileCopy(request, line, column, ")");
-    return copy == null ? null : Signatures.at(copy.ast(), copy.uri, line, column);
+    return copy == null ? null : Signatures.at(copy.ast(), copy.uri, copy.lookup, line, column);
   }
 
   /** The kept compile of a document, if it is of the request's text. */
