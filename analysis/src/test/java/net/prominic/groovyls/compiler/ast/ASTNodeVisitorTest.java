@@ -16,8 +16,12 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.codehaus.groovy.ast.ASTNode;
 import org.codehaus.groovy.ast.ClassNode;
 import org.codehaus.groovy.ast.MethodNode;
+import org.codehaus.groovy.ast.expr.ArgumentListExpression;
 import org.codehaus.groovy.ast.expr.ConstantExpression;
 import org.codehaus.groovy.ast.expr.ElvisOperatorExpression;
+import org.codehaus.groovy.ast.expr.Expression;
+import org.codehaus.groovy.ast.expr.MethodCallExpression;
+import org.codehaus.groovy.ast.expr.VariableExpression;
 import org.codehaus.groovy.ast.stmt.BlockStatement;
 import org.codehaus.groovy.ast.stmt.ExpressionStatement;
 import org.codehaus.groovy.control.CompilationUnit;
@@ -121,5 +125,39 @@ class ASTNodeVisitorTest {
     // on "b": a property expression and the Elvis's boolean test share that range, so the sort walks up from both
     ASTNode found = assertTimeoutPreemptively(Duration.ofSeconds(10), () -> visitor.getNodeAtLineAndColumn(uri, 2, 6));
     assertEquals("b", found.getText());
+  }
+
+  /** A call that hands the visitor itself as its receiver, once: as a tree shared between two places would. */
+  private static final class VisitedFromInsideItself extends MethodCallExpression {
+    private int asked;
+
+    VisitedFromInsideItself() {
+      super(new VariableExpression("a"), "b", ArgumentListExpression.EMPTY_ARGUMENTS);
+    }
+
+    @Override
+    public Expression getObjectExpression() {
+      return asked++ == 0 ? this : super.getObjectExpression();
+    }
+  }
+
+  /** Whatever a transformation does to the tree, the parents never form a cycle: a walk up from any node ends. */
+  @Test
+  void aNodeVisitedFromInsideItselfKeepsItsFirstParent() {
+    CompilerConfiguration config = new CompilerConfiguration();
+    CompilationUnit unit = new CompilationUnit(config);
+    URI uri = URI.create("file:/src/A.groovy");
+    unit.addSource(new SourceUnit("A.groovy", new StringReaderSourceWithURI("class A {\n  def run(a) {\n    a.b()\n  }\n}\n", uri, config), config,
+        unit.getClassLoader(), unit.getErrorCollector()));
+    unit.compile(Phases.CONVERSION);
+    MethodNode run = unit.getAST().getClass("A").getMethods("run").get(0);
+    ExpressionStatement statement = (ExpressionStatement) ((BlockStatement) run.getCode()).getStatements().get(0);
+    VisitedFromInsideItself call = new VisitedFromInsideItself();
+    statement.setExpression(call);
+
+    ASTNodeVisitor visitor = new ASTNodeVisitor();
+    visitor.visitDocument(unit, uri);
+    assertSame(statement, visitor.getParent(call));
+    assertTrue(assertTimeoutPreemptively(Duration.ofSeconds(10), () -> visitor.contains(run, call)));
   }
 }

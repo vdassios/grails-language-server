@@ -133,9 +133,23 @@ public class ASTNodeVisitor extends ClassCodeVisitorSupport {
 		if (stack.size() > 0) {
 			data.parent = stack.lastElement();
 		}
-		lookup.put(node, data);
+		// a node visited again from inside itself (pushed twice in a row, or shared by two places of a transformed
+		// tree) keeps its first parent: the parents then never form a cycle, so every walk up from a node ends
+		if (!isAncestor(node, data.parent)) {
+			lookup.put(node, data);
+		}
 
 		stack.add(node);
+	}
+
+	/** True when {@code node} is {@code from} or one of its ancestors. */
+	private boolean isAncestor(ASTNode node, ASTNode from) {
+		for (ASTNode current = from; current != null; current = getParent(current)) {
+			if (current == node) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private void popASTNode() {
