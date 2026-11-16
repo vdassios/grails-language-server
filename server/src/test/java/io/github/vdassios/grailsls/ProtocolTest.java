@@ -60,6 +60,9 @@ class ProtocolTest {
   interface GrailsServerProxy extends LanguageServer {
     @JsonRequest("grails/reloadProject")
     CompletableFuture<Object> reloadProject();
+
+    @JsonRequest("grails/downloadSources")
+    CompletableFuture<JsonObject> downloadSources();
   }
 
   private void start(Path root, JsonObject options) throws Exception {
@@ -141,6 +144,35 @@ class ProtocolTest {
     assertEquals(StatusParams.INDEXING, next().state);
     assertEquals(new StatusParams(StatusParams.READY, "1 module"), next(), "reload ignores the cache");
     assertEquals(2, FakeWrapper.runs(root));
+  }
+
+  /** Sources are fetched only on request, by a second Gradle run; modules that share a library count it once. */
+  @Test
+  void downloadsSourcesOnRequestAndReportsTheCounts() throws Exception {
+    String sources = "case \"$*\" in *grailsLanguageServerSources*)\n"
+        + "printf '%s' '{\"path\":\":\",\"available\":[\"a:b:1\",\"a:c:1\"],\"unavailable\":[\"a:d:1\"],\"failed\":[\"a:e:1\"],\"failure\":\"no route\"}' > \"$out/_root.json\"\n"
+        + "printf '%s' '{\"path\":\":app\",\"available\":[\"a:b:1\",\"a:e:1\"],\"unavailable\":[],\"failed\":[\"a:f:1\"],\"failure\":\"no route\"}' > \"$out/app.json\"\n"
+        + ";;\n*)\n" + FakeWrapper.WRITES_MODEL + ";;\nesac\n";
+    Path root = FakeWrapper.write(tmp.resolve("project"), sources).getParent();
+    start(root, trustedOptions());
+    assertEquals(StatusParams.RESOLVING, next().state);
+    assertEquals(StatusParams.INDEXING, next().state);
+    assertEquals(StatusParams.READY, next().state);
+    assertEquals(1, FakeWrapper.runs(root), "nothing fetched before the request");
+
+    JsonObject report = server.downloadSources().get(30, TimeUnit.SECONDS);
+    assertEquals("{\"available\":3,\"unavailable\":1,\"failed\":1,\"message\":\"no route\"}", report.toString());
+    assertEquals(2, FakeWrapper.runs(root));
+    assertNull(statuses.poll(500, TimeUnit.MILLISECONDS), "the project's state does not change");
+  }
+
+  @Test
+  void anUntrustedWorkspaceDownloadsNothing() throws Exception {
+    Path root = FakeWrapper.write(tmp.resolve("project"), FakeWrapper.WRITES_MODEL).getParent();
+    start(root, new JsonObject());
+    JsonObject report = server.downloadSources().get(10, TimeUnit.SECONDS);
+    assertTrue(report.get("message").getAsString().startsWith("workspace not trusted"), report.toString());
+    assertEquals(0, FakeWrapper.runs(root));
   }
 
   @Test

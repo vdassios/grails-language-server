@@ -77,6 +77,7 @@ import io.github.vdassios.grailsls.compile.Workspace;
 import io.github.vdassios.grailsls.index.SymbolIndex;
 import io.github.vdassios.grailsls.project.GradleBridge;
 import io.github.vdassios.grailsls.project.ProjectService;
+import io.github.vdassios.grailsls.project.SourcesReport;
 
 /**
  * LSP entry point. Speaks LSP over stdio.
@@ -165,6 +166,15 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
   @JsonRequest("grails/reloadProject")
   public CompletableFuture<Object> reloadProject() {
     return project.reload().thenApply(done -> null);
+  }
+
+  /**
+   * {@code grails/downloadSources}: fetches the sources jars the project's libraries lack, with the project's own
+   * Gradle, so definition and hover reach them. Completes with the counts when Gradle is done.
+   */
+  @JsonRequest("grails/downloadSources")
+  public CompletableFuture<SourcesReport> downloadSources() {
+    return project.downloadSources();
   }
 
   @Override

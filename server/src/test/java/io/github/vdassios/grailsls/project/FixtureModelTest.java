@@ -84,6 +84,38 @@ class FixtureModelTest {
     assertEquals(List.of("src/main/groovy", "src/main/java"), relative(root, root.sourceSet("main").sourceRoots));
   }
 
+  /**
+   * The real task on the fixture's Gradle: every library of the compile classpaths is counted, none fails, and a
+   * library's sources jar is in Gradle's cache afterwards, in a directory beside its jar's. Needs the network the
+   * first time, like resolving the fixture itself.
+   */
+  private void downloadsSources(String fixture, String jdkVariable, String jarPrefix) throws Exception {
+    Path jdk = Fixtures.jdk(jdkVariable);
+    Path root = Fixtures.copy(Fixtures.ROOT.resolve(fixture), tmp.resolve(fixture));
+    GradleBridge bridge = new GradleBridge(tmp.resolve("cache"), jdk, Duration.ofSeconds(540));
+    ProjectModel model = bridge.resolve(root, false);
+    SourcesReport report = bridge.downloadSources(root);
+    assertEquals(0, report.failed, String.valueOf(report.message));
+    assertTrue(report.available > 10, "available: " + report.available);
+    Path jar = model.modules.stream().flatMap(m -> m.sourceSets.stream()).flatMap(s -> s.compileClasspath.stream()).map(Path::of)
+        .filter(p -> p.getFileName().toString().startsWith(jarPrefix)).findFirst().orElseThrow();
+    String sourcesName = jar.getFileName().toString().replace(".jar", "-sources.jar");
+    try (java.util.stream.Stream<Path> hashDirs = java.nio.file.Files.list(jar.getParent().getParent())) {
+      assertTrue(hashDirs.anyMatch(dir -> java.nio.file.Files.isRegularFile(dir.resolve(sourcesName))), sourcesName + " beside " + jar);
+    }
+    assertTrue(bridge.resolve(root, false).fromCache, "the model cache is untouched");
+  }
+
+  @Test
+  void grails4DownloadsSources() throws Exception {
+    downloadsSources("grails4", "GLS_TEST_JDK11", "grails-core-");
+  }
+
+  @Test
+  void grails7DownloadsSources() throws Exception {
+    downloadsSources("grails7", "GLS_TEST_JDK17", "grails-core-");
+  }
+
   private static List<String> paths(ProjectModel model) {
     return model.modules.stream().map(m -> m.path).collect(Collectors.toList());
   }

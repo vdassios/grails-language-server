@@ -29,7 +29,8 @@ Named queries (`static namedQueries`) are not covered.
 
 Definition and hover reach classes that have no source in the project: jars, the JDK and the project's own compiled Java.
 
-- A jar's sources are the `-sources.jar` already on disk for it: next to the jar (a Maven repository) or in Gradle's module cache, where an IDE or a `sources` download put it. **Nothing is downloaded**; a library without one has no definition, as before. JDK classes come from `lib/src.zip` of the JDK the server runs on.
+- A jar's sources are the `-sources.jar` already on disk for it: next to the jar (a Maven repository) or in Gradle's module cache, where an IDE or a `sources` download put it. A library without one has no definition. JDK classes come from `lib/src.zip` of the JDK the server runs on.
+- **Nothing is downloaded unless the client asks.** The request `grails/downloadSources` (trusted workspaces only) runs the project's Gradle wrapper once more and resolves the sources artifacts of every library on the compile classpaths, so they land in Gradle's own cache, where the server looks. It answers with counts: libraries with sources now, libraries that publish none, and failures (offline, repository errors) with the first reason. Definition and hover find the new jars at once; no reload is needed.
 - The file is extracted once, read-only, under `<cacheDir>/sources/` and returned as an ordinary `file:` location, so every editor opens it with no client support.
 - A method a class gets from a trait goes to the trait's source: Grails's `render`, `redirect`, `save`, `list` to `ResponseRenderer.groovy` or `GormEntity.groovy`, and a method or property of a trait of the project to that trait's file.
 - Hover, completion resolve and signature help show the declaration's documentation comment. For the project's own sources on Groovy 2.5, which keeps no comments on its nodes, it is read from the text each source was compiled from, the same way.
@@ -53,6 +54,7 @@ Resolving the project runs its Gradle build scripts, and compiling a Grails proj
 |---|---|---|
 | `grails/status` | server to client | `{ "state": "resolving" \| "indexing" \| "ready" \| "failed", "message"?: string }` |
 | `grails/reloadProject` | client to server (request) | none; re-resolves the project, ignoring the cache |
+| `grails/downloadSources` | client to server (request) | none; result `{ "available": number, "unavailable": number, "failed": number, "message"?: string }`: libraries with a sources jar on disk now, libraries that publish none, libraries whose sources could not be fetched, and the reason when something failed or nothing ran (untrusted workspace, Gradle error or timeout) |
 
 The server logs each startup stage once with `window/logMessage`, as `startup: <stage> after <ms> ms` (stages: model resolved, declarations indexed, symbols indexed, first diagnostics).
 

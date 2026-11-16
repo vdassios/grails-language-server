@@ -18,6 +18,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 
@@ -31,6 +32,7 @@ import com.google.gson.JsonParseException;
  */
 public final class GradleBridge {
   static final String TASK = "grailsLanguageServerModel";
+  static final String SOURCES_TASK = "grailsLanguageServerSources";
   private static final String INIT_SCRIPT = "model.init.gradle";
   private static final boolean WINDOWS = System.getProperty("os.name", "").startsWith("Windows");
   private static final String WRAPPER = WINDOWS ? "gradlew.bat" : "gradlew";
@@ -149,10 +151,55 @@ public final class GradleBridge {
     return files;
   }
 
+  /**
+   * Downloads the sources jars of the libraries on the build's compile classpaths that have none on disk yet, into
+   * Gradle's own cache (where the server already looks for them), by running the wrapper with the init script's
+   * second task. Nothing in the project changes and the model cache is left alone.
+   *
+   * @throws BridgeException      no wrapper, Gradle failed or timed out
+   * @throws InterruptedException the thread was interrupted; the Gradle process has been killed
+   */
+  public SourcesReport downloadSources(Path workspaceRoot) throws BridgeException, InterruptedException {
+    Path buildRoot = findBuildRoot(realPath(workspaceRoot));
+    Path dir = cacheDir.resolve(sha256(buildRoot.toString().getBytes(StandardCharsets.UTF_8)).substring(0, 16));
+    Path out = run(buildRoot, dir, "sources", SOURCES_TASK);
+    Set<String> available = new TreeSet<>();
+    Set<String> unavailable = new TreeSet<>();
+    Set<String> failed = new TreeSet<>();
+    String failure = null;
+    try (Stream<Path> files = Files.list(out)) {
+      for (Path file : (Iterable<Path>) files.filter(f -> f.toString().endsWith(".json"))::iterator) {
+        try (Reader reader = Files.newBufferedReader(file)) {
+          SourcesRecord record = gson.fromJson(reader, SourcesRecord.class);
+          available.addAll(record.available);
+          unavailable.addAll(record.unavailable);
+          failed.addAll(record.failed);
+          failure = failure != null ? failure : record.failure;
+        }
+      }
+    } catch (IOException | JsonParseException | NullPointerException e) {
+      throw new BridgeException("cannot read the sources report: " + e.getMessage(), e);
+    }
+    // modules share libraries, and one module may fetch what another could not
+    unavailable.removeAll(available);
+    failed.removeAll(available);
+    return new SourcesReport(available.size(), unavailable.size(), failed.size(), failed.isEmpty() ? null : failure);
+  }
+
   private List<ModuleRecord> runGradle(Path buildRoot, Path dir) throws BridgeException, InterruptedException {
-    Path out = dir.resolve("out");
+    Path out = run(buildRoot, dir, "out", TASK);
+    List<ModuleRecord> modules = readRecords(out);
+    if (modules.isEmpty()) {
+      throw new BridgeException("Gradle wrote no project model (log: " + dir.resolve("gradle.log") + ")");
+    }
+    return modules;
+  }
+
+  /** Runs one task of the init script in every project; returns the emptied directory it wrote its records to. */
+  private Path run(Path buildRoot, Path dir, String outName, String task) throws BridgeException, InterruptedException {
+    Path out = dir.resolve(outName);
     Path init = dir.resolve(INIT_SCRIPT);
-    Path log = dir.resolve("gradle.log");
+    Path log = dir.resolve(outName.equals("out") ? "gradle.log" : outName + ".log");
     try {
       deleteTree(out);
       Files.createDirectories(out);
@@ -164,7 +211,7 @@ public final class GradleBridge {
     if (WINDOWS) {
       command.addAll(List.of("cmd", "/c"));
     }
-    command.addAll(List.of(buildRoot.resolve(WRAPPER).toString(), "--init-script", init.toString(), "-Pgls.out=" + out, "--console=plain", TASK));
+    command.addAll(List.of(buildRoot.resolve(WRAPPER).toString(), "--init-script", init.toString(), "-Pgls.out=" + out, "--console=plain", task));
     ProcessBuilder builder = new ProcessBuilder(command).directory(buildRoot.toFile()).redirectErrorStream(true).redirectOutput(log.toFile());
     builder.environment().put("JAVA_HOME", javaHome.toString());
     Process process;
@@ -186,11 +233,7 @@ public final class GradleBridge {
     if (process.exitValue() != 0) {
       throw new BridgeException("Gradle failed: " + failureReason(log) + " (log: " + log + ")");
     }
-    List<ModuleRecord> modules = readRecords(out);
-    if (modules.isEmpty()) {
-      throw new BridgeException("Gradle wrote no project model (log: " + log + ")");
-    }
-    return modules;
+    return out;
   }
 
   private List<ModuleRecord> readRecords(Path out) throws BridgeException {
@@ -305,6 +348,13 @@ public final class GradleBridge {
       hex.append(Character.forDigit((b >> 4) & 0xf, 16)).append(Character.forDigit(b & 0xf, 16));
     }
     return hex.toString();
+  }
+
+  private static final class SourcesRecord {
+    List<String> available = List.of();
+    List<String> unavailable = List.of();
+    List<String> failed = List.of();
+    String failure;
   }
 
   private static final class CachedModel {

@@ -1,6 +1,13 @@
 // grails-language-server: writes one JSON record per Gradle project into the directory given as -Pgls.out.
 // Resolves dependencies only; builds nothing. Works on Gradle 5 to 9.
+// A second task, grailsLanguageServerSources, downloads the sources jars of the compile classpaths' libraries into
+// Gradle's own cache and writes what it found, also one JSON record per project.
 import groovy.json.JsonOutput
+import org.gradle.api.artifacts.result.ResolvedArtifactResult
+import org.gradle.api.artifacts.result.UnresolvedArtifactResult
+import org.gradle.api.artifacts.result.UnresolvedComponentResult
+import org.gradle.jvm.JvmLibrary
+import org.gradle.language.base.artifact.SourcesArtifact
 import org.gradle.api.artifacts.component.ModuleComponentIdentifier
 import org.gradle.api.artifacts.component.ProjectComponentIdentifier
 import org.gradle.util.GradleVersion
@@ -49,6 +56,50 @@ allprojects { p ->
         javaFiles: ss.allJava.files*.absolutePath.sort(),
         outputsOf: outputsOf,
       ]
+    }
+    def file = p.path == ':' ? '_root' : p.path.substring(1).replace(':', '__')
+    new File(out, file + '.json').text = JsonOutput.toJson(record)
+  }
+
+  def sources = p.tasks.create('grailsLanguageServerSources')
+  if (GradleVersion.current() >= GradleVersion.version('7.4')) {
+    sources.notCompatibleWithConfigurationCache('resolves artifacts at execution time')
+  }
+  sources.doLast {
+    def out = new File(p.rootProject.findProperty('gls.out') as String)
+    def ids = [] as LinkedHashSet
+    p.extensions.findByName('sourceSets')?.each { ss ->
+      def conf = p.configurations.findByName(ss.compileClasspathConfigurationName)
+      if (conf != null) {
+        conf.incoming.artifactView { lenient(true) }.artifacts.each { a ->
+          if (a.id.componentIdentifier instanceof ModuleComponentIdentifier) {
+            ids << a.id.componentIdentifier
+          }
+        }
+      }
+    }
+    // available: a sources jar is on disk now; unavailable: the library publishes none; failed: could not be fetched
+    def record = [path: p.path, available: [], unavailable: [], failed: [], failure: null]
+    if (!ids.isEmpty()) {
+      def result = p.dependencies.createArtifactResolutionQuery().forComponents(ids).withArtifacts(JvmLibrary, SourcesArtifact).execute()
+      result.components.each { c ->
+        def name = c.id.displayName
+        if (c instanceof UnresolvedComponentResult) {
+          record.failed << name
+          record.failure = record.failure ?: c.failure?.message
+          return
+        }
+        def artifacts = c.getArtifacts(SourcesArtifact)
+        def broken = artifacts.find { it instanceof UnresolvedArtifactResult && !it.failure?.class?.name?.contains('NotFound') }
+        if (artifacts.any { it instanceof ResolvedArtifactResult && it.file.isFile() }) {
+          record.available << name
+        } else if (broken != null) {
+          record.failed << name
+          record.failure = record.failure ?: broken.failure?.message
+        } else {
+          record.unavailable << name
+        }
+      }
     }
     def file = p.path == ':' ? '_root' : p.path.substring(1).replace(':', '__')
     new File(out, file + '.json').text = JsonOutput.toJson(record)

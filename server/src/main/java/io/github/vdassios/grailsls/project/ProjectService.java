@@ -58,6 +58,31 @@ public final class ProjectService {
     return submit(true);
   }
 
+  /**
+   * Downloads the sources jars the project's libraries lack ({@code grails/downloadSources}), after any resolution
+   * still running. Only ever on request, and never for an untrusted workspace: it runs the build scripts and reaches
+   * the network. A failure is the report's message; the project's state does not change.
+   */
+  public synchronized CompletableFuture<SourcesReport> downloadSources() {
+    if (!trusted || workspaceRoot == null) {
+      return CompletableFuture.completedFuture(new SourcesReport(0, 0, 0, trusted ? "no workspace folder" : UNTRUSTED));
+    }
+    CompletableFuture<SourcesReport> done = new CompletableFuture<>();
+    executor.submit(() -> {
+      try {
+        done.complete(bridge.downloadSources(workspaceRoot));
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        done.complete(new SourcesReport(0, 0, 0, "cancelled"));
+      } catch (BridgeException e) {
+        done.complete(new SourcesReport(0, 0, 0, e.getMessage()));
+      } catch (RuntimeException e) {
+        done.complete(new SourcesReport(0, 0, 0, e.toString()));
+      }
+    });
+    return done;
+  }
+
   public synchronized void stop() {
     if (running != null) {
       running.cancel(true);
