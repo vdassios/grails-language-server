@@ -8,6 +8,9 @@ import java.util.Map;
  * next to the project's own Groovy and Grails jars. Only types of this package and the JDK cross the boundary.
  *
  * <p>Calls for one document are not concurrent; calls for different documents may be.
+ *
+ * <p>A GSP page (a path ending in {@code .gsp}) is not compiled: its "compile" reads its tags and reports hints, and
+ * completion, hover and definition answer about its tags and their attributes. It has no symbols or signature help.
  */
 public interface Analyzer extends AutoCloseable {
   /** Binary name of the implementation, loaded by name in each module loader. */

@@ -11,15 +11,20 @@ import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.Enumeration;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 
 import io.github.vdassios.grailsls.api.SourceLookup;
 import io.github.vdassios.grailsls.api.Symbol;
@@ -52,6 +57,10 @@ public final class Workspace implements AutoCloseable {
   private final ClassSources classSources;
   /** Every module's {@code grails-app} directory that exists. */
   private final List<Path> grailsApps = new ArrayList<>();
+  /** The taglib classes of each jar of the contexts' class paths, read once. */
+  private final Map<Path, List<String>> jarTaglibs = new ConcurrentHashMap<>();
+  /** Per context, the jars only on its runtime classpath ({@link SourceSetRecord#runtimeOnly}): more taglibs for its pages. */
+  private final Map<CompileContext, List<Path>> runtimeJars = new HashMap<>();
 
   /** @param analysisJar the analysis layer's jar, in the server's cache directory; library sources are extracted next to it */
   public Workspace(ProjectModel model, Path analysisJar) {
@@ -68,7 +77,13 @@ public final class Workspace implements AutoCloseable {
       }
       for (SourceSetRecord sourceSet : module.sourceSets) {
         if (!ownRoots(module, sourceSet).isEmpty()) {
-          contexts.add(context(model, module, sourceSet, analysisJar, antlr));
+          CompileContext context = context(model, module, sourceSet, analysisJar, antlr);
+          contexts.add(context);
+          List<Path> runtime = sourceSet.runtimeOnly.stream().map(Path::of).filter(Files::isRegularFile)
+              .filter(jar -> !context.classpath().contains(jar)).collect(Collectors.toList());
+          if (!runtime.isEmpty()) {
+            runtimeJars.put(context, runtime);
+          }
         }
       }
     }
@@ -133,8 +148,14 @@ public final class Workspace implements AutoCloseable {
     return List.copyOf(contexts);
   }
 
-  /** The context whose source root contains {@code file} (the deepest root wins), or null when it is no source. */
+  /**
+   * The context whose source root contains {@code file} (the deepest root wins), or null when it is no source. A GSP
+   * page belongs to the context of the {@code grails-app} it is in: the one compiling that module's artefacts.
+   */
   public CompileContext contextOf(Path file) {
+    if (file.getFileName() != null && file.getFileName().toString().endsWith(".gsp")) {
+      return pageContext(file);
+    }
     CompileContext best = null;
     int depth = -1;
     for (CompileContext context : contexts) {
@@ -146,6 +167,71 @@ public final class Workspace implements AutoCloseable {
       }
     }
     return best;
+  }
+
+  private CompileContext pageContext(Path page) {
+    Path app = null;
+    for (Path candidate : grailsApps) {
+      if (page.startsWith(candidate) && (app == null || candidate.getNameCount() > app.getNameCount())) {
+        app = candidate;
+      }
+    }
+    for (CompileContext context : app == null ? List.<CompileContext>of() : contexts) {
+      for (Path root : context.ownRoots) {
+        if (root.startsWith(app)) {
+          return context;
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
+   * The classes named {@code *TagLib} in the jars of a context's class path and of its runtime-only jars, by binary
+   * name, each with its jar; the first jar holding a name wins, as in a class loader.
+   */
+  Map<String, String> taglibClasses(CompileContext context) {
+    Map<String, String> found = new LinkedHashMap<>();
+    List<Path> jars = new ArrayList<>(context.classpath());
+    jars.addAll(runtimeJars.getOrDefault(context, List.of()));
+    for (Path entry : jars) {
+      if (entry.getFileName() != null && entry.getFileName().toString().endsWith(".jar")) {
+        for (String name : jarTaglibs.computeIfAbsent(entry, Workspace::taglibsIn)) {
+          found.putIfAbsent(name, entry.toString());
+        }
+      }
+    }
+    return found;
+  }
+
+  /** A class file in one of the context's runtime-only jars, as a {@code jar:} URL; null when none holds it. */
+  private URL runtimeClassFile(CompileContext context, String resource) {
+    for (Path jar : runtimeJars.getOrDefault(context, List.of())) {
+      try (ZipFile zip = new ZipFile(jar.toFile())) {
+        if (zip.getEntry(resource) != null) {
+          return new URL("jar:" + jar.toUri() + "!/" + resource);
+        }
+      } catch (IOException e) {
+        // unreadable: skip it
+      }
+    }
+    return null;
+  }
+
+  private static List<String> taglibsIn(Path jar) {
+    List<String> names = new ArrayList<>();
+    try (ZipFile zip = new ZipFile(jar.toFile())) {
+      Enumeration<? extends ZipEntry> entries = zip.entries();
+      while (entries.hasMoreElements()) {
+        String name = entries.nextElement().getName();
+        if (name.endsWith("TagLib.class") && !name.contains("$") && !name.endsWith("/TagLib.class") && !name.startsWith("META-INF/")) {
+          names.add(name.substring(0, name.length() - ".class".length()).replace('/', '.'));
+        }
+      }
+    } catch (IOException e) {
+      // not a jar: the class path skips it too
+    }
+    return names;
   }
 
   /** Class lookup for compiles in {@code context}: the declaration index over its search roots, and open text. */
@@ -178,6 +264,11 @@ public final class Workspace implements AutoCloseable {
       }
 
       @Override
+      public Map<String, String> taglibClasses() {
+        return Workspace.this.taglibClasses(context);
+      }
+
+      @Override
       public String classSource(String className) {
         String resource = className.replace('.', '/');
         // the project's own Java, compiled by Gradle
@@ -189,6 +280,9 @@ public final class Workspace implements AutoCloseable {
         }
         ClassLoader loader = context.loader();
         URL classFile = loader == null ? null : loader.getResource(resource + ".class");
+        if (classFile == null) {
+          classFile = runtimeClassFile(context, resource + ".class");
+        }
         Path source = classFile == null ? null : classSources.sourceOf(className, classFile);
         return source == null ? null : source.toString();
       }

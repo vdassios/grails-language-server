@@ -1,7 +1,7 @@
 // grails-language-server: writes one JSON record per Gradle project into the directory given as -Pgls.out.
 // Resolves dependencies only; builds nothing. Works on Gradle 5 to 9.
-// A second task, grailsLanguageServerSources, downloads the sources jars of the compile classpaths' libraries into
-// Gradle's own cache and writes what it found, also one JSON record per project.
+// A second task, grailsLanguageServerSources, downloads the sources jars of the compile classpaths' libraries (and of
+// main's runtime classpath) into Gradle's own cache and writes what it found, also one JSON record per project.
 import groovy.json.JsonOutput
 import org.gradle.api.artifacts.result.ResolvedArtifactResult
 import org.gradle.api.artifacts.result.UnresolvedArtifactResult
@@ -46,6 +46,19 @@ allprojects { p ->
         outputsOf = sourceSets.findAll { o -> o.name != ss.name && o.output.classesDirs.files.any { it in files } }*.name
       } catch (Exception ignored) {
       }
+      // jars only on main's runtime classpath: GSP pages compile at run time, so taglibs there count (Grails 7: RenderTagLib)
+      def runtimeOnly = []
+      def runtime = ss.name == 'main' ? p.configurations.findByName(ss.runtimeClasspathConfigurationName) : null
+      if (runtime != null) {
+        def runtimeArtifacts = runtime.incoming.artifactView { lenient(true) }.artifacts
+        runtimeArtifacts.each { a ->
+          def path = a.file.absolutePath
+          if (path.endsWith('.jar') && !(path in classpath) && !(a.id.componentIdentifier instanceof ProjectComponentIdentifier)) {
+            runtimeOnly << path
+          }
+        }
+        runtimeArtifacts.failures.each { f -> record.errors << "${ss.name} runtime: ${f.message}".toString() }
+      }
       def resourceDirs = ss.resources.srcDirs
       record.sourceSets << [
         name: ss.name,
@@ -55,6 +68,7 @@ allprojects { p ->
         classesDirs: ss.output.classesDirs.files*.absolutePath.sort(),
         javaFiles: ss.allJava.files*.absolutePath.sort(),
         outputsOf: outputsOf,
+        runtimeOnly: runtimeOnly,
       ]
     }
     def file = p.path == ':' ? '_root' : p.path.substring(1).replace(':', '__')
@@ -69,8 +83,9 @@ allprojects { p ->
     def out = new File(p.rootProject.findProperty('gls.out') as String)
     def ids = [] as LinkedHashSet
     p.extensions.findByName('sourceSets')?.each { ss ->
-      def conf = p.configurations.findByName(ss.compileClasspathConfigurationName)
-      if (conf != null) {
+      // main's runtime classpath too: its runtime-only jars hold taglibs (the model's runtimeOnly)
+      def names = ss.name == 'main' ? [ss.compileClasspathConfigurationName, ss.runtimeClasspathConfigurationName] : [ss.compileClasspathConfigurationName]
+      names.collect { p.configurations.findByName(it) }.findAll { it != null }.each { conf ->
         conf.incoming.artifactView { lenient(true) }.artifacts.each { a ->
           if (a.id.componentIdentifier instanceof ModuleComponentIdentifier) {
             ids << a.id.componentIdentifier

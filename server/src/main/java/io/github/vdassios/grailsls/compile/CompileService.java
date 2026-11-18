@@ -228,6 +228,7 @@ public final class CompileService {
 
   private static PublishDiagnosticsParams diagnostics(Document document, CompileResult result) {
     String path = document.path.toString();
+    String source = path.endsWith(".gsp") ? "gsp" : "groovy";
     List<Diagnostic> list = new ArrayList<>();
     for (io.github.vdassios.grailsls.api.Diagnostic d : result.diagnostics) {
       if (!d.path.equals(path)) {
@@ -236,7 +237,7 @@ public final class CompileService {
       Range range = new Range(new Position(d.startLine, d.startColumn), new Position(d.endLine, d.endColumn));
       DiagnosticSeverity severity = d.severity == io.github.vdassios.grailsls.api.Diagnostic.ERROR ? DiagnosticSeverity.Error
           : d.severity == io.github.vdassios.grailsls.api.Diagnostic.HINT ? DiagnosticSeverity.Hint : DiagnosticSeverity.Warning;
-      Diagnostic diagnostic = new Diagnostic(range, d.message, severity, "groovy");
+      Diagnostic diagnostic = new Diagnostic(range, d.message, severity, source);
       list.add(diagnostic);
     }
     PublishDiagnosticsParams params = new PublishDiagnosticsParams(document.uri, list);

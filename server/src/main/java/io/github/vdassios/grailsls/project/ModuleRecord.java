@@ -36,5 +36,10 @@ public final class ModuleRecord {
      * {@code main, test} for Grails' {@code integrationTest}.
      */
     public List<String> outputsOf = new ArrayList<>();
+    /**
+     * Jars on {@code main}'s runtime classpath but not its compile classpath (empty for other source sets): GSP pages
+     * compile at run time, so taglibs declared only for run time (Grails 7's {@code RenderTagLib}) are read from them.
+     */
+    public List<String> runtimeOnly = new ArrayList<>();
   }
 }

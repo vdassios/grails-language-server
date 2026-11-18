@@ -12,4 +12,5 @@ dependencies {
   implementation "org.apache.grails:grails-domain-class"
   implementation "org.apache.grails:grails-data-hibernate5"
   implementation "org.apache.grails:grails-gsp"
+  implementation "org.apache.grails:grails-layout"
 }

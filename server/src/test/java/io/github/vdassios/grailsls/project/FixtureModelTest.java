@@ -90,6 +90,11 @@ class FixtureModelTest {
    * first time, like resolving the fixture itself.
    */
   private void downloadsSources(String fixture, String jdkVariable, String jarPrefix) throws Exception {
+    downloadsSources(fixture, jdkVariable, jarPrefix, false);
+  }
+
+  /** {@code runtimeOnly}: the jar is one of {@code :app} main's runtime-only jars, whose sources are fetched too. */
+  private void downloadsSources(String fixture, String jdkVariable, String jarPrefix, boolean runtimeOnly) throws Exception {
     Path jdk = Fixtures.jdk(jdkVariable);
     Path root = Fixtures.copy(Fixtures.ROOT.resolve(fixture), tmp.resolve(fixture));
     GradleBridge bridge = new GradleBridge(tmp.resolve("cache"), jdk, Duration.ofSeconds(540));
@@ -97,8 +102,10 @@ class FixtureModelTest {
     SourcesReport report = bridge.downloadSources(root);
     assertEquals(0, report.failed, String.valueOf(report.message));
     assertTrue(report.available > 10, "available: " + report.available);
-    Path jar = model.modules.stream().flatMap(m -> m.sourceSets.stream()).flatMap(s -> s.compileClasspath.stream()).map(Path::of)
-        .filter(p -> p.getFileName().toString().startsWith(jarPrefix)).findFirst().orElseThrow();
+    List<String> jars = runtimeOnly ? model.module(":app").sourceSet("main").runtimeOnly
+        : model.modules.stream().flatMap(m -> m.sourceSets.stream()).flatMap(s -> s.compileClasspath.stream()).collect(Collectors.toList());
+    Path jar = jars.stream().map(Path::of).filter(p -> p.getFileName().toString().startsWith(jarPrefix)).findFirst()
+        .orElseThrow(() -> new AssertionError(jarPrefix + " not in " + jars));
     String sourcesName = jar.getFileName().toString().replace(".jar", "-sources.jar");
     try (java.util.stream.Stream<Path> hashDirs = java.nio.file.Files.list(jar.getParent().getParent())) {
       assertTrue(hashDirs.anyMatch(dir -> java.nio.file.Files.isRegularFile(dir.resolve(sourcesName))), sourcesName + " beside " + jar);
@@ -114,6 +121,12 @@ class FixtureModelTest {
   @Test
   void grails7DownloadsSources() throws Exception {
     downloadsSources("grails7", "GLS_TEST_JDK17", "grails-core-");
+  }
+
+  /** Grails 7 declares the taglib of {@code g:render} for run time only: the model lists it, and its sources come too. */
+  @Test
+  void grails7RuntimeOnlyTaglibsAndTheirSources() throws Exception {
+    downloadsSources("grails7", "GLS_TEST_JDK17", "grails-web-gsp-taglib-", true);
   }
 
   private static List<String> paths(ProjectModel model) {

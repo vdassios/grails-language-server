@@ -76,6 +76,8 @@ public final class GroovyAnalyzer implements Analyzer {
    * file grew with every artefact compiled and was read and written again by each compile.
    */
   private final Path output;
+  /** GSP pages: tags and taglibs, nothing compiled. */
+  private final GspViews gsp;
 
   public GroovyAnalyzer() {
     this(GroovyAnalyzer.class.getClassLoader());
@@ -85,6 +87,7 @@ public final class GroovyAnalyzer implements Analyzer {
   GroovyAnalyzer(ClassLoader parent) {
     this.parent = parent;
     this.lateTransforms = new LateTransforms(parent);
+    this.gsp = new GspViews(new Taglibs((path, text) -> parserCache.parsing(() -> parsedClasses(path, text))));
     try {
       this.output = Files.createTempDirectory("grails-ls-output");
     } catch (IOException e) {
@@ -101,6 +104,9 @@ public final class GroovyAnalyzer implements Analyzer {
 
   @Override
   public CompileResult compile(CompileRequest request) {
+    if (GspViews.isGsp(request.path)) {
+      return gsp.compile(request);
+    }
     long start = System.nanoTime();
     units.remove(request.path);
     completions.remove(request.path);
@@ -261,12 +267,18 @@ public final class GroovyAnalyzer implements Analyzer {
 
   @Override
   public Location definition(String documentPath, int line, int column) {
+    if (GspViews.isGsp(documentPath)) {
+      return gsp.definition(documentPath, line, column);
+    }
     Kept kept = units.get(documentPath);
     return kept == null ? null : Navigation.definition(kept.ast(), kept.uri, kept.lookup, conventions(kept.lookup, documentPath), kept.text, line, column);
   }
 
   @Override
   public String hover(String documentPath, int line, int column) {
+    if (GspViews.isGsp(documentPath)) {
+      return gsp.hover(documentPath, line, column);
+    }
     Kept kept = units.get(documentPath);
     return kept == null ? null : Navigation.hover(kept.ast(), kept.uri, kept.lookup, kept.text, line, column);
   }
@@ -279,6 +291,9 @@ public final class GroovyAnalyzer implements Analyzer {
 
   @Override
   public CompletionList completion(CompileRequest request, int line, int column) {
+    if (GspViews.isGsp(request.path)) {
+      return gsp.completion(request, line, column);
+    }
     ClasspathTypes types = sourceTypes(request.lookup);
     Kept kept = current(request);
     String typed = lineBefore(request.text, line, column);
@@ -304,6 +319,9 @@ public final class GroovyAnalyzer implements Analyzer {
 
   @Override
   public CompletionDetail resolveCompletion(String documentPath, int id) {
+    if (GspViews.isGsp(documentPath)) {
+      return gsp.resolveCompletion(documentPath, id);
+    }
     LastCompletion last = completions.get(documentPath);
     ASTNode declaration = last == null ? null : last.completions.declaration(id);
     return declaration == null ? null : Completions.detail(declaration, last.compile.ast(), last.compile.lookup);
@@ -311,6 +329,9 @@ public final class GroovyAnalyzer implements Analyzer {
 
   @Override
   public SignatureHelp signatureHelp(CompileRequest request, int line, int column) {
+    if (GspViews.isGsp(request.path)) {
+      return null;
+    }
     Kept kept = current(request);
     if (kept != null && kept.ast().getNodeAtLineAndColumn(kept.uri, line, column) != null) {
       return Signatures.at(kept.ast(), kept.uri, kept.lookup, line, column);
@@ -432,6 +453,7 @@ public final class GroovyAnalyzer implements Analyzer {
 
   @Override
   public void forget(String documentPath) {
+    gsp.forget(documentPath);
     units.remove(documentPath);
     completions.remove(documentPath);
   }
@@ -440,6 +462,7 @@ public final class GroovyAnalyzer implements Analyzer {
   public void close() {
     units.clear();
     completions.clear();
+    gsp.clear();
     empty(output, true);
   }
 

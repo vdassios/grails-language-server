@@ -1,6 +1,7 @@
 package io.github.vdassios.grailsls.api;
 
 import java.util.List;
+import java.util.Map;
 
 /** Where the classes a compile needs are declared. Owned by the server: its declaration index and open documents. */
 public interface SourceLookup {
@@ -41,5 +42,15 @@ public interface SourceLookup {
    */
   default List<String> grailsAppDirs() {
     return List.of();
+  }
+
+  /**
+   * The classes in the class path's jars, and in jars only on the run-time class path, whose simple name ends in
+   * {@code TagLib}: the taglibs of Grails and its plugins, for GSP tags. Binary name to the jar's path; a jar only on the
+   * run-time class path is not in the compile's loader, so its class files are read from the jar. The project's own
+   * taglibs are read from source.
+   */
+  default Map<String, String> taglibClasses() {
+    return Map.of();
   }
 }
