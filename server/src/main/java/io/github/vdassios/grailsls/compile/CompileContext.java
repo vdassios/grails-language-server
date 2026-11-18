@@ -44,6 +44,8 @@ public final class CompileContext implements AutoCloseable {
   public final int javaFilesNotBuilt;
   /** Gradle task that builds this source set's classes, e.g. {@code :app:testClasses}. */
   public final String classesTask;
+  /** ANTLR's runtime, shared with the other contexts of the same Groovy jar; null when not shared. Owned by the workspace. */
+  private final AntlrLoader antlr;
 
   private ExecutorService thread;
   private ModuleClassLoader loader;
@@ -51,7 +53,7 @@ public final class CompileContext implements AutoCloseable {
   private boolean closed;
 
   CompileContext(String name, List<Path> ownRoots, List<Path> searchRoots, List<Path> classpath, Map<String, Path> javaClasses,
-      Map<String, List<Path>> resources, int javaFilesNotBuilt, String classesTask) {
+      Map<String, List<Path>> resources, int javaFilesNotBuilt, String classesTask, AntlrLoader antlr) {
     this.name = name;
     this.ownRoots = List.copyOf(ownRoots);
     this.searchRoots = List.copyOf(searchRoots);
@@ -60,6 +62,7 @@ public final class CompileContext implements AutoCloseable {
     this.resources = Map.copyOf(resources);
     this.javaFilesNotBuilt = javaFilesNotBuilt;
     this.classesTask = classesTask;
+    this.antlr = antlr;
   }
 
   /** Classpath entries of the loader, analysis jar first. For tests and status. */
@@ -143,7 +146,7 @@ public final class CompileContext implements AutoCloseable {
         throw new IllegalArgumentException(entry.toString(), e);
       }
     }
-    loader = new ModuleClassLoader(name, urls, javaClasses, resources);
+    loader = new ModuleClassLoader(name, urls, javaClasses, resources, antlr);
     ModuleClassLoader threadLoader = loader;
     thread = Executors.newSingleThreadExecutor(r -> {
       Thread t = new Thread(r, "grails-compile " + name);

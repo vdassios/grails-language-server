@@ -42,6 +42,8 @@ import io.github.vdassios.grailsls.project.ProjectModel;
  */
 public final class Workspace implements AutoCloseable {
   private final List<CompileContext> contexts = new ArrayList<>();
+  /** One ANTLR runtime per Groovy jar, shared by the contexts of that jar (null value: the jar has none). */
+  private final Map<Path, AntlrLoader> antlr = new HashMap<>();
   /** Files parsed per call when filling the symbol index. */
   public static final int SYMBOL_BATCH = 50;
 
@@ -58,7 +60,7 @@ public final class Workspace implements AutoCloseable {
       }
       for (SourceSetRecord sourceSet : module.sourceSets) {
         if (!ownRoots(module, sourceSet).isEmpty()) {
-          contexts.add(context(model, module, sourceSet, analysisJar));
+          contexts.add(context(model, module, sourceSet, analysisJar, antlr));
         }
       }
     }
@@ -199,9 +201,11 @@ public final class Workspace implements AutoCloseable {
   @Override
   public void close() {
     contexts.forEach(CompileContext::close);
+    antlr.values().stream().filter(loader -> loader != null).forEach(AntlrLoader::close);
   }
 
-  private static CompileContext context(ProjectModel model, ModuleRecord module, SourceSetRecord sourceSet, Path analysisJar) {
+  private static CompileContext context(ProjectModel model, ModuleRecord module, SourceSetRecord sourceSet, Path analysisJar,
+      Map<Path, AntlrLoader> antlr) {
     SourceSetRecord main = sourceSet.name.equals("main") ? null : module.sourceSet("main");
     List<ModuleRecord> siblings = siblings(model, module);
 
@@ -269,8 +273,13 @@ public final class Workspace implements AutoCloseable {
       }
     }
     String name = module.path + " " + sourceSet.name;
+    Path groovyJar = AntlrLoader.groovyJar(classpath);
+    if (groovyJar != null && !antlr.containsKey(groovyJar)) {
+      antlr.put(groovyJar, AntlrLoader.of(groovyJar)); // null kept too: the jar is read once
+    }
+    AntlrLoader shared = groovyJar == null ? null : antlr.get(groovyJar);
     return new CompileContext(name, own, new ArrayList<>(search), new ArrayList<>(classpath), classFiles, descriptors, notBuilt,
-        classesTask(module.path, sourceSet.name));
+        classesTask(module.path, sourceSet.name), shared);
   }
 
   /**

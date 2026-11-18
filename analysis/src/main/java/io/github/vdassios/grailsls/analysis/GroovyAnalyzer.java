@@ -75,7 +75,6 @@ public final class GroovyAnalyzer implements Analyzer {
     this.lateTransforms = new LateTransforms(parent);
     // @Grab would download and load code at compile time
     System.setProperty("groovy.grape.enable", "false");
-    ParserCache.keep();
   }
 
   @Override
@@ -107,7 +106,7 @@ public final class GroovyAnalyzer implements Analyzer {
       int known = early.size();
       Kept kept;
       try {
-        kept = runUnit(request, found, early);
+        kept = parserCache.parsing(() -> runUnit(request, found, early));
       } finally {
         caches.clear();
         parserCache.trim();
@@ -325,6 +324,10 @@ public final class GroovyAnalyzer implements Analyzer {
 
   @Override
   public Map<String, List<Symbol>> declarations(List<String> paths) {
+    return parserCache.parsing(() -> parse(paths));
+  }
+
+  private static Map<String, List<Symbol>> parse(List<String> paths) {
     CompilerConfiguration config = new CompilerConfiguration();
     config.setSourceEncoding("UTF-8");
     // a parse only, outside any compilation unit: no class is resolved, no transformation runs

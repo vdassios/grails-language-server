@@ -53,7 +53,7 @@ class ModuleClassLoaderTest {
     for (int i = 0; i < urls.length; i++) {
       list[i] = urls[i].toUri().toURL();
     }
-    return new ModuleClassLoader("test", List.of(list), javaClasses, Map.of());
+    return new ModuleClassLoader("test", List.of(list), javaClasses, Map.of(), null);
   }
 
   @Test
