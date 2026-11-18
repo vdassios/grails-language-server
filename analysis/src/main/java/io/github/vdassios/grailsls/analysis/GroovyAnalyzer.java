@@ -192,6 +192,11 @@ public final class GroovyAnalyzer implements Analyzer {
       } catch (GroovyBugError | RuntimeException | LinkageError e) {
         // a class the check reads cannot be loaded: no warnings rather than a failed compile
       }
+      try {
+        diagnostics.addAll(conventions(request.lookup, request.path).problems(document.getAST()));
+      } catch (GroovyBugError | RuntimeException | LinkageError e) {
+        // no hints rather than a failed compile
+      }
     }
     return new Kept(unit, request.text, document.getSource().getURI(), request.lookup, resolver.sources(), Math.min(phase, last), false);
   }
@@ -257,7 +262,7 @@ public final class GroovyAnalyzer implements Analyzer {
   @Override
   public Location definition(String documentPath, int line, int column) {
     Kept kept = units.get(documentPath);
-    return kept == null ? null : Navigation.definition(kept.ast(), kept.uri, kept.lookup, kept.text, line, column);
+    return kept == null ? null : Navigation.definition(kept.ast(), kept.uri, kept.lookup, conventions(kept.lookup, documentPath), kept.text, line, column);
   }
 
   @Override
@@ -277,10 +282,17 @@ public final class GroovyAnalyzer implements Analyzer {
     ClasspathTypes types = sourceTypes(request.lookup);
     Kept kept = current(request);
     String typed = lineBefore(request.text, line, column);
-    Completions found = kept == null ? null : Completions.at(kept.ast(), kept.uri, types, line, column, typed);
+    Conventions conventions = conventions(request.lookup, request.path);
+    Completions found = kept == null ? null : Completions.at(kept.ast(), kept.uri, types, conventions, line, column, typed);
     if (found == null) {
       kept = compileCopy(request, line, column, Completions.placeholder(typed));
-      found = kept == null ? null : Completions.at(kept.ast(), kept.uri, types, line, column, typed);
+      found = kept == null ? null : Completions.at(kept.ast(), kept.uri, types, conventions, line, column, typed);
+    }
+    String close = Completions.closeString(typed);
+    if (found == null && close != null) {
+      // inside a string not closed yet: render(view: 'sh
+      kept = compileCopy(request, line, column, Completions.placeholder(typed) + close);
+      found = kept == null ? null : Completions.at(kept.ast(), kept.uri, types, conventions, line, column, typed);
     }
     if (found == null) {
       completions.remove(request.path);
@@ -344,6 +356,27 @@ public final class GroovyAnalyzer implements Analyzer {
   @Override
   public Map<String, List<Symbol>> declarations(List<String> paths) {
     return parserCache.parsing(() -> parse(paths));
+  }
+
+  /** Conventions for a document: other files are read from their open text, else from disk, and parsed only. */
+  private Conventions conventions(SourceLookup lookup, String documentPath) {
+    return new Conventions(lookup, documentPath, file -> parserCache.parsing(() -> parsedClasses(file, lookup == null ? null : lookup.openText(file))));
+  }
+
+  /** The classes a file declares, from a parse only (as {@link #declarations}); empty when it does not parse. */
+  private static List<ClassNode> parsedClasses(String path, String text) {
+    CompilerConfiguration config = new CompilerConfiguration();
+    config.setSourceEncoding("UTF-8");
+    GroovyClassLoader loader = new GroovyClassLoader(GroovyAnalyzer.class.getClassLoader(), config, false);
+    SourceUnit source = text == null ? new SourceUnit(new File(path), config, loader, new ErrorCollector(config)) : new SourceUnit(path, text, config, loader, new ErrorCollector(config));
+    try {
+      source.parse();
+      source.completePhase();
+      source.convert();
+      return source.getAST().getClasses();
+    } catch (GroovyBugError | RuntimeException | LinkageError e) {
+      return List.of();
+    }
   }
 
   private static Map<String, List<Symbol>> parse(List<String> paths) {

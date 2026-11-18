@@ -2,7 +2,7 @@
 
 A [language server](https://microsoft.github.io/language-server-protocol/) for Groovy with Grails support, usable from any LSP editor. It compiles each open file with the **project's own** Groovy and Grails jars, so the members Grails adds at compile time (`render`, `params`, `save`, `get`, finders, ...) are visible to completion, hover and navigation.
 
-**Status: pre-alpha, milestone M3 (GORM).** The server resolves the Gradle project model in the background, reports progress through `grails/status`, compiles each open Groovy file and publishes its diagnostics. It answers completion (with resolve, including types not imported yet), hover, signature help, definition (into library and JDK sources too), document symbols and workspace symbols. Controllers, domain classes, services and taglibs get the members Grails adds (tested on Grails 4 and Grails 7), and `def fooService` is typed as the service of that name. GORM dynamic finders, criteria, `where`, `constraints` and `mapping` blocks are understood. Conventions (views, templates, actions) and GSP come in later milestones.
+**Status: pre-alpha, milestone M4 (conventions).** The server resolves the Gradle project model in the background, reports progress through `grails/status`, compiles each open Groovy file and publishes its diagnostics. It answers completion (with resolve, including types not imported yet), hover, signature help, definition (into library and JDK sources too), document symbols and workspace symbols. Controllers, domain classes, services and taglibs get the members Grails adds (tested on Grails 4 and Grails 7), and `def fooService` is typed as the service of that name. GORM dynamic finders, criteria, `where`, `constraints` and `mapping` blocks are understood, and so are the strings that name views, templates, layouts, controllers and actions. GSP comes in a later milestone.
 
 ## Grails artefacts
 
@@ -24,6 +24,24 @@ A domain class is any class the compile gave GORM's entity trait, from source or
 - **Query settings**: `max`, `offset`, `sort`, `order` and the others complete as argument keys of a query, and the value of `sort:` completes and resolves as a property name.
 
 Named queries (`static namedQueries`) are not covered.
+
+## Conventions
+
+Strings that name a view, template, layout, controller or action go to that file or declaration and complete from what exists. Files are looked up under `grails-app/views` and `grails-app/controllers` of every module of the project, the current module first.
+
+| Where | Names |
+|---|---|
+| `render(view: 'show')`, `respond x, view: 'show'` in a controller | `views/<controller>/show.gsp` (then `.jsp`, `.gson`); `'/a/b'` is `views/a/b.gsp` from anywhere |
+| `render(template: 'row')` | `views/<controller>/_row.gsp` (then `_row.gson`); `'/a/row'` is `views/a/_row.gsp` |
+| `static layout = 'main'` in a controller | `views/layouts/main.gsp` |
+| `controller:` in `redirect`, `chain`, `forward`, `createLink`, `link` and in `UrlMappings` | the controller class (`'book'` or, as Grails's URL converter reads it, `'Book'`) |
+| `action:` in the same calls; keys of `static allowedMethods` | the action in the named controller, else in the current one: a public method that is not static, or a property assigned a closure, declared in the controller or in a superclass from the project's sources |
+| `view:` in `UrlMappings` | an absolute view, or one of the `controller:` given beside it |
+
+- **Completion** of these strings offers the views and templates of the controller first, then every one by absolute path, the layouts, the controllers by logical name and the actions of the controller. The keys of `render` and `redirect` complete as named arguments.
+- **Hints** for a `render(view:)` or `render(template:)` whose file does not exist.
+
+Not covered: actions inherited from a superclass in a jar (such as `RestfulController`), views of namespaced controllers, `grailsApplication.getXxxClasses()`. Views, templates and tags inside GSP files come with GSP support.
 
 ## Library sources
 

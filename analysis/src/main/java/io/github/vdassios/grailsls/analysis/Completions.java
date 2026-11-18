@@ -51,28 +51,31 @@ public final class Completions {
 
   private final ASTNodeVisitor ast;
   private final ClasspathTypes classpath;
+  private final Conventions conventions;
   private final List<Completion> items = new ArrayList<>();
   /** The declaration behind each item with an id, by id. */
   private final List<ASTNode> declarations = new ArrayList<>();
   private boolean incomplete;
 
-  private Completions(ASTNodeVisitor ast, ClasspathTypes classpath) {
+  private Completions(ASTNodeVisitor ast, ClasspathTypes classpath, Conventions conventions) {
     this.ast = ast;
     this.classpath = classpath;
+    this.conventions = conventions;
   }
 
   /**
    * The candidates at a position, or null when the compile has no node there (the text does not parse).
    *
    * @param classpath classes of the classpath to offer, or null for those of the compile only
+   * @param conventions names Grails resolves by convention, or null
    * @param typed the text of the line before the position
    */
-  public static Completions at(ASTNodeVisitor ast, URI document, ClasspathTypes classpath, int line, int column, String typed) {
+  public static Completions at(ASTNodeVisitor ast, URI document, ClasspathTypes classpath, Conventions conventions, int line, int column, String typed) {
     ASTNode offsetNode = ast.getNodeAtLineAndColumn(document, line, column);
     if (offsetNode == null) {
       return null;
     }
-    Completions completions = new Completions(ast, classpath);
+    Completions completions = new Completions(ast, classpath, conventions);
     completions.populate(offsetNode, line, column, typed);
     return completions;
   }
@@ -80,6 +83,27 @@ public final class Completions {
   /** The text to insert at the position when it does not parse: a name, or a constructor call after {@code new}. */
   public static String placeholder(String lineBeforePosition) {
     return CONSTRUCTOR_CALL.matcher(lineBeforePosition).matches() ? "a()" : "a";
+  }
+
+  /**
+   * When a line's text leaves a string open, what closes it and the parentheses and brackets opened before it on the
+   * line ({@code render(view: 'sh} → {@code ')}); else null. Triple quotes and escapes are not considered.
+   */
+  public static String closeString(String lineBeforePosition) {
+    char quote = 0;
+    StringBuilder open = new StringBuilder();
+    for (char c : lineBeforePosition.toCharArray()) {
+      if (quote != 0) {
+        quote = c == quote ? 0 : quote;
+      } else if (c == '\'' || c == '"') {
+        quote = c;
+      } else if (c == '(' || c == '[') {
+        open.append(c == '(' ? ')' : ']');
+      } else if ((c == ')' || c == ']') && open.length() > 0) {
+        open.setLength(open.length() - 1);
+      }
+    }
+    return quote == 0 ? null : quote + open.reverse().toString();
   }
 
   public CompletionList list() {
@@ -99,7 +123,7 @@ public final class Completions {
 
   private void populate(ASTNode offsetNode, int line, int column, String typed) {
     ASTNode parentNode = ast.getParent(offsetNode);
-    if (fromPropertyName(offsetNode, line, column)) {
+    if (fromPropertyName(offsetNode, line, column) || fromConvention(offsetNode, line, column)) {
       return;
     }
     if (offsetNode instanceof PropertyExpression) {
@@ -127,7 +151,9 @@ public final class Completions {
         fromScope(variable, prefix);
         // a key of named arguments GORM reads: title nullable: true, Book.list(max: 10); after the names in scope
         Set<String> keys = new HashSet<>();
-        for (String key : Gorm.argumentKeys(variable, ast)) {
+        List<String> named = new ArrayList<>(Gorm.argumentKeys(variable, ast));
+        named.addAll(Conventions.argumentKeys(variable, ast));
+        for (String key : named) {
           if (key.startsWith(prefix) && keys.add(key)) {
             items.add(new Completion(key, Completion.Kind.FIELD, null, "~" + key, null, List.of(), -1));
           }
@@ -181,6 +207,17 @@ public final class Completions {
     for (String property : properties) {
       add(property, Completion.Kind.FIELD, null, prefix, names);
     }
+    return true;
+  }
+
+  /** A string naming a view, template, layout, controller or action: {@code render(view: 'show')}. */
+  private boolean fromConvention(ASTNode offsetNode, int line, int column) {
+    Conventions.Reference reference = conventions == null ? null : conventions.reference(offsetNode, ast);
+    List<Completion> candidates = reference == null ? null : conventions.candidates(reference, ast, line, column);
+    if (candidates == null) {
+      return false;
+    }
+    items.addAll(candidates);
     return true;
   }
 

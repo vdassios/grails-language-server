@@ -268,7 +268,7 @@ public class GroovyServices implements TextDocumentService, WorkspaceService, La
 		CompletableFuture<Either<List<CompletionItem>, CompletionList>> result = null;
 		try {
 			Completions completions = astVisitor == null ? null
-					: Completions.at(astVisitor, uri, classpathTypes(), position.getLine(), position.getCharacter(), "");
+					: Completions.at(astVisitor, uri, classpathTypes(), null, position.getLine(), position.getCharacter(), "");
 			result = CompletableFuture.completedFuture(toCompletion(completions));
 		} finally {
 			if (originalSource != null) {
@@ -292,7 +292,7 @@ public class GroovyServices implements TextDocumentService, WorkspaceService, La
 		recompileIfContextChanged(uri);
 
 		io.github.vdassios.grailsls.api.Location location = astVisitor == null ? null
-				: Navigation.definition(astVisitor, uri, null, null, params.getPosition().getLine(), params.getPosition().getCharacter());
+				: Navigation.definition(astVisitor, uri, null, null, null, params.getPosition().getLine(), params.getPosition().getCharacter());
 		List<Location> locations = location == null ? Collections.emptyList() : Collections.singletonList(toLocation(location));
 		return CompletableFuture.completedFuture(Either.forLeft(locations));
 	}

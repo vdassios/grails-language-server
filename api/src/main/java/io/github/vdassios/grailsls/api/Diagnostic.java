@@ -4,6 +4,8 @@ package io.github.vdassios.grailsls.api;
 public final class Diagnostic {
   public static final int ERROR = 1;
   public static final int WARNING = 2;
+  /** A suggestion, such as a view a {@code render} call names that does not exist. */
+  public static final int HINT = 4;
 
   /** File the message is about; the compiled document's path when the compiler names none. */
   public final String path;
@@ -11,7 +13,7 @@ public final class Diagnostic {
   public final int startColumn;
   public final int endLine;
   public final int endColumn;
-  /** {@link #ERROR} or {@link #WARNING}. */
+  /** {@link #ERROR}, {@link #WARNING} or {@link #HINT}. */
   public final int severity;
   public final String message;
 

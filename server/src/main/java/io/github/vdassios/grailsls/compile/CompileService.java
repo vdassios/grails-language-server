@@ -234,7 +234,8 @@ public final class CompileService {
         continue; // another file's: reported when that file is open
       }
       Range range = new Range(new Position(d.startLine, d.startColumn), new Position(d.endLine, d.endColumn));
-      DiagnosticSeverity severity = d.severity == io.github.vdassios.grailsls.api.Diagnostic.ERROR ? DiagnosticSeverity.Error : DiagnosticSeverity.Warning;
+      DiagnosticSeverity severity = d.severity == io.github.vdassios.grailsls.api.Diagnostic.ERROR ? DiagnosticSeverity.Error
+          : d.severity == io.github.vdassios.grailsls.api.Diagnostic.HINT ? DiagnosticSeverity.Hint : DiagnosticSeverity.Warning;
       Diagnostic diagnostic = new Diagnostic(range, d.message, severity, "groovy");
       list.add(diagnostic);
     }

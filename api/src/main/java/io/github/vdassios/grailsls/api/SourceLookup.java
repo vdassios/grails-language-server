@@ -34,4 +34,12 @@ public interface SourceLookup {
   default String classSource(String className) {
     return null;
   }
+
+  /**
+   * The {@code grails-app} directories of the project's modules, the compiled document's own module first; for names
+   * Grails resolves by convention: views, templates, layouts and controllers.
+   */
+  default List<String> grailsAppDirs() {
+    return List.of();
+  }
 }

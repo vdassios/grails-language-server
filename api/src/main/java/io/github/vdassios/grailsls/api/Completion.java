@@ -5,7 +5,7 @@ import java.util.List;
 /** A completion candidate. Its signature and documentation come from {@link Analyzer#resolveCompletion}. */
 public final class Completion {
   public enum Kind {
-    CLASS, INTERFACE, ENUM, METHOD, FIELD, VARIABLE, PACKAGE
+    CLASS, INTERFACE, ENUM, METHOD, FIELD, VARIABLE, PACKAGE, FILE
   }
 
   public final String label;

@@ -618,8 +618,13 @@ public final class Gorm {
     } else {
       return List.of();
     }
+    return unusedKeys(keys, (TupleExpression) arguments);
+  }
+
+  /** The keys not given yet among a call's named arguments. */
+  static List<String> unusedKeys(List<String> keys, TupleExpression arguments) {
     Set<String> used = new HashSet<>();
-    for (Expression argument : ((TupleExpression) arguments).getExpressions()) {
+    for (Expression argument : arguments.getExpressions()) {
       if (argument instanceof MapExpression) {
         ((MapExpression) argument).getMapEntryExpressions().forEach(entry -> used.add(entry.getKeyExpression().getText()));
       }

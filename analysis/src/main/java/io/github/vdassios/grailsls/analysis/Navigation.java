@@ -29,10 +29,14 @@ import net.prominic.groovyls.util.GroovyNodeToStringUtils;
 public final class Navigation {
   private Navigation() {}
 
-  public static Location definition(ASTNodeVisitor ast, URI document, SourceLookup lookup, String text, int line, int column) {
+  public static Location definition(ASTNodeVisitor ast, URI document, SourceLookup lookup, Conventions conventions, String text, int line, int column) {
     ASTNode offsetNode = ast.getNodeAtLineAndColumn(document, line, column);
     if (offsetNode == null) {
       return null;
+    }
+    Conventions.Reference reference = conventions == null ? null : conventions.reference(offsetNode, ast);
+    if (reference != null) {
+      return conventions.definition(reference, ast);
     }
     Gorm.Target gorm = Gorm.target(offsetNode, ast, text, line, column);
     ASTNode definition = gorm != null ? gorm.node : GroovyASTUtils.getDefinition(offsetNode, true, ast);

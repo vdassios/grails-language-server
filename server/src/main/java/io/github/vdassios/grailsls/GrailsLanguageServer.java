@@ -341,6 +341,8 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
         return CompletionItemKind.Field;
       case PACKAGE:
         return CompletionItemKind.Module;
+      case FILE:
+        return CompletionItemKind.File;
       default:
         return CompletionItemKind.Variable;
     }

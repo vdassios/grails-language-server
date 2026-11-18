@@ -50,10 +50,18 @@ public final class Workspace implements AutoCloseable {
   private final DeclarationIndex index = new DeclarationIndex();
   private final SymbolIndex symbols = new SymbolIndex();
   private final ClassSources classSources;
+  /** Every module's {@code grails-app} directory that exists. */
+  private final List<Path> grailsApps = new ArrayList<>();
 
   /** @param analysisJar the analysis layer's jar, in the server's cache directory; library sources are extracted next to it */
   public Workspace(ProjectModel model, Path analysisJar) {
     classSources = new ClassSources(analysisJar.resolveSibling("sources"));
+    for (ModuleRecord module : model.modules) {
+      Path grailsApp = Path.of(module.projectDir, "grails-app");
+      if (Files.isDirectory(grailsApp)) {
+        grailsApps.add(grailsApp);
+      }
+    }
     for (ModuleRecord module : model.modules) {
       if (module.groovyVersion == null) {
         continue;
@@ -165,6 +173,11 @@ public final class Workspace implements AutoCloseable {
       }
 
       @Override
+      public List<String> grailsAppDirs() {
+        return Workspace.this.grailsAppDirs(context);
+      }
+
+      @Override
       public String classSource(String className) {
         String resource = className.replace('.', '/');
         // the project's own Java, compiled by Gradle
@@ -180,6 +193,27 @@ public final class Workspace implements AutoCloseable {
         return source == null ? null : source.toString();
       }
     };
+  }
+
+  /** Every module's {@code grails-app}, first the one of the module {@code context} belongs to (the deepest module holding its roots). */
+  List<String> grailsAppDirs(CompileContext context) {
+    Path own = null;
+    for (Path app : grailsApps) {
+      Path module = app.getParent();
+      if (context.ownRoots.stream().anyMatch(root -> root.startsWith(module)) && (own == null || module.getNameCount() > own.getParent().getNameCount())) {
+        own = app;
+      }
+    }
+    List<String> dirs = new ArrayList<>();
+    if (own != null) {
+      dirs.add(own.toString());
+    }
+    for (Path app : grailsApps) {
+      if (!app.equals(own)) {
+        dirs.add(app.toString());
+      }
+    }
+    return dirs;
   }
 
   /** Status detail: empty, or what limits the results (Java sources not compiled yet, and the tasks that build them). */
