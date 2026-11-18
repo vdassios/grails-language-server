@@ -241,6 +241,56 @@ class LatencyTest {
   }
 
   /**
+   * GSP pages (M5a): every {@code .gsp} file below a module's {@code grails-app}, "compiled" (tags read, hints given) in
+   * its page context. Valid views should get no hint: counts per hint kind, and the compile time. Writes counts only to
+   * {@code server/build/perf/gsp.txt}; the hints go to {@code GLS_PERF_DETAILS} when set.
+   */
+  @Test
+  void gspPages() throws Exception {
+    ProjectModel model = model();
+    String details = System.getenv("GLS_PERF_DETAILS");
+    StringBuilder hintsOut = new StringBuilder();
+    try (Workspace workspace = new Workspace(model, AnalysisJar.extract(tmp))) {
+      workspace.index();
+      for (ModuleRecord module : model.modules) {
+        Path app = Path.of(module.projectDir, "grails-app");
+        if (!Files.isDirectory(app)) {
+          continue;
+        }
+        List<Path> pages;
+        try (Stream<Path> files = Files.walk(app)) {
+          pages = files.filter(f -> f.toString().endsWith(".gsp")).sorted().collect(Collectors.toList());
+        }
+        for (Path page : pages) {
+          CompileContext context = workspace.contextOf(page);
+          if (context == null) {
+            count("pages without a context", 1);
+            continue;
+          }
+          String text = Files.readString(page);
+          CompileRequest request = new CompileRequest(page.toString(), text, workspace.lookup(context, p -> null), () -> false);
+          long start = System.nanoTime();
+          CompileResult result = context.compile(request).get(5, TimeUnit.MINUTES);
+          record("compile page", start);
+          count("pages", 1);
+          for (Diagnostic d : result.diagnostics) {
+            String kind = d.message.startsWith("Unknown tag") ? "unknown tag" : d.message.contains("needs the attribute") ? "missing required attribute" : "other";
+            count((d.severity == Diagnostic.HINT ? "hints " : "non-hint diagnostics ") + kind, 1);
+            hintsOut.append(page).append(':').append(d.startLine + 1).append(':').append(d.startColumn + 1).append(' ').append(d.message).append('\n');
+          }
+          count("pages with hints", result.diagnostics.isEmpty() ? 0 : 1);
+          context.forget(page.toString());
+        }
+      }
+    }
+    if (details != null) {
+      Files.writeString(Path.of(details), hintsOut);
+    }
+    write(report(), "gsp.txt");
+    System.out.println(report());
+  }
+
+  /**
    * Memory and loader lifetime (C6 budget: under 1.5 GB resident with ten files open; C1: loaders closed), in the
    * context with the most artefact files: ten artefact files compiled and kept, as ten open documents (controllers
    * first, then domain classes, services, taglibs); fifty compiles each of the median and the slowest file of its first
