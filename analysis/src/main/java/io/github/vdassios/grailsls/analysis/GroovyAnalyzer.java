@@ -1,8 +1,13 @@
 package io.github.vdassios.grailsls.analysis;
 
 import java.io.File;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.lang.reflect.Field;
 import java.net.URI;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Comparator;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -64,6 +69,13 @@ public final class GroovyAnalyzer implements Analyzer {
   /** Parent of each compile's class loader: the module loader that loaded this class. */
   private final ClassLoader parent;
   private final LateTransforms lateTransforms;
+  /**
+   * The compiles' target directory, emptied before each compile. The server writes no class files, but Grails's
+   * global transformation writes {@code META-INF/grails-plugin.xml} and {@code grails.factories} there, and without
+   * one into {@code build/classes/main} below the working directory, i.e. into the user's project, where the plugin
+   * file grew with every artefact compiled and was read and written again by each compile.
+   */
+  private final Path output;
 
   public GroovyAnalyzer() {
     this(GroovyAnalyzer.class.getClassLoader());
@@ -73,6 +85,11 @@ public final class GroovyAnalyzer implements Analyzer {
   GroovyAnalyzer(ClassLoader parent) {
     this.parent = parent;
     this.lateTransforms = new LateTransforms(parent);
+    try {
+      this.output = Files.createTempDirectory("grails-ls-output");
+    } catch (IOException e) {
+      throw new UncheckedIOException(e);
+    }
     // @Grab would download and load code at compile time
     System.setProperty("groovy.grape.enable", "false");
   }
@@ -121,6 +138,8 @@ public final class GroovyAnalyzer implements Analyzer {
   private Kept runUnit(CompileRequest request, List<Diagnostic> diagnostics, Set<String> early) {
     CompilerConfiguration config = new CompilerConfiguration();
     config.setSourceEncoding("UTF-8");
+    empty(output, false);
+    config.setTargetDirectory(output.toFile());
     config.addCompilationCustomizers(new AstTestRemover(), new ParseTreeRemover());
     // attaches Groovydoc comments to nodes for hover (CompilerConfiguration.GROOVYDOC, Groovy 3+; 2.5 has none)
     config.getOptimizationOptions().put("groovydoc", true);
@@ -388,6 +407,16 @@ public final class GroovyAnalyzer implements Analyzer {
   public void close() {
     units.clear();
     completions.clear();
+    empty(output, true);
+  }
+
+  /** Deletes what is below the directory, and the directory itself if asked; what cannot be deleted is left. */
+  private static void empty(Path directory, boolean itself) {
+    try (var paths = Files.walk(directory)) {
+      paths.sorted(Comparator.reverseOrder()).filter(path -> itself || !path.equals(directory)).forEach(path -> path.toFile().delete());
+    } catch (IOException | UncheckedIOException e) {
+      // already gone, or not readable: the next compile writes over it
+    }
   }
 
   /**

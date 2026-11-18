@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.nio.file.DirectoryNotEmptyException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -118,6 +119,33 @@ abstract class ArtefactMembersTest {
       CompiledClass taglib = compiled(workspace, app().taglib, className(app().taglib));
       found.put("taglib trait", taglib.interfaces.contains("grails.artefact.TagLibrary") && taglib.methods.containsAll(List.of("getOut", "throwTagError")));
       assertEquals(Map.of("controller trait", true, "domain GORM entity", true, "transactional service", true, "taglib trait", true), found);
+    }
+  }
+
+  /**
+   * Once {@code META-INF/grails-plugin.xml} exists in the compile's target directory (a {@code *GrailsPlugin} class
+   * creates it), Grails adds the artefacts of every compile to it. Without a target directory it used
+   * {@code build/classes/main} below the server's working directory: a file in the user's project that grew with every
+   * artefact ever compiled and made each compile slower (2735 entries cost half the compile time of a sweep).
+   */
+  @Test
+  void aCompileWritesNothingBelowTheWorkingDirectory() throws Exception {
+    Path pluginXml = Path.of("build/classes/main/META-INF/grails-plugin.xml").toAbsolutePath();
+    String seeded = "<plugin name='fixture' version='1'><type>fixture.FixtureGrailsPlugin</type><resources></resources></plugin>";
+    Files.createDirectories(pluginXml.getParent());
+    Files.writeString(pluginXml, seeded);
+    try (Workspace workspace = workspace()) {
+      compiled(workspace, app().controller, className(app().controller));
+      assertEquals(seeded, Files.readString(pluginXml));
+    } finally {
+      // the file, and the directories made for it unless something else is in them
+      for (Path made = pluginXml; !made.equals(Path.of("build/classes").toAbsolutePath()); made = made.getParent()) {
+        try {
+          Files.deleteIfExists(made);
+        } catch (DirectoryNotEmptyException e) {
+          break;
+        }
+      }
     }
   }
 
