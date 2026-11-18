@@ -2,7 +2,7 @@
 
 A [language server](https://microsoft.github.io/language-server-protocol/) for Groovy with Grails support, usable from any LSP editor. It compiles each open file with the **project's own** Groovy and Grails jars, so the members Grails adds at compile time (`render`, `params`, `save`, `get`, finders, ...) are visible to completion, hover and navigation.
 
-**Status: pre-alpha, milestone M4 (conventions).** The server resolves the Gradle project model in the background, reports progress through `grails/status`, compiles each open Groovy file and publishes its diagnostics. It answers completion (with resolve, including types not imported yet), hover, signature help, definition (into library and JDK sources too), document symbols and workspace symbols. Controllers, domain classes, services and taglibs get the members Grails adds (tested on Grails 4 and Grails 7), and `def fooService` is typed as the service of that name. GORM dynamic finders, criteria, `where`, `constraints` and `mapping` blocks are understood, and so are the strings that name views, templates, layouts, controllers and actions. GSP comes in a later milestone.
+**Status: pre-alpha, milestone M5a (GSP tags and references).** The server resolves the Gradle project model in the background, reports progress through `grails/status`, compiles each open Groovy file and publishes its diagnostics. It answers completion (with resolve, including types not imported yet), hover, signature help, definition (into library and JDK sources too), document symbols and workspace symbols. Controllers, domain classes, services and taglibs get the members Grails adds (tested on Grails 4 and Grails 7), and `def fooService` is typed as the service of that name. GORM dynamic finders, criteria, `where`, `constraints` and `mapping` blocks are understood, and so are the strings that name views, templates, layouts, controllers and actions. In GSP pages the server knows the tags and the attribute values that name files and controllers; Groovy inside `${ }` comes in a later milestone.
 
 ## Grails artefacts
 
@@ -41,7 +41,26 @@ Strings that name a view, template, layout, controller or action go to that file
 - **Completion** of these strings offers the views and templates of the controller first, then every one by absolute path, the layouts, the controllers by logical name and the actions of the controller. The keys of `render` and `redirect` complete as named arguments.
 - **Hints** for a `render(view:)` or `render(template:)` whose file does not exist.
 
-Not covered: actions inherited from a superclass in a jar (such as `RestfulController`), views of namespaced controllers, `grailsApplication.getXxxClasses()`. Views, templates and tags inside GSP files come with GSP support.
+Not covered: actions inherited from a superclass in a jar (such as `RestfulController`), views of namespaced controllers, `grailsApplication.getXxxClasses()`. For GSP pages, see below.
+
+## GSP pages
+
+A `.gsp` page is read, not compiled: the server finds its tags and attributes. Expressions in `${ }` and scriptlets are skipped for now.
+
+- **Tags** come from the project's taglibs (`*TagLib.groovy` below `grails-app/*/taglib/`), the taglib classes in its jars (Grails's own `g:` tags, plugins such as `asset:` or `f:`) and the GSP compiler's built-in tags (`g:if`, `g:each`, `g:set`, ...). Tag names complete after `<ns:`, attribute names inside a tag (required ones first). Hover shows the tag's doc comment and the attributes it documents with `@attr`, read from the project's source or a jar's sources jar; definition goes to the tag's closure. Hints: a tag no taglib of a known namespace declares, a `REQUIRED` attribute not given.
+- **Attribute values** that name something go there and complete from what exists, as in Groovy code:
+
+| Where | Names |
+|---|---|
+| `<g:render template="row">` | `views/<controller>/_row.gsp`; `"/a/row"` is `views/a/_row.gsp` |
+| `<g:include view="show">` | `views/<controller>/show.gsp` (then `.jsp`, `.gson`), or a view of the tag's `controller` |
+| `<meta name="layout" content="main">`, `<g:applyLayout name="main">` | `views/layouts/main.gsp` |
+| `src` or `href` of `asset:stylesheet`, `javascript`, `image`, `assetPath`, `link` | the file below any `grails-app/assets/*/` directory; a stylesheet or script name also matches the extensions asset-pipeline compiles (`.scss`, `.less`, `.ts`, ...) |
+| `controller` and `action` of any `g:` tag | the controller class, and the action in the tag's controller or the page's |
+
+  A page's controller is the first directory below `views/` (`views/book/show.gsp` and `views/book/part/x.gsp` belong to `book`), which is how Grails resolves relative names. A value holding `${ }` or a URL names nothing. Hints: a template, view, layout or asset that does not exist.
+
+Not covered: assets that come from plugin jars (`META-INF/assets`), `contextPath` and `plugin` attributes of `g:render`.
 
 ## Library sources
 
