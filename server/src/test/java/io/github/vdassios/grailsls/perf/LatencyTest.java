@@ -160,6 +160,9 @@ class LatencyTest {
           List<Diagnostic> warnings = result.diagnostics.stream().filter(d -> d.severity == Diagnostic.WARNING && d.path.equals(file.toString())).collect(Collectors.toList());
           count("warnings " + kind, warnings.size());
           warnings.forEach(w -> errorsOut.append(file).append(": warning: ").append(w).append('\n'));
+          List<Diagnostic> hints = result.diagnostics.stream().filter(d -> d.severity == Diagnostic.HINT && d.path.equals(file.toString())).collect(Collectors.toList());
+          count("hints " + kind, hints.size());
+          hints.forEach(h -> errorsOut.append(file).append(": hint: ").append(h).append('\n'));
           String trait = traitFound(context, file, text, kind(file));
           if (trait != null) {
             count(trait, 1);
@@ -175,6 +178,65 @@ class LatencyTest {
       Files.writeString(Path.of(details), errorsOut);
     }
     write(report(), "sweep.txt");
+    System.out.println(report());
+  }
+
+  private static final Pattern CONVENTION = Pattern.compile("(?<![\\w.])(view|template|controller|action)\\s*:\\s*(['\"])[^'\"$\\n]*\\2|static\\s+(?:String\\s+)?(layout)\\s*=\\s*(['\"])[^'\"$\\n]*\\4");
+
+  /**
+   * Convention references (M4): in every source file with a string literal after {@code view:}, {@code template:},
+   * {@code controller:}, {@code action:} or {@code static layout =}, asks for the definition of each, and counts per key
+   * how many resolve, and the hints for missing views. Writes counts only to {@code server/build/perf/conventions.txt};
+   * the positions that give nothing go to {@code GLS_PERF_DETAILS} when set.
+   */
+  @Test
+  void conventionReferences() throws Exception {
+    ProjectModel model = model();
+    String details = System.getenv("GLS_PERF_DETAILS");
+    StringBuilder unresolved = new StringBuilder();
+    try (Workspace workspace = new Workspace(model, AnalysisJar.extract(tmp))) {
+      workspace.index();
+      for (CompileContext context : workspace.contexts()) {
+        for (Path file : workspace.declarations().sources(context.ownRoots)) {
+          if (workspace.contextOf(file) != context) {
+            continue;
+          }
+          String text = Files.readString(file);
+          Matcher matcher = CONVENTION.matcher(text);
+          List<int[]> strings = new ArrayList<>();
+          List<String> keys = new ArrayList<>();
+          while (matcher.find()) {
+            int quote = matcher.group(1) != null ? matcher.start(2) : matcher.start(4);
+            int line = (int) text.substring(0, quote).chars().filter(c -> c == '\n').count();
+            strings.add(new int[] { line, quote - (text.lastIndexOf('\n', quote) + 1) + 1 });
+            keys.add(matcher.group(1) != null ? matcher.group(1) : matcher.group(3));
+          }
+          if (strings.isEmpty()) {
+            continue;
+          }
+          CompileRequest request = new CompileRequest(file.toString(), text, workspace.lookup(context, p -> null), () -> false);
+          CompileResult result = context.compile(request).get(5, TimeUnit.MINUTES);
+          count("files", 1);
+          count("hints", (int) result.diagnostics.stream().filter(d -> d.severity == Diagnostic.HINT && d.path.equals(file.toString())).count());
+          for (int i = 0; i < strings.size(); i++) {
+            int[] at = strings.get(i);
+            String key = keys.get(i);
+            long start = System.nanoTime();
+            io.github.vdassios.grailsls.api.Location found = context.query(a -> a.definition(file.toString(), at[0], at[1])).get(1, TimeUnit.MINUTES);
+            record("definition " + key, start);
+            count(key + (found != null ? " resolved" : " gives nothing") + (kind(file).equals("other") ? ", outside grails-app" : ""), 1);
+            if (found == null) {
+              unresolved.append(file).append(':').append(at[0] + 1).append(':').append(at[1] + 1).append(' ').append(key).append('\n');
+            }
+          }
+          context.forget(file.toString());
+        }
+      }
+    }
+    if (details != null) {
+      Files.writeString(Path.of(details), unresolved);
+    }
+    write(report(), "conventions.txt");
     System.out.println(report());
   }
 
