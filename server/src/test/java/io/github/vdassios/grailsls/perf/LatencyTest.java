@@ -274,7 +274,9 @@ class LatencyTest {
           record("compile page", start);
           count("pages", 1);
           for (Diagnostic d : result.diagnostics) {
-            String kind = d.message.startsWith("Unknown tag") ? "unknown tag" : d.message.contains("needs the attribute") ? "missing required attribute" : "other";
+            String kind = d.message.startsWith("Unknown tag") ? "unknown tag"
+                : d.message.contains("needs the attribute") ? "missing required attribute"
+                    : d.message.startsWith("No ") ? "unresolved " + d.message.split(" ")[1] : "other";
             count((d.severity == Diagnostic.HINT ? "hints " : "non-hint diagnostics ") + kind, 1);
             hintsOut.append(page).append(':').append(d.startLine + 1).append(':').append(d.startColumn + 1).append(' ').append(d.message).append('\n');
           }
