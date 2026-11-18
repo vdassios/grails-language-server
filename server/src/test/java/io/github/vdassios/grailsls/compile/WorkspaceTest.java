@@ -177,4 +177,53 @@ class WorkspaceTest {
       assertNull(workspace.lookup(workspace.contexts().get(2), p -> null).fileOf("a.Book"));
     }
   }
+
+  /** A jar holding only the named (empty) class file entries: the taglib scan reads names, not bytes. */
+  private Path jar(String relative, String... classes) throws IOException {
+    Path jar = tmp.resolve(relative);
+    Files.createDirectories(jar.getParent());
+    try (java.util.zip.ZipOutputStream out = new java.util.zip.ZipOutputStream(Files.newOutputStream(jar))) {
+      for (String name : classes) {
+        out.putNextEntry(new java.util.zip.ZipEntry(name.replace('.', '/') + ".class"));
+        out.closeEntry();
+      }
+    }
+    return jar;
+  }
+
+  /**
+   * A plugin's pages render inside the apps that use it: its pages see its own jars' taglibs, then its runtime-only
+   * jars', then those of each module depending on it, directly ({@code :app}) or not ({@code :shell}); never those of
+   * a module that does not ({@code :other}).
+   */
+  @Test
+  void aPluginsPagesSeeTheTaglibsOfTheModulesUsingIt() throws IOException {
+    Path gsp = jar("repo/gsp.jar", "t.FormTagLib", "t.Helper");
+    Path render = jar("repo/render.jar", "t.RenderTagLib");
+    Path layout = jar("repo/layout.jar", "t.LayoutTagLib", "t.FormTagLib");
+    Path shellJar = jar("repo/shell.jar", "t.ShellTagLib");
+    Path otherJar = jar("repo/other.jar", "t.OtherTagLib");
+    Path page = touch("plugin/grails-app/views/p/index.gsp", "<g:layoutBody/>");
+    ModuleRecord[] modules = new ModuleRecord[4];
+    String[][] spec = { { "plugin", "" }, { "app", ":plugin" }, { "shell", ":app" }, { "other", "" } };
+    Path[][] classpaths = { { gsp }, { gsp, layout }, { shellJar }, { otherJar } };
+    for (int i = 0; i < spec.length; i++) {
+      Path dir = tmp.resolve(spec[i][0]);
+      Files.createDirectories(dir.resolve("grails-app/controllers"));
+      SourceSetRecord main = sourceSet("main", List.of(dir.resolve("grails-app/controllers")), List.of(classpaths[i]), List.of(), List.of());
+      if (i == 0) {
+        main.runtimeOnly.add(render.toString());
+      }
+      modules[i] = module(":" + spec[i][0], dir, "4.0.33", spec[i][1].isEmpty() ? List.of() : List.of(spec[i][1]), main);
+    }
+    try (Workspace workspace = new Workspace(new ProjectModel(tmp, List.of(modules), false), tmp.resolve("analysis.jar"))) {
+      CompileContext plugin = workspace.contextOf(page);
+      assertEquals(":plugin main", plugin.name);
+      assertEquals(java.util.Map.of("t.FormTagLib", gsp.toString(), "t.RenderTagLib", render.toString(), "t.LayoutTagLib", layout.toString(), "t.ShellTagLib", shellJar.toString()),
+          workspace.taglibClasses(plugin));
+      assertEquals(List.of("t.FormTagLib", "t.RenderTagLib", "t.LayoutTagLib", "t.ShellTagLib"), List.copyOf(workspace.taglibClasses(plugin).keySet()), "own jars first");
+      CompileContext other = workspace.contextOf(touch("other/grails-app/views/o/index.gsp", ""));
+      assertEquals(java.util.Map.of("t.OtherTagLib", otherJar.toString()), workspace.taglibClasses(other));
+    }
+  }
 }

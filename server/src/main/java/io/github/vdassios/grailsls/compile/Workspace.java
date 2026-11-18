@@ -59,8 +59,12 @@ public final class Workspace implements AutoCloseable {
   private final List<Path> grailsApps = new ArrayList<>();
   /** The taglib classes of each jar of the contexts' class paths, read once. */
   private final Map<Path, List<String>> jarTaglibs = new ConcurrentHashMap<>();
-  /** Per context, the jars only on its runtime classpath ({@link SourceSetRecord#runtimeOnly}): more taglibs for its pages. */
-  private final Map<CompileContext, List<Path>> runtimeJars = new HashMap<>();
+  /**
+   * Per context, jars not on its class path whose taglibs its pages may use: its own runtime-only jars
+   * ({@link SourceSetRecord#runtimeOnly}, e.g. Grails 7's {@code RenderTagLib}), then the main class path and
+   * runtime-only jars of every module depending on it (a plugin's pages render inside the app that uses it).
+   */
+  private final Map<CompileContext, List<Path>> pageJars = new HashMap<>();
 
   /** @param analysisJar the analysis layer's jar, in the server's cache directory; library sources are extracted next to it */
   public Workspace(ProjectModel model, Path analysisJar) {
@@ -71,6 +75,7 @@ public final class Workspace implements AutoCloseable {
         grailsApps.add(grailsApp);
       }
     }
+    Map<String, CompileContext> mains = new HashMap<>();
     for (ModuleRecord module : model.modules) {
       if (module.groovyVersion == null) {
         continue;
@@ -79,14 +84,34 @@ public final class Workspace implements AutoCloseable {
         if (!ownRoots(module, sourceSet).isEmpty()) {
           CompileContext context = context(model, module, sourceSet, analysisJar, antlr);
           contexts.add(context);
-          List<Path> runtime = sourceSet.runtimeOnly.stream().map(Path::of).filter(Files::isRegularFile)
-              .filter(jar -> !context.classpath().contains(jar)).collect(Collectors.toList());
-          if (!runtime.isEmpty()) {
-            runtimeJars.put(context, runtime);
+          if (sourceSet.name.equals("main")) {
+            mains.put(module.path, context);
           }
         }
       }
     }
+    for (ModuleRecord module : model.modules) {
+      CompileContext context = mains.get(module.path);
+      if (context == null) {
+        continue;
+      }
+      Set<Path> jars = new LinkedHashSet<>(paths(module.sourceSet("main").runtimeOnly));
+      for (ModuleRecord dependent : model.modules) {
+        if (dependent != module && mains.containsKey(dependent.path) && siblings(model, dependent).contains(module)) {
+          jars.addAll(paths(dependent.sourceSet("main").compileClasspath));
+          jars.addAll(paths(dependent.sourceSet("main").runtimeOnly));
+        }
+      }
+      jars.removeAll(context.classpath());
+      jars.removeIf(jar -> !jar.getFileName().toString().endsWith(".jar") || !Files.isRegularFile(jar));
+      if (!jars.isEmpty()) {
+        pageJars.put(context, List.copyOf(jars));
+      }
+    }
+  }
+
+  private static List<Path> paths(List<String> paths) {
+    return paths.stream().map(Path::of).collect(Collectors.toList());
   }
 
   /** Scans every source root into the declaration index. */
@@ -187,13 +212,13 @@ public final class Workspace implements AutoCloseable {
   }
 
   /**
-   * The classes named {@code *TagLib} in the jars of a context's class path and of its runtime-only jars, by binary
+   * The classes named {@code *TagLib} in the jars of a context's class path and of its {@link #pageJars}, by binary
    * name, each with its jar; the first jar holding a name wins, as in a class loader.
    */
   Map<String, String> taglibClasses(CompileContext context) {
     Map<String, String> found = new LinkedHashMap<>();
     List<Path> jars = new ArrayList<>(context.classpath());
-    jars.addAll(runtimeJars.getOrDefault(context, List.of()));
+    jars.addAll(pageJars.getOrDefault(context, List.of()));
     for (Path entry : jars) {
       if (entry.getFileName() != null && entry.getFileName().toString().endsWith(".jar")) {
         for (String name : jarTaglibs.computeIfAbsent(entry, Workspace::taglibsIn)) {
@@ -204,9 +229,9 @@ public final class Workspace implements AutoCloseable {
     return found;
   }
 
-  /** A class file in one of the context's runtime-only jars, as a {@code jar:} URL; null when none holds it. */
-  private URL runtimeClassFile(CompileContext context, String resource) {
-    for (Path jar : runtimeJars.getOrDefault(context, List.of())) {
+  /** A class file in one of the context's {@link #pageJars}, as a {@code jar:} URL; null when none holds it. */
+  private URL pageClassFile(CompileContext context, String resource) {
+    for (Path jar : pageJars.getOrDefault(context, List.of())) {
       try (ZipFile zip = new ZipFile(jar.toFile())) {
         if (zip.getEntry(resource) != null) {
           return new URL("jar:" + jar.toUri() + "!/" + resource);
@@ -281,7 +306,7 @@ public final class Workspace implements AutoCloseable {
         ClassLoader loader = context.loader();
         URL classFile = loader == null ? null : loader.getResource(resource + ".class");
         if (classFile == null) {
-          classFile = runtimeClassFile(context, resource + ".class");
+          classFile = pageClassFile(context, resource + ".class");
         }
         Path source = classFile == null ? null : classSources.sourceOf(className, classFile);
         return source == null ? null : source.toString();
