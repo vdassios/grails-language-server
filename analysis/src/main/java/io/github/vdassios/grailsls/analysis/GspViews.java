@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.BiFunction;
 
 import io.github.vdassios.grailsls.api.CompileRequest;
 import io.github.vdassios.grailsls.api.CompileResult;
@@ -20,16 +21,24 @@ import io.github.vdassios.grailsls.api.SourceLookup;
 /**
  * GSP pages, without compiling them: completion of tag names after {@code <ns:} and of attribute names inside a tag,
  * hover and definition of tags, and hints for an unknown tag in a namespace some taglib declares and for a missing
- * attribute its taglib documents as {@code REQUIRED}. A page's "compile" only reads its tags.
+ * attribute its taglib documents as {@code REQUIRED}. Attribute values Grails resolves by convention (plan B3) go
+ * through {@link Conventions}: definition, value completion, and hints for a template, view, layout or asset that does
+ * not exist. A page's "compile" only reads its tags.
  */
 final class GspViews {
+  private static final Set<String> ASSET_TAGS = Set.of("stylesheet", "javascript", "image", "assetPath", "link");
+  private static final String VIEWS = "/grails-app/views/";
+
   private final Taglibs taglibs;
+  /** Conventions for a lookup and a page path. */
+  private final BiFunction<SourceLookup, String, Conventions> conventions;
   private final Map<String, Page> pages = new ConcurrentHashMap<>();
   /** The documentation of each item of a page's last completion, by its id. */
   private final Map<String, List<CompletionDetail>> completions = new ConcurrentHashMap<>();
 
-  GspViews(Taglibs taglibs) {
+  GspViews(Taglibs taglibs, BiFunction<SourceLookup, String, Conventions> conventions) {
     this.taglibs = taglibs;
+    this.conventions = conventions;
   }
 
   static boolean isGsp(String path) {
@@ -91,6 +100,17 @@ final class GspViews {
     completions.remove(request.path);
     List<Diagnostic> hints = new ArrayList<>();
     Map<String, Map<String, Taglibs.Tag>> all = taglibs.all(request.lookup);
+    Conventions files = conventions.apply(request.lookup, request.path);
+    String controller = viewController(viewDir(request.path));
+    for (GspScanner.Tag tag : page.tags) {
+      for (GspScanner.Attribute attribute : tag.attributes) {
+        Conventions.Reference reference = reference(tag, attribute, attribute.value, controller);
+        String missing = reference == null || reference.kind == Conventions.Kind.CONTROLLER || reference.kind == Conventions.Kind.ACTION ? null : files.missing(reference);
+        if (missing != null) {
+          hints.add(hint(request.path, page.range(attribute.valueStart, attribute.valueEnd), missing));
+        }
+      }
+    }
     for (GspScanner.Tag tag : page.tags) {
       Map<String, Taglibs.Tag> namespace = all.get(tag.namespace);
       if (tag.closing || namespace == null || tag.name.isEmpty()) {
@@ -108,6 +128,79 @@ final class GspViews {
       }
     }
     return new CompileResult(hints, false, 0, (System.nanoTime() - start) / 1_000_000);
+  }
+
+  /** The page's directory below {@code grails-app/views} ({@code ""} for that directory), or null when it is not below one. */
+  static String viewDir(String path) {
+    String normal = path.replace('\\', '/');
+    int at = normal.lastIndexOf(VIEWS);
+    if (at < 0) {
+      return null;
+    }
+    String below = normal.substring(at + VIEWS.length());
+    int slash = below.lastIndexOf('/');
+    return slash < 0 ? "" : below.substring(0, slash);
+  }
+
+  /**
+   * The logical name of the controller a page's relative names start from: Grails resolves them against the controller
+   * of the request, whose views are {@code views/<controller>/} (a page in a directory below that is rendered by the same
+   * controller). Null for a page directly in {@code views/}.
+   */
+  private static String viewController(String dir) {
+    return dir == null || dir.isEmpty() ? null : dir.contains("/") ? dir.substring(0, dir.indexOf('/')) : dir;
+  }
+
+  /**
+   * The convention reference an attribute's value (or the part of it given) is, or null: {@code g:render template},
+   * {@code g:include view}, {@code g:applyLayout name}, {@code <meta name="layout" content>}, {@code src} and
+   * {@code href} of {@code asset:} tags, {@code controller} and {@code action} of any {@code g:} tag (other
+   * namespaces use the names for their own ends). A value holding an expression or a URL is none.
+   */
+  private static Conventions.Reference reference(GspScanner.Tag tag, GspScanner.Attribute attribute, String value, String controller) {
+    if (tag.closing || value == null || value.contains("${") || value.contains("<%") || value.contains("%{")) {
+      return null;
+    }
+    String key = attribute.name;
+    switch (tag.namespace) {
+      case "":
+        GspScanner.Attribute name = tag.attribute("name");
+        return key.equals("content") && name != null && "layout".equals(name.value) ? new Conventions.Reference(Conventions.Kind.LAYOUT, value, null, null) : null;
+      case "asset":
+        return ASSET_TAGS.contains(tag.name) && (key.equals("src") || key.equals("href")) && !value.contains("//") ? new Conventions.Reference(Conventions.Kind.ASSET, value, null, tag.name) : null;
+      case "g":
+        break;
+      default:
+        return null;
+    }
+    GspScanner.Attribute attributeController = tag.attribute("controller");
+    // the controller attribute's value, "" when it is not a literal, null when there is none
+    String named = attributeController == null ? null
+        : attributeController.value == null || attributeController.value.contains("${") || attributeController.value.contains("<%") ? "" : attributeController.value;
+    switch (key) {
+      case "template":
+        return tag.name.equals("render") ? new Conventions.Reference(Conventions.Kind.TEMPLATE, value, null, controller) : null;
+      case "view":
+        return tag.name.equals("include") ? new Conventions.Reference(Conventions.Kind.VIEW, value, null, named == null ? controller : named.isEmpty() ? null : named) : null;
+      case "name":
+        return tag.name.equals("applyLayout") ? new Conventions.Reference(Conventions.Kind.LAYOUT, value, null, null) : null;
+      case "controller":
+        return new Conventions.Reference(Conventions.Kind.CONTROLLER, value, null, null);
+      case "action":
+        return new Conventions.Reference(Conventions.Kind.ACTION, value, null, named == null ? controller : named.isEmpty() ? null : named);
+      default:
+        return null;
+    }
+  }
+
+  /** The tag attribute whose value holds an offset, or null. */
+  private static GspScanner.Attribute valueAt(GspScanner.Tag tag, int offset) {
+    for (GspScanner.Attribute attribute : tag.attributes) {
+      if (attribute.valueStart >= 0 && offset >= attribute.valueStart && offset <= attribute.valueEnd) {
+        return attribute;
+      }
+    }
+    return null;
   }
 
   private static Diagnostic hint(String path, Range range, String message) {
@@ -129,7 +222,13 @@ final class GspViews {
       return null;
     }
     int offset = page.offset(line, column);
-    Taglibs.Tag known = tagNamed(page, GspScanner.at(page.tags, offset), offset);
+    GspScanner.Tag tag = GspScanner.at(page.tags, offset);
+    GspScanner.Attribute attribute = tag == null ? null : valueAt(tag, offset);
+    if (attribute != null) {
+      Conventions.Reference reference = reference(tag, attribute, attribute.value, viewController(viewDir(path)));
+      return reference == null ? null : conventions.apply(page.lookup, path).definition(reference, null);
+    }
+    Taglibs.Tag known = tagNamed(page, tag, offset);
     return known == null ? null : known.docs().location;
   }
 
@@ -208,7 +307,14 @@ final class GspViews {
         items.add(new Completion(known.name, Completion.Kind.METHOD, known.simpleOwner() == null ? "GSP tag" : known.simpleOwner(), null, replace, List.of(), details.size()));
         details.add(new CompletionDetail(known.owner == null ? "GSP tag" : known.owner, markdown(known)));
       }
-    } else if (!tag.closing && !inValue(tag, offset)) {
+    } else if (!tag.closing && valueAt(tag, offset) != null) {
+      GspScanner.Attribute attribute = valueAt(tag, offset);
+      String typed = page.text.substring(attribute.valueStart, offset);
+      Conventions.Reference reference = reference(tag, attribute, typed, viewController(viewDir(request.path)));
+      if (reference != null) {
+        items.addAll(conventions.apply(request.lookup, request.path).candidates(reference, null, typed, page.range(attribute.valueStart, offset)));
+      }
+    } else if (!tag.closing) {
       Map<String, Taglibs.Tag> namespace = all.get(tag.namespace);
       Taglibs.Tag known = namespace == null ? null : namespace.get(tag.name);
       if (known != null) {
@@ -241,15 +347,6 @@ final class GspViews {
       completions.put(request.path, details);
     }
     return items.isEmpty() ? CompletionList.EMPTY : new CompletionList(items, false);
-  }
-
-  private static boolean inValue(GspScanner.Tag tag, int offset) {
-    for (GspScanner.Attribute attribute : tag.attributes) {
-      if (attribute.valueStart >= 0 && offset >= attribute.valueStart && offset <= attribute.valueEnd) {
-        return true;
-      }
-    }
-    return false;
   }
 
   private static boolean isNameChar(char c) {

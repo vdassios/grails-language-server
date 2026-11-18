@@ -192,6 +192,87 @@ abstract class GspTest {
     assertNull(query(page, "wanted", 1, (a, path, line, column) -> a.definition(path, line, column)));
   }
 
+  /** Where a definition from {@code needle} (plus {@code offset}) in a page leads: the path below {@code grails-app} and the line. */
+  private String definitionOf(String page, String needle, int offset) throws Exception {
+    Location location = query(page, needle, offset, (a, path, line, column) -> a.definition(path, line, column));
+    if (location == null) {
+      return null;
+    }
+    String path = location.path.replace('\\', '/');
+    return path.substring(path.indexOf("grails-app/") + "grails-app/".length()) + ":" + location.range.startLine;
+  }
+
+  private String controllerFile() {
+    return Character.toUpperCase(app().controller.charAt(0)) + app().controller.substring(1) + "Controller.groovy";
+  }
+
+  @Test
+  void conventionReferencesLeadToTheirFiles() throws Exception {
+    String c = app().controller;
+    String page = "<meta name=\"layout\" content=\"main\"/>\n<g:render template=\"row\"/>\n<g:render template=\"/" + c + "/row\"/>\n"
+        + "<g:include view=\"index\"/>\n<g:applyLayout name=\"main\">x</g:applyLayout>\n<asset:stylesheet src=\"main\"/>\n<asset:javascript src=\"/app.js\"/>\n"
+        + "<g:link controller=\"" + c + "\" action=\"show\">a</g:link>\n<g:form action=\"index\"/>\n<other:link action=\"index\"/>\n<g:render template=\"${t}\"/>\n";
+    assertEquals("views/layouts/main.gsp:0", definitionOf(page, "content=\"main", 10));
+    assertEquals("views/" + c + "/_row.gsp:0", definitionOf(page, "template=\"row", 11));
+    assertEquals("views/" + c + "/_row.gsp:0", definitionOf(page, "template=\"/", 11));
+    assertEquals("views/" + c + "/index.gsp:0", definitionOf(page, "view=\"index", 7));
+    assertEquals("views/layouts/main.gsp:0", definitionOf(page, "name=\"main", 7));
+    assertEquals("assets/stylesheets/main.css:0", definitionOf(page, "src=\"main", 6));
+    assertEquals("assets/javascripts/app.js:0", definitionOf(page, "src=\"/app", 6));
+    String controller = definitionOf(page, "controller=\"" + c, 13);
+    assertNotNull(controller);
+    assertTrue(controller.startsWith("controllers/") && controller.contains(controllerFile() + ":"), controller);
+    String show = definitionOf(page, "action=\"show", 9);
+    String index = definitionOf(page, "g:form action=\"index", 16);
+    assertNotNull(show);
+    assertNotNull(index);
+    String source = Files.readString(views.getParent().resolve(show.substring(0, show.lastIndexOf(':'))));
+    assertEquals(at(source, "def show(", 0)[0] + "", show.substring(show.lastIndexOf(':') + 1));
+    assertEquals(at(source, "def index(", 0)[0] + "", index.substring(index.lastIndexOf(':') + 1), "an action with no controller is the view's controller's");
+    assertNull(definitionOf(page, "other:link action=\"index", 20), "not a g: tag");
+    assertNull(definitionOf(page, "template=\"${", 12), "an expression");
+  }
+
+  @Test
+  void conventionValuesComplete() throws Exception {
+    String c = app().controller;
+    assertEquals(List.of("row", "/" + c + "/row"), labels(completion("<g:render template=\"\"/>", "template=\"")));
+    assertEquals(List.of("/" + c + "/row"), labels(completion("<g:render template=\"/\"/>", "template=\"/")));
+    assertEquals(List.of("main"), labels(completion("<meta name=\"layout\" content=\"\">", "content=\"")));
+    assertEquals(List.of("main.css"), labels(completion("<asset:stylesheet src=\"\"/>", "src=\"")));
+    assertEquals(List.of("app.js", "main.css"), labels(completion("<asset:image src=\"\"/>", "src=\"")));
+    assertEquals(List.of(c), labels(completion("<g:link controller=\"\">", "controller=\"")));
+    List<String> actions = labels(completion("<g:link controller=\"" + c + "\" action=\"\">", "action=\""));
+    assertTrue(actions.containsAll(List.of("index", "show")), actions.toString());
+    assertEquals(actions, labels(completion("<g:form action=\"\">", "action=\"")), "the view's controller");
+    assertEquals(List.of(), labels(completion("<g:render template=\"r\" model=\"\"/>", "model=\"")));
+    Completion row = completion("<g:render template=\"ro\"/>", "template=\"ro").get(0);
+    assertEquals("row", row.label);
+    assertEquals(row.replace.startColumn + 2, row.replace.endColumn, "replaces what is typed");
+  }
+
+  @Test
+  void hintsForMissingConventionFiles() throws Exception {
+    String page = "<meta name=\"layout\" content=\"nope\"/>\n<g:render template=\"nope\"/>\n<g:include view=\"nope\"/>\n<asset:stylesheet src=\"nope.css\"/>\n"
+        + "<g:applyLayout name=\"nope\">x</g:applyLayout>\n<g:render template=\"${t}\"/>\n<asset:javascript src=\"https://example.org/x.js\"/>\n"
+        + "<g:link controller=\"nope\" action=\"nope\">x</g:link>\n<meta name=\"description\" content=\"nope\"/>\n";
+    String c = app().controller;
+    assertEquals(List.of(
+        "1:30 No layout 'nope': grails-app/views/layouts/nope.gsp does not exist",
+        "2:21 No template 'nope': grails-app/views/" + c + "/_nope.gsp does not exist",
+        "3:18 No view 'nope': grails-app/views/" + c + "/nope.gsp does not exist",
+        "4:24 No asset 'nope.css' under any grails-app/assets/*/",
+        "5:22 No layout 'nope': grails-app/views/layouts/nope.gsp does not exist"), hints(compile(page(), page)));
+  }
+
+  @Test
+  void relativeNamesStartFromTheViewsController() throws Exception {
+    String c = app().controller;
+    Path nested = views.resolve(c).resolve("part/nested.gsp");
+    String page = "<g:render template=\"row\"/>\n<g:include view=\"/" + c + "/index.gsp\"/>\n<g:render template=\"part/nope\"/>\n";
+    assertEquals(List.of("3:21 No template 'part/nope': grails-app/views/" + c + "/part/_nope.gsp does not exist"), hints(compile(nested, page)));
+  }
+
   @Test
   void hintsForUnknownTagsAndMissingRequiredAttributes() throws Exception {
     String page = fill("<ns:nope/>\n<ns:TAG max=\"2\"/>\n<g:each var=\"b\">x</g:each>\n<svg:rect/>\n<ns:TAG wanted=\"${a}\"/>\n</ns:nope>\n");

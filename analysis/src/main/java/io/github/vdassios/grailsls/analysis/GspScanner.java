@@ -7,7 +7,8 @@ import java.util.List;
  * Finds the GSP tags of a page ({@code <ns:name attr="v">}, {@code </ns:name>}, {@code <ns:name/>}): their namespace,
  * name and attributes, by offset. Expressions ({@code ${ }}), scriptlets ({@code <% %>}, {@code %{ }%}) and comments
  * ({@code <%-- --%>}, {@code %{-- --}%}) are skipped, also inside attribute values. A tag not closed by the end of
- * the text ends there (one being typed). Plain HTML tags are not reported.
+ * the text ends there (one being typed). Of plain HTML tags only {@code <meta>} is reported (namespace {@code ""}), for
+ * the layout a page names.
  */
 final class GspScanner {
   /** A GSP tag. Offsets are into the page's text; {@code end} is after its {@code >}, or the text's end. */
@@ -184,12 +185,20 @@ final class GspScanner {
     }
     int nsStart = i;
     i = nameEnd(i);
-    if (i == nsStart || i >= text.length() || text.charAt(i) != ':') {
-      return start + 1; // not a GSP tag
+    String namespace;
+    int nameStart;
+    int nameEnd;
+    if (i > nsStart && i < text.length() && text.charAt(i) == ':') {
+      namespace = text.substring(nsStart, i);
+      nameStart = i + 1;
+      nameEnd = nameEnd(nameStart);
+    } else if (!closing && text.regionMatches(true, nsStart, "meta", 0, 4) && i == nsStart + 4) {
+      namespace = "";
+      nameStart = nsStart;
+      nameEnd = i;
+    } else {
+      return start + 1; // neither a GSP tag nor <meta>
     }
-    String namespace = text.substring(nsStart, i);
-    int nameStart = i + 1;
-    int nameEnd = nameEnd(nameStart);
     String name = text.substring(nameStart, nameEnd);
     List<Attribute> attributes = new ArrayList<>();
     i = nameEnd;

@@ -48,23 +48,28 @@ import net.prominic.groovyls.compiler.util.GroovyASTUtils;
  */
 public final class Conventions {
   enum Kind {
-    VIEW, TEMPLATE, LAYOUT, CONTROLLER, ACTION
+    VIEW, TEMPLATE, LAYOUT, CONTROLLER, ACTION, ASSET
   }
 
   static final List<String> RENDER_KEYS = List.of("view", "template", "model", "text", "status", "contentType", "encoding", "layout", "plugin", "collection", "bean", "var");
   static final List<String> REDIRECT_KEYS = List.of("controller", "action", "id", "params", "uri", "url", "fragment", "permanent", "mapping", "namespace");
   private static final Set<String> LINK_CALLS = Set.of("redirect", "chain", "forward", "createLink", "link");
   private static final List<String> VIEW_EXTENSIONS = List.of(".gsp", ".jsp", ".gson");
+  /** What asset-pipeline compiles to a stylesheet or a script: a name with one of them may be written with the first. */
+  private static final List<String> STYLESHEETS = List.of(".css", ".scss", ".sass", ".less");
+  private static final List<String> SCRIPTS = List.of(".js", ".es6", ".ts", ".coffee");
   private static final String CONTROLLER = "Controller";
 
   /** A string that names something by convention. */
   static final class Reference {
     final Kind kind;
     final String value;
+    /** The string in a Groovy document; null in a GSP page. */
     final ConstantExpression node;
     /**
      * For a view or template, the directory under {@code views/} that relative names start from, or null when only
-     * absolute names resolve; for an action, the logical name of its controller, or null when it is not known.
+     * absolute names resolve; for an action, the logical name of its controller, or null when it is not known; for an
+     * asset, the {@code asset:} tag naming it.
      */
     final String base;
 
@@ -246,9 +251,106 @@ public final class Conventions {
         Range at = action == null ? null : NodeRanges.of(action.node);
         return at == null ? null : new Location(action.path, at);
       default:
-        Path view = viewFile(reference);
+        Path view = reference.kind == Kind.ASSET ? assetFile(reference) : viewFile(reference);
         return view == null ? null : new Location(view.toString(), new Range(0, 0, 0, 0));
     }
+  }
+
+  /**
+   * Why a view, template, layout or asset reference resolves to no file, or null when it does or cannot be checked
+   * (a relative name with no base, no {@code grails-app} known).
+   */
+  String missing(Reference reference) {
+    if (reference.value.isEmpty() || grailsApps().isEmpty()) {
+      return null;
+    }
+    if (reference.kind == Kind.ASSET) {
+      return assetFile(reference) != null || assetDirs().isEmpty() ? null : "No asset '" + reference.value + "' under any grails-app/assets/*/";
+    }
+    List<String> paths = viewPaths(reference);
+    if (paths.isEmpty() || viewFile(reference) != null) {
+      return null;
+    }
+    String what = reference.kind == Kind.TEMPLATE ? "template" : reference.kind == Kind.LAYOUT ? "layout" : "view";
+    return "No " + what + " '" + reference.value + "': grails-app/" + paths.get(0) + " does not exist";
+  }
+
+  // assets
+
+  /** Every module's asset directories, {@code grails-app/assets/<any>/}, the document's own module first. */
+  private List<Path> assetDirs() {
+    List<Path> dirs = new ArrayList<>();
+    for (Path app : grailsApps()) {
+      Path assets = app.resolve("assets");
+      if (Files.isDirectory(assets)) {
+        try (Stream<Path> children = Files.list(assets)) {
+          children.filter(Files::isDirectory).sorted().forEach(dirs::add);
+        } catch (IOException | UncheckedIOException e) {
+          // unreadable: no assets from it
+        }
+      }
+    }
+    return dirs;
+  }
+
+  /** The first file an asset reference names, or null. */
+  private Path assetFile(Reference reference) {
+    List<String> names = assetPaths(reference);
+    for (Path dir : assetDirs()) {
+      for (String name : names) {
+        Path file = dir.resolve(name);
+        if (Files.isRegularFile(file)) {
+          return file;
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
+   * The paths below an asset directory an asset reference may name: as written, then, for a stylesheet or a script
+   * (by its tag or extension), the same name with each extension asset-pipeline compiles to it.
+   */
+  private static List<String> assetPaths(Reference reference) {
+    String value = reference.value.startsWith("/") ? reference.value.substring(1) : reference.value;
+    List<String> names = new ArrayList<>(List.of(value));
+    List<String> group = extensionGroup(reference.base, value);
+    if (group != null) {
+      String stem = value;
+      for (String extension : group) {
+        if (value.endsWith(extension)) {
+          stem = value.substring(0, value.length() - extension.length());
+        }
+      }
+      for (String extension : group) {
+        if (!names.contains(stem + extension)) {
+          names.add(stem + extension);
+        }
+      }
+    }
+    return names;
+  }
+
+  private static List<String> extensionGroup(String tag, String name) {
+    if ("stylesheet".equals(tag) || STYLESHEETS.stream().anyMatch(name::endsWith)) {
+      return STYLESHEETS;
+    }
+    return "javascript".equals(tag) || SCRIPTS.stream().anyMatch(name::endsWith) ? SCRIPTS : null;
+  }
+
+  /** The names an asset reference may take: every file below an asset directory, of the tag's kind for stylesheets and scripts. */
+  private List<String> assetNames(Reference reference) {
+    Set<String> names = new java.util.TreeSet<>();
+    for (Path dir : assetDirs()) {
+      for (Path file : files(dir)) {
+        String name = dir.relativize(file).toString().replace('\\', '/');
+        List<String> group = "stylesheet".equals(reference.base) ? STYLESHEETS : "javascript".equals(reference.base) ? SCRIPTS : null;
+        if (group == null || group.stream().anyMatch(name::endsWith)) {
+          names.add(name);
+        }
+      }
+    }
+    return new ArrayList<>(names);
   }
 
   /** The first file a view, template or layout reference names, or null. */
@@ -288,7 +390,12 @@ public final class Conventions {
       // JSON views (grails-views) keep templates as _name.gson
       return List.of(prefix + "_" + name + ".gsp", prefix + "_" + name + ".gson");
     }
-    return VIEW_EXTENSIONS.stream().map(extension -> prefix + name + extension).collect(Collectors.toList());
+    List<String> paths = VIEW_EXTENSIONS.stream().map(extension -> prefix + name + extension).collect(Collectors.toList());
+    if (VIEW_EXTENSIONS.stream().anyMatch(name::endsWith)) {
+      // written with its extension: g:include view="/a/b.gsp"
+      paths.add(0, prefix + name);
+    }
+    return paths;
   }
 
   /** A class or member and the file declaring it. */
@@ -365,8 +472,8 @@ public final class Conventions {
     if (reference.base == null) {
       return null;
     }
-    ClassNode own = topLevel((ClassNode) GroovyASTUtils.getEnclosingNodeOfType(reference.node, ClassNode.class, ast));
-    if (reference.base.equals(controllerName(own))) {
+    ClassNode own = reference.node == null ? null : topLevel((ClassNode) GroovyASTUtils.getEnclosingNodeOfType(reference.node, ClassNode.class, ast));
+    if (own != null && reference.base.equals(controllerName(own))) {
       return new Owner(own, documentPath);
     }
     Path file = controllerFile(reference.base);
@@ -466,6 +573,11 @@ public final class Conventions {
     // the typed part of the string: the compile may be of a copy with a placeholder at the position
     Range replace = new Range(line, string.startColumn + 1, line, Math.max(string.startColumn + 1, column));
     String prefix = reference.value.substring(0, Math.max(0, Math.min(reference.value.length(), column - replace.startColumn)));
+    return candidates(reference, ast, prefix, replace);
+  }
+
+  /** Values a reference may take that start with {@code prefix}, each replacing {@code replace}. */
+  List<Completion> candidates(Reference reference, ASTNodeVisitor ast, String prefix, Range replace) {
     Map<String, Completion.Kind> labels = new LinkedHashMap<>();
     switch (reference.kind) {
       case CONTROLLER:
@@ -476,6 +588,9 @@ public final class Conventions {
         if (owner != null) {
           actionsOf(owner).keySet().forEach(name -> labels.put(name, Completion.Kind.METHOD));
         }
+        break;
+      case ASSET:
+        assetNames(reference).forEach(name -> labels.put(name, Completion.Kind.FILE));
         break;
       default:
         viewNames(reference).forEach(name -> labels.put(name, Completion.Kind.FILE));
@@ -560,11 +675,9 @@ public final class Conventions {
             if (range == null || !seen.add(range.startLine + ":" + range.startColumn)) {
               continue;
             }
-            List<String> paths = viewPaths(reference);
-            if (!paths.isEmpty() && viewFile(reference) == null) {
-              String what = reference.kind == Kind.TEMPLATE ? "template" : "view";
-              problems.add(new Diagnostic(documentPath, range.startLine, range.startColumn, range.endLine, range.endColumn, Diagnostic.HINT,
-                  "No " + what + " '" + reference.value + "': grails-app/" + paths.get(0) + " does not exist"));
+            String missing = missing(reference);
+            if (missing != null) {
+              problems.add(new Diagnostic(documentPath, range.startLine, range.startColumn, range.endLine, range.endColumn, Diagnostic.HINT, missing));
             }
           }
         }
