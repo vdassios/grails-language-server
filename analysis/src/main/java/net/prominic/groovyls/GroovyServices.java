@@ -96,7 +96,6 @@ import org.eclipse.lsp4j.services.WorkspaceService;
 import groovy.lang.GroovyClassLoader;
 import io.github.classgraph.ClassGraph;
 import io.github.classgraph.ClassGraphException;
-import io.github.classgraph.PackageInfo;
 import io.github.classgraph.ScanResult;
 import io.github.vdassios.grailsls.analysis.ClasspathTypes;
 import io.github.vdassios.grailsls.analysis.Completions;
@@ -390,11 +389,6 @@ public class GroovyServices implements TextDocumentService, WorkspaceService, La
 				return scan.getAllClasses().stream().map(info -> new Type(info.getName(), info.getSimpleName(), info.getPackageName(),
 						info.isInterface() ? Completion.Kind.INTERFACE : info.isEnum() ? Completion.Kind.ENUM : Completion.Kind.CLASS))
 						.collect(Collectors.toList());
-			}
-
-			@Override
-			public List<String> packages() {
-				return scan.getPackageInfo().stream().map(PackageInfo::getName).collect(Collectors.toList());
 			}
 		};
 	}

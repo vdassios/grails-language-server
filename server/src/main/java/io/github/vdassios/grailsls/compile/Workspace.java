@@ -65,9 +65,14 @@ public final class Workspace implements AutoCloseable {
    * runtime-only jars of every module depending on it (a plugin's pages render inside the app that uses it).
    */
   private final Map<CompileContext, List<Path>> pageJars = new HashMap<>();
+  /** Packages and classes of the jars, for import completion. */
+  private final ClasspathNames classpathNames = new ClasspathNames();
+  /** The analysis layer's jar: first on every context's class path, but not the project's. */
+  private final Path analysisJar;
 
   /** @param analysisJar the analysis layer's jar, in the server's cache directory; library sources are extracted next to it */
   public Workspace(ProjectModel model, Path analysisJar) {
+    this.analysisJar = analysisJar;
     classSources = new ClassSources(analysisJar.resolveSibling("sources"));
     for (ModuleRecord module : model.modules) {
       Path grailsApp = Path.of(module.projectDir, "grails-app");
@@ -279,6 +284,16 @@ public final class Workspace implements AutoCloseable {
       }
 
       @Override
+      public List<String> classpathPackages(String parent) {
+        return classpathNames.packages(projectClasspath(context), parent);
+      }
+
+      @Override
+      public List<String> classpathClasses(String packageName) {
+        return classpathNames.classes(projectClasspath(context), packageName);
+      }
+
+      @Override
       public List<String> classesNamed(String simpleName) {
         return index.classesNamed(simpleName, context.searchRoots);
       }
@@ -312,6 +327,10 @@ public final class Workspace implements AutoCloseable {
         return source == null ? null : source.toString();
       }
     };
+  }
+
+  private List<Path> projectClasspath(CompileContext context) {
+    return context.classpath().stream().filter(entry -> !entry.equals(analysisJar)).collect(Collectors.toList());
   }
 
   /** Every module's {@code grails-app}, first the one of the module {@code context} belongs to (the deepest module holding its roots). */

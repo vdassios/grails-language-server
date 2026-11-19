@@ -4,11 +4,9 @@ import java.util.List;
 
 import io.github.vdassios.grailsls.api.Completion;
 
-/** Classes and packages of the classpath that completion offers besides the classes of the compile. */
+/** Classes of the classpath that completion offers besides the classes of the compile. */
 public interface ClasspathTypes {
   List<Type> types();
-
-  List<String> packages();
 
   /** A class of the classpath. */
   final class Type {

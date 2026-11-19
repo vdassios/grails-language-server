@@ -59,6 +59,8 @@ public final class Completions {
   /** The declaration behind each item with an id, by id: a node, or a tag ({@link Taglibs.Tag}). */
   private final List<Object> declarations = new ArrayList<>();
   private boolean incomplete;
+  /** Leaves out the private members of the type itself too: it is seen from another class. */
+  private boolean fromOutside;
 
   private Completions(ASTNodeVisitor ast, ClasspathTypes classpath, Conventions conventions, TagCalls tags) {
     this.ast = ast;
@@ -86,6 +88,14 @@ public final class Completions {
     }
     Completions completions = new Completions(ast, classpath, conventions, tags);
     completions.populate(offsetNode, line, column, typed);
+    return completions;
+  }
+
+  /** The static members of a class whose names start with a prefix: {@code import static a.B.m}. */
+  static Completions staticMembers(ASTNodeVisitor ast, ClassNode type, String prefix) {
+    Completions completions = new Completions(ast, null, null, null);
+    completions.fromOutside = true;
+    completions.members(type, true, prefix, new HashSet<>());
     return completions;
   }
 
@@ -181,8 +191,6 @@ public final class Completions {
           }
         }
       }
-    } else if (offsetNode instanceof ImportNode) {
-      fromImport((ImportNode) offsetNode, line, column);
     } else if (offsetNode instanceof ClassNode) {
       fromClassNode((ClassNode) offsetNode, line, column);
     } else if (offsetNode instanceof MethodNode || offsetNode instanceof Statement) {
@@ -357,7 +365,7 @@ public final class Completions {
     }
     for (ClassNode current : hierarchy) {
       for (FieldNode field : GroovyASTUtils.members(current::getFields, List.<FieldNode>of())) {
-        if ((statics == null || field.isStatic() == statics) && (current == type || !field.isPrivate())) {
+        if ((statics == null || field.isStatic() == statics) && (current == type && !fromOutside || !field.isPrivate())) {
           add(field.getName(), Completion.Kind.FIELD, field, prefix, names);
         }
       }
@@ -365,7 +373,7 @@ public final class Completions {
     List<MethodNode> methods = new ArrayList<>();
     for (ClassNode current : hierarchy) {
       for (MethodNode method : GroovyASTUtils.members(current::getMethods, List.<MethodNode>of())) {
-        if ((statics == null || method.isStatic() == statics) && (current == type || !method.isPrivate()) && !method.isSynthetic()) {
+        if ((statics == null || method.isStatic() == statics) && (current == type && !fromOutside || !method.isPrivate()) && !method.isSynthetic()) {
           methods.add(method);
         }
       }
@@ -475,48 +483,6 @@ public final class Completions {
       return List.of();
     }
     return List.of(new TextEdit(importAt, "import " + className + "\n"));
-  }
-
-  /** {@code import a.b.C}: classes and packages whose name starts with what is typed. */
-  private void fromImport(ImportNode importNode, int line, int column) {
-    Range range = NodeRanges.of(importNode);
-    if (range == null) {
-      return;
-    }
-    String typed = importNode.getType().getName();
-    // the name only, without "import "
-    Range nameRange = new Range(range.endLine, range.endColumn - typed.length(), range.endLine, range.endColumn);
-    String prefix = prefix(typed, nameRange, line, column);
-    ModuleNode module = (ModuleNode) GroovyASTUtils.getEnclosingNodeOfType(importNode, ModuleNode.class, ast);
-    String packageName = module == null ? null : module.getPackageName();
-    List<String> imports = imports(module);
-    for (ClassNode type : ast.getClassNodes()) {
-      String typePackage = type.getPackageName();
-      if (typePackage == null || typePackage.isEmpty() || typePackage.equals(packageName) || imports.contains(type.getName())) {
-        continue;
-      }
-      if (type.getName().startsWith(prefix) || type.getNameWithoutPackage().startsWith(prefix)) {
-        String sortText = type.getNameWithoutPackage().startsWith(prefix) ? type.getNameWithoutPackage() : null;
-        items.add(new Completion(type.getName(), kind(type), null, sortText, nameRange, List.of(), remember(type)));
-      }
-    }
-    if (classpath == null) {
-      return;
-    }
-    for (String classpathPackage : classpath.packages()) {
-      if (classpathPackage.startsWith(prefix)) {
-        items.add(new Completion(classpathPackage, Completion.Kind.PACKAGE, null, null, nameRange, List.of(), -1));
-      }
-    }
-    for (ClasspathTypes.Type type : classpath.types()) {
-      if (type.packageName == null || type.packageName.isEmpty() || type.packageName.equals(packageName) || imports.contains(type.name)) {
-        continue;
-      }
-      if (type.name.startsWith(prefix) || type.simpleName.startsWith(prefix)) {
-        String sortText = type.simpleName.startsWith(prefix) ? type.simpleName : null;
-        items.add(new Completion(type.name, type.kind, null, sortText, nameRange, List.of(), -1));
-      }
-    }
   }
 
   private static List<String> imports(ModuleNode module) {

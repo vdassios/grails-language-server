@@ -74,7 +74,20 @@ class GroovyAnalyzerTest {
     public String classSource(String className) {
       return classSources.get(className);
     }
+
+    @Override
+    public List<String> classpathPackages(String parent) {
+      return jarPackages.getOrDefault(parent, List.of());
+    }
+
+    @Override
+    public List<String> classpathClasses(String packageName) {
+      return jarClasses.getOrDefault(packageName, List.of());
+    }
   };
+  /** The jars' packages below a package and classes in a package, as the server would list them. */
+  private final Map<String, List<String>> jarPackages = new HashMap<>();
+  private final Map<String, List<String>> jarClasses = new HashMap<>();
   /** Source files of classes that come from class files, as the server would find them in sources jars. */
   private final Map<String, String> classSources = new HashMap<>();
   /** The symbol index's classes, as the server would give them. */
@@ -765,6 +778,47 @@ class GroovyAnalyzerTest {
 
     CompletionList imports = complete(path, "package app\nimport oth\nclass A {}\n", 1, 10);
     assertTrue(labels(imports).containsAll(List.of("other", "other.Gadget")), labels(imports).toString());
+  }
+
+  /**
+   * The name on an import line is read from the text: it does not parse after a dot, and a star import has no type.
+   * The line after it is another import, the case where Groovy 2.5 gives an import node the next one's position.
+   */
+  @Test
+  void importCompletionOffersThePackagesAndClassesOfTheJarsBelowTheNameTyped() {
+    jarPackages.put("", List.of("java", "javax"));
+    jarPackages.put("java", List.of("java.io", "java.util"));
+    jarPackages.put("java.util", List.of("java.util.concurrent"));
+    jarClasses.put("java.util", List.of("java.util.ArrayList", "java.util.Arrays", "java.util.List"));
+    types.add(new Symbol("lib.shelf.Book", Symbol.Kind.CLASS, null, new Range(1, 0, 1, 10)));
+    String path = tmp.resolve("src/app/A.groovy").toString();
+    String rest = "\nimport java.io.File\nclass A {}\n";
+
+    assertEquals(List.of("java.util"), labels(complete(path, "package app\nimport java.ut" + rest, 1, 14)));
+    CompletionList below = complete(path, "package app\nimport java.util." + rest, 1, 17);
+    assertEquals(List.of("java.util.concurrent", "java.util.ArrayList", "java.util.Arrays", "java.util.List"), labels(below));
+    assertEquals(Completion.Kind.PACKAGE, below.items.get(0).kind);
+    assertEquals("1:7-1:17", below.items.get(1).replace.startLine + ":" + below.items.get(1).replace.startColumn + "-" + below.items.get(1).replace.endLine + ":"
+        + below.items.get(1).replace.endColumn, "the whole name typed is replaced");
+    assertEquals(List.of("java.util.ArrayList", "java.util.Arrays"), labels(complete(path, "package app\nimport java.util.Ar" + rest, 1, 19)));
+    assertEquals(List.of("lib.shelf", "lib.shelf.Book"), labels(complete(path, "package app\nimport lib." + rest, 1, 11)));
+    assertEquals(List.of("java.util.ArrayList"), labels(complete(path, "package app\nimport    java.util.ArrayL" + rest, 1, 26)));
+    assertEquals(List.of(), labels(complete(path, "package app\nimport java.util.*" + rest, 1, 18)), "nothing to offer after a star, and no failure");
+  }
+
+  /** {@code import static a.B.m}: the class as the compile resolved it, its static members that another class sees. */
+  @Test
+  void aStaticImportOffersTheStaticMembersOfItsClass() {
+    jarClasses.put("java.util", List.of("java.util.Collections"));
+    String path = tmp.resolve("src/app/A.groovy").toString();
+    String rest = "\nimport java.io.File\nclass A {}\n";
+    List<String> members = labels(complete(path, "package app\nimport static java.util.Collections.emptyL" + rest, 1, 42));
+    assertEquals(List.of("emptyList", "emptyListIterator"), members.stream().sorted().collect(Collectors.toList()));
+    List<String> afterDot = labels(complete(path, "package app\nimport static java.util.Collections." + rest, 1, 36));
+    assertTrue(afterDot.containsAll(List.of("EMPTY_LIST", "emptyList", "sort")), afterDot.toString());
+    assertFalse(afterDot.contains("r") || afterDot.contains("BINARYSEARCH_THRESHOLD"), "private members: " + afterDot);
+    assertFalse(afterDot.contains("toString"), "instance members: " + afterDot);
+    assertEquals(List.of("java.util.Collections"), labels(complete(path, "package app\nimport static java.util.Coll" + rest, 1, 28)), "the class is still being typed");
   }
 
   /**

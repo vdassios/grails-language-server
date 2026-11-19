@@ -644,9 +644,13 @@ public final class GroovyAnalyzer implements Analyzer {
     if (GspViews.isGsp(request.path)) {
       return pageCompletion(request, line, column);
     }
+    String typed = lineBefore(request.text, line, column);
+    Imports imported = Imports.of(typed);
+    if (imported != null) {
+      return importCompletion(request, imported, line, column);
+    }
     ClasspathTypes types = sourceTypes(request.lookup);
     Kept kept = current(request);
-    String typed = lineBefore(request.text, line, column);
     Conventions conventions = conventions(request.lookup, request.path);
     TagCalls tags = tagCalls(request.lookup, false);
     Completions found = kept == null ? null : Completions.at(kept.ast(), kept.uri, types, conventions, tags, line, column, typed);
@@ -666,6 +670,29 @@ public final class GroovyAnalyzer implements Analyzer {
     }
     completions.put(request.path, new LastCompletion(found, kept));
     return found.list();
+  }
+
+  /**
+   * On an import line: a static import's members once its class resolves in a compile of the text (with a name typed
+   * after a trailing dot), else, as when it has none, packages and classes ({@link Imports}).
+   */
+  private CompletionList importCompletion(CompileRequest request, Imports imported, int line, int column) {
+    completions.remove(request.path);
+    if (imported.isStatic && !imported.qualifier().isEmpty()) {
+      // after the dot the text does not parse: a copy with a name typed
+      Kept kept = imported.last().isEmpty() ? null : current(request);
+      if (kept == null) {
+        kept = compileCopy(request, line, column, imported.last().isEmpty() ? Completions.placeholder("") : "");
+      }
+      ClassNode type = kept == null ? null : Imports.staticallyImported(kept.unit, imported.qualifier());
+      Completions found = type == null ? null : Completions.staticMembers(kept.ast(), type, imported.last());
+      // none when the qualifier is no class: import static java.util.Coll names the class java.util
+      if (found != null && !found.list().items.isEmpty()) {
+        completions.put(request.path, new LastCompletion(found, kept));
+        return found.list();
+      }
+    }
+    return imported.names(request.lookup, line, column);
   }
 
   /**
@@ -871,29 +898,14 @@ public final class GroovyAnalyzer implements Analyzer {
   /** The top-level classes of the request's lookup, for completion; the compile's own classes come first anyway. */
   private static ClasspathTypes sourceTypes(SourceLookup lookup) {
     List<ClasspathTypes.Type> types = new ArrayList<>();
-    Set<String> packages = new TreeSet<>();
     for (Symbol symbol : lookup.types()) {
       int dot = symbol.name.lastIndexOf('.');
       String packageName = dot < 0 ? "" : symbol.name.substring(0, dot);
       Completion.Kind kind = symbol.kind == Symbol.Kind.INTERFACE ? Completion.Kind.INTERFACE
           : symbol.kind == Symbol.Kind.ENUM ? Completion.Kind.ENUM : Completion.Kind.CLASS;
       types.add(new ClasspathTypes.Type(symbol.name, symbol.name.substring(dot + 1), packageName, kind));
-      if (!packageName.isEmpty()) {
-        packages.add(packageName);
-      }
     }
-    List<String> packageList = new ArrayList<>(packages);
-    return new ClasspathTypes() {
-      @Override
-      public List<Type> types() {
-        return types;
-      }
-
-      @Override
-      public List<String> packages() {
-        return packageList;
-      }
-    };
+    return () -> types;
   }
 
   @Override

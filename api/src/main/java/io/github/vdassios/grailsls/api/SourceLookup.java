@@ -20,6 +20,20 @@ public interface SourceLookup {
   }
 
   /**
+   * The packages directly below a package that lead to classes in the class path's jars or the JDK's exported
+   * packages, qualified ({@code java.util.concurrent} below {@code java.util}); the top-level ones below {@code ""}. For
+   * import completion; the project's own packages are those of {@link #types()}.
+   */
+  default List<String> classpathPackages(String parent) {
+    return List.of();
+  }
+
+  /** The top-level classes of a package in the class path's jars or the JDK, qualified ({@code java.util.ArrayList}). */
+  default List<String> classpathClasses(String packageName) {
+    return List.of();
+  }
+
+  /**
    * Binary names of the top-level classes with this simple name that the sources declare, in search order; for names
    * Grails resolves by convention, such as the bean {@code bookService} to the class {@code BookService}.
    */

@@ -231,6 +231,38 @@ class FixtureCompileTest {
     }
   }
 
+  /** Completion at the end of an import line put after the controller's package line. */
+  private static List<String> importCompletion(Workspace workspace, Path controller, String line) throws Exception {
+    String saved = Files.readString(controller);
+    String text = saved.replaceFirst("\n", "\n" + line + "\n");
+    CompileContext context = workspace.contextOf(controller);
+    CompileRequest request = new CompileRequest(controller.toString(), text, workspace.lookup(context, p -> null), () -> false);
+    return context.query(a -> a.completion(request, 1, line.length())).get(60, TimeUnit.SECONDS).items.stream().map(c -> c.label).collect(Collectors.toList());
+  }
+
+  /** Import completion lists the jars of the context's class path, the JDK and the project's own packages, not the server's. */
+  @Test
+  void importCompletionListsTheClassPathTheJdkAndTheProject() throws Exception {
+    ProjectModel model = Fixtures.built("grails4", "GLS_TEST_JDK11");
+    try (Workspace workspace = workspace(model)) {
+      workspace.indexSymbols().get(120, TimeUnit.SECONDS);
+      Path controller = file(model, ":app", "grails-app/controllers/fixture/library/BookController.groovy");
+      long start = System.nanoTime();
+      List<String> jar = importCompletion(workspace, controller, "import grails.gorm.transactions.");
+      System.out.println("first import completion (jars read): " + (System.nanoTime() - start) / 1_000_000 + " ms");
+      assertTrue(jar.contains("grails.gorm.transactions.Transactional"), jar.toString());
+      assertTrue(importCompletion(workspace, controller, "import grails.go").contains("grails.gorm"), "a package of a jar");
+      List<String> jdk = importCompletion(workspace, controller, "import java.util.concurrent.ConcurrentH");
+      assertEquals(List.of("java.util.concurrent.ConcurrentHashMap"), jdk);
+      List<String> project = importCompletion(workspace, controller, "import fixture.");
+      assertTrue(project.containsAll(List.of("fixture.library", "fixture.storage", "fixture.support", "fixture.text")), "the project's packages: " + project);
+      List<String> server = importCompletion(workspace, controller, "import io.github.");
+      assertFalse(server.contains("io.github.vdassios"), "the server's own classes are not the project's: " + server);
+      List<String> statics = importCompletion(workspace, controller, "import static java.util.Collections.unmodifiableL");
+      assertEquals(List.of("unmodifiableList"), statics);
+    }
+  }
+
   @Test
   void signatureHelpOnRenderInAnAction() throws Exception {
     ProjectModel model = Fixtures.built("grails4", "GLS_TEST_JDK11");

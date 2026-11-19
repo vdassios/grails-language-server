@@ -27,7 +27,7 @@ Every feature of the [Grails VS Code extension](https://github.com/Johan070119/G
 | View names after `view: "` (with folders) | covered | |
 | Controller names after `controller: "` | covered | |
 | Action names after `action: "` | covered | Of the named controller, or the current one |
-| Project packages and classes after `import pkg.` | not covered | Unimported names complete with an import edit instead |
+| Project packages and classes after `import pkg.` | covered | Packages and classes of the project, its jars and the JDK; static members after `import static pkg.Class.` |
 
 ## Navigation (Grails VS Code extension)
 
