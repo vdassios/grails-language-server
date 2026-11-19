@@ -7,7 +7,7 @@ public final class CompletionList {
   public static final CompletionList EMPTY = new CompletionList(List.of(), false);
 
   public final List<Completion> items;
-  /** True when the list was cut short: typing more asks again. */
+  /** True when the list was cut short, or holds GORM finder names that grow step by step: typing more asks again. */
   public final boolean incomplete;
 
   public CompletionList(List<Completion> items, boolean incomplete) {

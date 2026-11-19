@@ -59,6 +59,8 @@ public final class Completions {
   /** The declaration behind each item with an id, by id: a node, or a tag ({@link Taglibs.Tag}). */
   private final List<Object> declarations = new ArrayList<>();
   private boolean incomplete;
+  /** The items include finder names, whose next steps depend on what is typed next. */
+  private boolean finderSteps;
   /** Leaves out the private members of the type itself too: it is seen from another class. */
   private boolean fromOutside;
 
@@ -126,7 +128,7 @@ public final class Completions {
   }
 
   public CompletionList list() {
-    return new CompletionList(items, incomplete);
+    return new CompletionList(items, incomplete || finderSteps);
   }
 
   /** The declaration behind an item, or null. */
@@ -308,13 +310,15 @@ public final class Completions {
   /**
    * GORM's dynamic finders, one step of the name at a time: {@code findBy}, then {@code findByTitle}, then
    * {@code findByTitleLike} or {@code findByTitleAnd}. Sorted before the members; a name that is a whole finder
-   * resolves to its signature.
+   * resolves to its signature. The list is then incomplete, so that clients ask again as the name grows instead of
+   * filtering the step they have.
    */
   private void finders(ClassNode domain, String prefix) {
     for (String name : FinderName.continuations(prefix, Gorm.properties(domain).keySet())) {
       Gorm.Finder finder = Gorm.finder(domain, name);
       boolean whole = finder != null && finder.name.problems.isEmpty();
       items.add(new Completion(name, Completion.Kind.METHOD, null, "0" + name, null, List.of(), whole ? remember(finder.method()) : -1));
+      finderSteps = true;
     }
   }
 

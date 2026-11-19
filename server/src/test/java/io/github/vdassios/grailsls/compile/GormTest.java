@@ -1,6 +1,7 @@
 package io.github.vdassios.grailsls.compile;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -20,6 +21,7 @@ import io.github.vdassios.grailsls.api.CompileRequest;
 import io.github.vdassios.grailsls.api.CompileResult;
 import io.github.vdassios.grailsls.api.Completion;
 import io.github.vdassios.grailsls.api.CompletionDetail;
+import io.github.vdassios.grailsls.api.CompletionList;
 import io.github.vdassios.grailsls.api.Diagnostic;
 import io.github.vdassios.grailsls.api.Location;
 import io.github.vdassios.grailsls.api.SignatureHelp;
@@ -140,11 +142,15 @@ abstract class GormTest {
 
   /** Completion items right after {@code needle}. */
   private List<Completion> completion(Workspace workspace, Path path, String text, String needle) throws Exception {
+    return completionList(workspace, path, text, needle).items;
+  }
+
+  private CompletionList completionList(Workspace workspace, Path path, String text, String needle) throws Exception {
     CompileContext context = workspace.contextOf(path);
     compile(workspace, path, text);
     int[] p = at(text, fill(needle), fill(needle).length());
     CompileRequest request = new CompileRequest(path.toString(), text, workspace.lookup(context, x -> null), () -> false);
-    return context.query(a -> a.completion(request, p[0], p[1])).get(60, TimeUnit.SECONDS).items;
+    return context.query(a -> a.completion(request, p[0], p[1])).get(60, TimeUnit.SECONDS);
   }
 
   private List<String> labels(Workspace workspace, Path path, String text, String needle) throws Exception {
@@ -238,6 +244,9 @@ abstract class GormTest {
       CompletionDetail detail = workspace.contextOf(service()).query(a -> a.resolveCompletion(service().toString(), like.id)).get(60, TimeUnit.SECONDS);
       assertEquals("public static " + app.domain + " findBy" + first + "Like(String " + app.first + ")", detail.detail);
       assertTrue(like.sortText.compareTo("a") < 0, "sorted before the members");
+      // the next step depends on what is typed next, so clients must ask again rather than filter this list
+      assertTrue(completionList(workspace, service(), serviceWith("D.findBy"), "D.findBy").incomplete);
+      assertFalse(completionList(workspace, service(), serviceWith("D.withCriteria {", "    il", "}"), "    il").incomplete);
     }
   }
 
