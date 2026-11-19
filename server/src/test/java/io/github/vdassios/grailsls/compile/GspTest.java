@@ -416,8 +416,9 @@ abstract class GspTest {
     assertEquals(List.of(app().tag), labels(completion("<p>${NS.}</p>\n", "${NS.")));
     List<String> bareNames = labels(completion("<p>${messa}</p>\n", "${messa"));
     assertTrue(bareNames.contains("message"), bareNames.toString());
-    List<String> keys = labels(completion("<p>${g.link(contr)}</p>\n", "${g.link(contr"));
-    assertTrue(keys.contains("controller"), keys.toString());
+    // a project taglib's attributes: Grails's own come from sources jars, which a fresh Gradle cache (CI) lacks
+    List<String> keys = labels(completion("<p>${NS.TAG(wan)}</p>\n", "${NS.TAG(wan"));
+    assertTrue(keys.contains("wanted"), keys.toString());
     List<Completion> items = completion("<p>${g.createL}</p>\n", "${g.createL");
     Completion createLink = items.stream().filter(c -> c.label.equals("createLink")).findFirst().orElseThrow();
     CompletionDetail detail = workspace.contextOf(page()).query(a -> a.resolveCompletion(page().toString(), createLink.id)).get(60, TimeUnit.SECONDS);
