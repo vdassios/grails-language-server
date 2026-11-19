@@ -83,6 +83,48 @@ final class GspScanner {
     return scanner.tags;
   }
 
+  /**
+   * The Groovy code of a page, as {@code {start, end}} offset pairs in text order: the body of each expression
+   * ({@code ${ }}, in attribute values too) and scriptlet ({@code <% %>}, {@code <%= %>}, {@code %{ }%}), without the
+   * surrounding white space, which the GSP compiler drops. Comments, directives ({@code <%@ %>}) and escaped
+   * expressions ({@code \${}) hold none; an empty body is left out.
+   */
+  static List<int[]> code(String text) {
+    GspScanner scanner = new GspScanner(text);
+    List<int[]> regions = new ArrayList<>();
+    int i = 0;
+    while (i < text.length()) {
+      int skipped = scanner.skipGsp(i);
+      if (skipped == i) {
+        i++;
+        continue;
+      }
+      int start = -1;
+      int end = -1;
+      if (text.startsWith("${", i)) {
+        start = i + 2;
+        end = text.charAt(skipped - 1) == '}' ? skipped - 1 : skipped;
+      } else if (text.startsWith("<%", i) && !text.startsWith("<%--", i) && !text.startsWith("<%@", i)) {
+        start = text.startsWith("<%=", i) ? i + 3 : i + 2;
+        end = text.startsWith("%>", skipped - 2) ? skipped - 2 : skipped;
+      } else if (text.startsWith("%{", i) && !text.startsWith("%{--", i)) {
+        start = i + 2;
+        end = text.startsWith("}%", skipped - 2) ? skipped - 2 : skipped;
+      }
+      while (start >= 0 && start < end && Character.isWhitespace(text.charAt(start))) {
+        start++;
+      }
+      while (start >= 0 && end > start && Character.isWhitespace(text.charAt(end - 1))) {
+        end--;
+      }
+      if (start >= 0 && end > start) {
+        regions.add(new int[] { start, end });
+      }
+      i = skipped;
+    }
+    return regions;
+  }
+
   /** The tag whose text holds an offset (its {@code <} up to its end, the end included), or null. */
   static Tag at(List<Tag> tags, int offset) {
     for (Tag tag : tags) {

@@ -17,6 +17,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.BiFunction;
 
 import org.codehaus.groovy.GroovyBugError;
 import org.codehaus.groovy.ast.ASTNode;
@@ -49,6 +50,7 @@ import io.github.vdassios.grailsls.api.CompletionDetail;
 import io.github.vdassios.grailsls.api.CompletionList;
 import io.github.vdassios.grailsls.api.Diagnostic;
 import io.github.vdassios.grailsls.api.Location;
+import io.github.vdassios.grailsls.api.Range;
 import io.github.vdassios.grailsls.api.SignatureHelp;
 import io.github.vdassios.grailsls.api.SourceLookup;
 import io.github.vdassios.grailsls.api.Symbol;
@@ -76,8 +78,10 @@ public final class GroovyAnalyzer implements Analyzer {
    * file grew with every artefact compiled and was read and written again by each compile.
    */
   private final Path output;
-  /** GSP pages: tags and taglibs, nothing compiled. */
+  /** GSP pages: tags and taglibs. */
   private final GspViews gsp;
+  /** The translation of each GSP page whose generated Groovy is kept in {@link #units}. */
+  private final Map<String, GspTranslation> translations = new ConcurrentHashMap<>();
 
   public GroovyAnalyzer() {
     this(GroovyAnalyzer.class.getClassLoader());
@@ -105,7 +109,7 @@ public final class GroovyAnalyzer implements Analyzer {
   @Override
   public CompileResult compile(CompileRequest request) {
     if (GspViews.isGsp(request.path)) {
-      return gsp.compile(request);
+      return compilePage(request);
     }
     long start = System.nanoTime();
     units.remove(request.path);
@@ -116,6 +120,42 @@ public final class GroovyAnalyzer implements Analyzer {
       return new CompileResult(List.of(), true, kept.sources, millisSince(start));
     }
     units.put(request.path, kept);
+    return new CompileResult(diagnostics, false, kept.sources, millisSince(start));
+  }
+
+  /**
+   * A GSP page: its tag hints ({@link GspViews}), then its translation to Groovy ({@link GspTranslation}) compiled like
+   * a document of the page's module, diagnostics mapped back onto the page. A class path without Grails's page parser
+   * gives the tag hints only.
+   */
+  private CompileResult compilePage(CompileRequest request) {
+    long start = System.nanoTime();
+    units.remove(request.path);
+    translations.remove(request.path);
+    CompileResult tags = gsp.compile(request);
+    GspTranslation translation = GspTranslation.of(parent, request.path, request.text);
+    if (translation == null) {
+      return tags;
+    }
+    List<Diagnostic> diagnostics = new ArrayList<>(tags.diagnostics);
+    if (translation.groovy == null) {
+      // the parser rejects a page, e.g. a g:each without "in"; a tag hint on that line already says why
+      Diagnostic error = translation.errorDiagnostic(request.path);
+      if (tags.diagnostics.stream().noneMatch(hint -> hint.startLine == error.startLine)) {
+        diagnostics.add(error);
+      }
+      return new CompileResult(diagnostics, false, 0, millisSince(start));
+    }
+    List<Diagnostic> found = new ArrayList<>();
+    Kept kept = run(new CompileRequest(request.path, translation.groovy, request.lookup, request.cancelled), found);
+    if (kept.cancelled) {
+      return new CompileResult(List.of(), true, kept.sources, millisSince(start));
+    }
+    units.put(request.path, kept);
+    translations.put(request.path, translation);
+    for (Diagnostic diagnostic : found) {
+      diagnostics.add(diagnostic.path.equals(request.path) ? translation.toPage(diagnostic) : diagnostic);
+    }
     return new CompileResult(diagnostics, false, kept.sources, millisSince(start));
   }
 
@@ -199,7 +239,8 @@ public final class GroovyAnalyzer implements Analyzer {
         // a class the check reads cannot be loaded: no warnings rather than a failed compile
       }
       try {
-        diagnostics.addAll(conventions(request.lookup, request.path).problems(document.getAST()));
+        // a page's references are its tags' (GspViews), and Conventions reads a document as a Groovy artefact
+        diagnostics.addAll(GspViews.isGsp(request.path) ? List.of() : conventions(request.lookup, request.path).problems(document.getAST()));
       } catch (GroovyBugError | RuntimeException | LinkageError e) {
         // no hints rather than a failed compile
       }
@@ -268,7 +309,15 @@ public final class GroovyAnalyzer implements Analyzer {
   @Override
   public Location definition(String documentPath, int line, int column) {
     if (GspViews.isGsp(documentPath)) {
-      return gsp.definition(documentPath, line, column);
+      Location tag = gsp.definition(documentPath, line, column);
+      return tag != null ? tag : pageQuery(documentPath, line, column, (kept, at) -> {
+        Location found = Navigation.definition(kept.ast(), kept.uri, kept.lookup, conventions(kept.lookup, documentPath), kept.text, at[0], at[1]);
+        if (found == null || !found.path.equals(documentPath)) {
+          return found;
+        }
+        Range range = translations.get(documentPath).toPage(found.range);
+        return range == null ? null : new Location(documentPath, range);
+      });
     }
     Kept kept = units.get(documentPath);
     return kept == null ? null : Navigation.definition(kept.ast(), kept.uri, kept.lookup, conventions(kept.lookup, documentPath), kept.text, line, column);
@@ -277,14 +326,26 @@ public final class GroovyAnalyzer implements Analyzer {
   @Override
   public String hover(String documentPath, int line, int column) {
     if (GspViews.isGsp(documentPath)) {
-      return gsp.hover(documentPath, line, column);
+      String tag = gsp.hover(documentPath, line, column);
+      return tag != null ? tag : pageQuery(documentPath, line, column, (kept, at) -> Navigation.hover(kept.ast(), kept.uri, kept.lookup, kept.text, at[0], at[1]));
     }
     Kept kept = units.get(documentPath);
     return kept == null ? null : Navigation.hover(kept.ast(), kept.uri, kept.lookup, kept.text, line, column);
   }
 
+  /** A query at a page position inside page code, on the page's kept translation; null elsewhere. */
+  private <T> T pageQuery(String documentPath, int line, int column, BiFunction<Kept, int[], T> query) {
+    Kept kept = units.get(documentPath);
+    GspTranslation translation = translations.get(documentPath);
+    int[] at = kept == null || translation == null ? null : translation.toGroovy(line, column);
+    return at == null ? null : query.apply(kept, at);
+  }
+
   @Override
   public List<Symbol> symbols(String documentPath) {
+    if (GspViews.isGsp(documentPath)) {
+      return List.of();
+    }
     Kept kept = units.get(documentPath);
     return kept == null ? List.of() : Navigation.symbols(kept.ast(), kept.uri);
   }
@@ -454,6 +515,7 @@ public final class GroovyAnalyzer implements Analyzer {
   @Override
   public void forget(String documentPath) {
     gsp.forget(documentPath);
+    translations.remove(documentPath);
     units.remove(documentPath);
     completions.remove(documentPath);
   }
@@ -461,6 +523,7 @@ public final class GroovyAnalyzer implements Analyzer {
   @Override
   public void close() {
     units.clear();
+    translations.clear();
     completions.clear();
     gsp.clear();
     empty(output, true);

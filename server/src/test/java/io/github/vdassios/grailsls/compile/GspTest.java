@@ -230,7 +230,7 @@ abstract class GspTest {
     assertEquals(at(source, "def show(", 0)[0] + "", show.substring(show.lastIndexOf(':') + 1));
     assertEquals(at(source, "def index(", 0)[0] + "", index.substring(index.lastIndexOf(':') + 1), "an action with no controller is the view's controller's");
     assertNull(definitionOf(page, "other:link action=\"index", 20), "not a g: tag");
-    assertNull(definitionOf(page, "template=\"${", 12), "an expression");
+    assertNull(definitionOf(page, "template=\"${", 12), "a name no code declares, in an expression");
   }
 
   @Test
@@ -280,5 +280,53 @@ abstract class GspTest {
         "1:2 Unknown tag <" + app().namespace + ":nope>: no taglib of namespace '" + app().namespace + "' declares it",
         "2:2 <" + app().namespace + ":" + app().tag + "> needs the attribute 'wanted'",
         "3:2 <g:each> needs the attribute 'in'"), hints(compile(page(), page)));
+  }
+
+  /** The fixture's domain class named like its controller, in the package named like its taglib's namespace. */
+  private String domainType() {
+    return Character.toUpperCase(app().controller.charAt(0)) + app().controller.substring(1);
+  }
+
+  private static List<String> severities(CompileResult result) {
+    return result.diagnostics.stream().map(d -> (d.startLine + 1) + ":" + (d.startColumn + 1) + " " + d.severity).collect(Collectors.toList());
+  }
+
+  @Test
+  void expressionsCompileAsGrailsTranslatesThem() throws Exception {
+    String type = domainType();
+    String page = "<%@ page import=\"fixture." + app().namespace + "." + type + "\" %>\n<ul>\n<g:each in=\"${" + type + ".list()}\" var=\"x\">\n"
+        + "  <li title=\"${x}\">${x} <% out << " + type + ".count() %></li>\n</g:each>\n</ul>\n";
+    assertEquals(List.of(), hints(compile(page(), page)));
+    String domain = "domain/fixture/" + app().namespace + "/" + type + ".groovy";
+    String source = Files.readString(views.getParent().resolve(domain));
+    String classLine = at(source, "class " + type, 0)[0] + "";
+    assertEquals(domain + ":" + classLine, definitionOf(page, "${" + type, 2), "a class in an attribute's expression");
+    assertEquals(domain + ":" + classLine, definitionOf(page, "<< " + type, 4), "a class in a scriptlet");
+    String hover = query(page, ".list()", 2, (a, path, line, column) -> a.hover(path, line, column));
+    assertNotNull(hover);
+    assertTrue(hover.contains("list"), hover);
+    assertNull(query(page, "<ul>", 2, (a, path, line, column) -> a.hover(path, line, column)), "HTML is no code");
+  }
+
+  @Test
+  void expressionErrorsLandOnTheirPageColumns() throws Exception {
+    List<CompileResult> results = List.of(
+        compile(page(), "<p>\n  <span>${new NoSuchType()}</span>\n</p>\n"),
+        compile(page(), "<p>\n<g:if test=\"${a &&\n  new NoSuchType()}\">x</g:if>\n</p>\n"));
+    assertEquals(List.of("2:11 " + io.github.vdassios.grailsls.api.Diagnostic.ERROR), severities(results.get(0)));
+    assertTrue(results.get(0).diagnostics.get(0).message.contains("NoSuchType"), results.get(0).diagnostics.toString());
+    assertEquals(List.of("3:3 " + io.github.vdassios.grailsls.api.Diagnostic.ERROR), severities(results.get(1)), "a second line of the expression");
+    CompileResult syntax = compile(page(), "<p>${a.}</p>\n");
+    assertEquals(1, syntax.diagnostics.size(), syntax.diagnostics.toString());
+    // Groovy 4 reports it at the generated call's "(", outside the page's code: the page line is all that maps
+    assertEquals(0, syntax.diagnostics.get(0).startLine, syntax.diagnostics.toString());
+  }
+
+  @Test
+  void aPageTheGspCompilerRejectsHasOneError() throws Exception {
+    CompileResult result = compile(page(), "<p>\n<g:if test=\"${true}\">\n<p>x</p>\n");
+    assertEquals(1, result.diagnostics.size(), result.diagnostics.toString());
+    assertEquals(io.github.vdassios.grailsls.api.Diagnostic.ERROR, result.diagnostics.get(0).severity);
+    assertTrue(result.diagnostics.get(0).message.contains("if"), result.diagnostics.toString());
   }
 }
