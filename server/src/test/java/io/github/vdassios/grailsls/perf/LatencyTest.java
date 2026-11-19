@@ -285,6 +285,7 @@ class LatencyTest {
             hintsOut.append(page).append(':').append(d.startLine + 1).append(':').append(d.startColumn + 1).append(' ').append(d.message).append('\n');
           }
           count("pages with diagnostics", result.diagnostics.isEmpty() ? 0 : 1);
+          hoverPageCodeNames(context, request);
           completeInPageCode(context, request);
           context.forget(page.toString());
         }
@@ -603,7 +604,21 @@ class LatencyTest {
   }
 
   /** The name an expression starts with, as in "${name}" or "${name.x}": followed by a dot, a space or the brace. */
+  private static final Pattern UNTYPED = Pattern.compile("\\b(Object|def)\\b");
+
   private static final Pattern PAGE_EXPRESSION = Pattern.compile("(?<!\\\\)\\$\\{\\s*([A-Za-z_]\\w*)(?=[.}\\s])");
+
+  /** Hover at the name every expression of the compiled page starts with: how many names a hover types. */
+  private void hoverPageCodeNames(CompileContext context, CompileRequest compiled) throws Exception {
+    Matcher matcher = PAGE_EXPRESSION.matcher(compiled.text);
+    while (matcher.find()) {
+      int[] at = position(compiled.text, matcher.end(1) - 1);
+      String hover = context.query(a -> a.hover(compiled.path, at[0], at[1])).get(5, TimeUnit.MINUTES);
+      count("all page code names", 1);
+      count("all page code names: with a hover", hover != null ? 1 : 0);
+      count("all page code names: with a hover naming a type", hover != null && !UNTYPED.matcher(hover).find() ? 1 : 0);
+    }
+  }
 
   /**
    * Completion at the end of the page's first expression's name, on the compiled page; then after a dot: the one that
@@ -622,7 +637,10 @@ class LatencyTest {
     count("page code completions at a name: empty", names.items.isEmpty() ? 1 : 0);
     count("page code completions", 1);
     // the name: a model variable, a g:set or g:each variable, an implicit object, a tag called as a method, ...
-    count("page code names with a hover", context.query(a -> a.hover(compiled.path, at[0], at[1] - 1)).get(5, TimeUnit.MINUTES) != null ? 1 : 0);
+    String hover = context.query(a -> a.hover(compiled.path, at[0], at[1] - 1)).get(5, TimeUnit.MINUTES);
+    count("page code names with a hover", hover != null ? 1 : 0);
+    // typed: the hover names a type, not Object or def
+    count("page code names with a hover naming a type", hover != null && !UNTYPED.matcher(hover).find() ? 1 : 0);
     count("page code names with a definition", context.query(a -> a.definition(compiled.path, at[0], at[1] - 1)).get(5, TimeUnit.MINUTES) != null ? 1 : 0);
     boolean dotted = compiled.text.charAt(end) == '.';
     CompileRequest request = dotted ? compiled : new CompileRequest(compiled.path, compiled.text.substring(0, end) + "." + compiled.text.substring(end), compiled.lookup, () -> false);
