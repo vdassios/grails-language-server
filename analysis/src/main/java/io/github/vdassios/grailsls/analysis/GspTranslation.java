@@ -97,7 +97,16 @@ final class GspTranslation {
       return new GspTranslation(text, groovy, matrix, null, -1, line, definitions);
     } catch (InvocationTargetException e) {
       Throwable cause = e.getCause();
-      return new GspTranslation(text, null, null, String.valueOf(cause.getMessage()).trim(), lineOf(cause), -1, Map.of());
+      String message = String.valueOf(cause.getMessage()).trim();
+      int line = lineOf(cause);
+      // the parser gives the line where the token before the ${ starts, often lines above it
+      int unclosed = message.endsWith("Unclosed GSP expression") ? GspScanner.unclosedExpression(text) : -1;
+      if (unclosed >= 0) {
+        int at = (int) text.substring(0, unclosed).chars().filter(c -> c == '\n').count();
+        message = message.replaceFirst(":" + (line + 1) + "] ", ":" + (at + 1) + "] ");
+        line = at;
+      }
+      return new GspTranslation(text, null, null, message, line, -1, Map.of());
     } catch (ReflectiveOperationException | LinkageError | RuntimeException e) {
       return null;
     }

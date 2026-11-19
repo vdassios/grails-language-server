@@ -342,6 +342,16 @@ abstract class GspTest {
     assertTrue(result.diagnostics.get(0).message.contains("if"), result.diagnostics.toString());
   }
 
+  /** The parser gives the line where the text before the {@code ${} starts; the error belongs on the {@code ${}. */
+  @Test
+  void anUnclosedExpressionIsReportedOnItsLine() throws Exception {
+    CompileResult result = compile(page(), "<h1>Books</h1>\n<p>\n  ${book.title\n</p>\n");
+    assertEquals(1, result.diagnostics.size(), result.diagnostics.toString());
+    assertEquals(2, result.diagnostics.get(0).startLine, result.diagnostics.toString());
+    String message = result.diagnostics.get(0).message;
+    assertTrue(message.endsWith(":3] Unclosed GSP expression"), message);
+  }
+
   @Test
   void codeCompletesInsideExpressionsAndScriptlets() throws Exception {
     String type = domainType();

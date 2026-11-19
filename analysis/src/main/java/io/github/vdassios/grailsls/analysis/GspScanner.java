@@ -125,6 +125,20 @@ final class GspScanner {
     return regions;
   }
 
+  /** The offset of the first {@code ${} that no {@code }} closes, else -1. */
+  static int unclosedExpression(String text) {
+    GspScanner scanner = new GspScanner(text);
+    int i = 0;
+    while (i < text.length()) {
+      if (text.startsWith("${", i) && scanner.expressionClose(i + 2) < 0) {
+        return i;
+      }
+      int skipped = scanner.skipGsp(i);
+      i = skipped == i ? i + 1 : skipped;
+    }
+    return -1;
+  }
+
   /** The tag whose text holds an offset (its {@code <} up to its end, the end included), or null. */
   static Tag at(List<Tag> tags, int offset) {
     for (Tag tag : tags) {
@@ -179,8 +193,14 @@ final class GspScanner {
     return at < 0 ? text.length() : at + close.length();
   }
 
-  /** After the {@code }} that closes an expression whose body starts at {@code from}: braces balance, strings are skipped. */
+  /** After the {@code }} that closes an expression whose body starts at {@code from}, else the end of the text. */
   private int expressionEnd(int from) {
+    int close = expressionClose(from);
+    return close < 0 ? text.length() : close + 1;
+  }
+
+  /** The {@code }} that closes an expression whose body starts at {@code from}: braces balance, strings are skipped; -1 when none. */
+  private int expressionClose(int from) {
     int depth = 0;
     int i = from;
     while (i < text.length()) {
@@ -193,13 +213,13 @@ final class GspScanner {
         depth++;
       } else if (c == '}') {
         if (depth == 0) {
-          return i + 1;
+          return i;
         }
         depth--;
       }
       i++;
     }
-    return text.length();
+    return -1;
   }
 
   private int stringEnd(int start, char quote) {
