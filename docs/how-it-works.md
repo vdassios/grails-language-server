@@ -1,0 +1,30 @@
+# How it works
+
+- **Project model.** The server runs the project's Gradle wrapper with an init script and records, per module: source roots, compile classpath, class directories, sibling modules, the Groovy version and the `.java` files that are compiled together with Groovy. Results are cached on disk, keyed by a hash of the build files. Resolution runs in the background with a timeout; `grails/reloadProject` runs it again.
+- **Two layers.** `server` (LSP endpoints, project model, scheduling) has no Groovy dependency. `analysis` is compiled against the Groovy 2.5 API and runs inside a class loader per module source set, next to the project's own jars, so the project's own Groovy and AST transformations compile its code. Only the plain types of `api` cross between them.
+- **Per-file compile.** Each open file is compiled alone, to canonicalization; a file with `@CompileStatic` or `@GrailsCompileStatic` code goes on to instruction selection, so the static type checker's errors are reported and its inferred types (closure parameters, flow typing) feed completion and hover. An edit recompiles the file after 300 ms and cancels a compile still running. Classes it uses are pulled in from source through a declaration index of the source roots (exact names, nested types included) and added under their file paths, which is how Grails recognizes artefacts. Jars, sibling modules' class directories and the compiled classes of the module's own `.java` files come from the loader; the rest of the module's build output never does. Extension modules of the main source set (for tests) and of sibling modules are served too, as Gradle's classpath would: their descriptors from the resource roots, their classes from the build output.
+- **Symbol index.** In the background, each source file is parsed alone (no class resolved, no transformation run), in batches between compiles, for workspace symbols and the completion of types not imported yet. It follows saves and file changes.
+- **Loaders are released.** A new project model closes every module loader; the server stops Groovy and the JDK's bean introspection from keeping them alive.
+
+## Trust
+
+Resolving the project runs its Gradle build scripts, and compiling a Grails project runs its AST transformations. Both execute project code inside the server. The server does neither until the client sends `initializationOptions.trusted = true`. When compiling, `@Grab` is disabled (`groovy.grape.enable=false`) and `@ASTTest` annotations are removed before they run.
+
+## Protocol
+
+| Message | Direction | Payload |
+|---|---|---|
+| `grails/status` | server to client | `{ "state": "resolving" \| "indexing" \| "ready" \| "failed", "message"?: string }` |
+| `grails/reloadProject` | client to server (request) | none; re-resolves the project, ignoring the cache |
+| `grails/downloadSources` | client to server (request) | none; result `{ "available": number, "unavailable": number, "failed": number, "message"?: string }`: libraries with a sources jar on disk now, libraries that publish none, libraries whose sources could not be fetched, and the reason when something failed or nothing ran (untrusted workspace, Gradle error or timeout) |
+
+The server logs each startup stage once with `window/logMessage`, as `startup: <stage> after <ms> ms` (stages: model resolved, declarations indexed, symbols indexed, first diagnostics).
+
+Initialization options: `trusted` (boolean, required to do anything), `gradle.timeoutSeconds` (default 300), `cacheDir` (default `$XDG_CACHE_HOME/grails-language-server`, else `~/.cache/grails-language-server`).
+
+The server exits when its client goes away, even if the client never sends `exit`: when its standard input ends, or when the process named by `processId` in `initialize` ends. It kills a running Gradle first. The exit code is 0 if `shutdown` came first, else 1. So an editor need not wait for the server when it quits.
+
+## Known limits
+
+- **JDK 17 with Groovy 4:** after the project model changes, a closed module loader can stay in memory when the server runs on JDK 17: JDK 17 keeps method-handle type caches that refer to the loader's classes (seen on a Groovy 4 project). JDK 19 and later do not. A Grails 7 project on a recent Groovy 4 can run the server on JDK 21 (see the table under [Install](editors.md#install)).
+- **Heap:** the JVM's defaults apply (a quarter of the RAM at most). Give `-Xmx` before `-jar` to cap it; a large multi-module project can use 2 GB or more after compiling many files.
