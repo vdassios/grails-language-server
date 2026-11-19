@@ -6,7 +6,9 @@
 
 A [language server](https://microsoft.github.io/language-server-protocol/) for Groovy and Grails that compiles your code with your project's own Groovy and Grails. The members Grails adds at compile time (`render`, `params`, `save`, `get`, dynamic finders, ...) are visible to completion, hover and navigation, in any LSP editor.
 
-<!-- Demo GIF: docs/media/ (phase 21b). -->
+![Neovim with grails-language-server: a GORM finder completed step by step and read on hover, a finder warning, a view name followed to its page, and a model variable completed in the page](docs/media/server.gif)
+
+Recorded in Neovim on [`demo/bookstore`](demo/), a small Grails 7 app you can try it on.
 
 ## Features
 
