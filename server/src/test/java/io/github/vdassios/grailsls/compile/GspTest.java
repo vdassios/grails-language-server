@@ -68,9 +68,9 @@ abstract class GspTest {
     views = Path.of(model.module(":app").projectDir, "grails-app/views");
   }
 
-  /** {@code ns} and {@code tag} stand for the fixture taglib's namespace and tag. */
+  /** {@code ns:}, {@code NS.} and {@code TAG} stand for the fixture taglib's namespace and tag. */
   private String fill(String text) {
-    return text.replace("ns:", app().namespace + ":").replace("TAG", app().tag);
+    return text.replace("ns:", app().namespace + ":").replace("NS.", app().namespace + ".").replace("TAG", app().tag);
   }
 
   private Path page() {
@@ -96,10 +96,15 @@ abstract class GspTest {
   }
 
   private List<Completion> completion(String text, String needle) throws Exception {
+    return completion(page(), text, needle);
+  }
+
+  /** Completion right after {@code needle} in {@code text}, the unsaved text of the file at {@code path}. */
+  private List<Completion> completion(Path path, String text, String needle) throws Exception {
     String filled = fill(text);
     int[] p = at(filled, fill(needle), fill(needle).length());
-    CompileContext context = workspace.contextOf(page());
-    CompileRequest request = new CompileRequest(page().toString(), filled, workspace.lookup(context, x -> null), () -> false);
+    CompileContext context = workspace.contextOf(path);
+    CompileRequest request = new CompileRequest(path.toString(), filled, workspace.lookup(context, x -> null), () -> false);
     return context.query(a -> a.completion(request, p[0], p[1])).get(60, TimeUnit.SECONDS).items;
   }
 
@@ -108,10 +113,15 @@ abstract class GspTest {
   }
 
   private <T> T query(String text, String needle, int offset, QueryAt<T> query) throws Exception {
+    return query(page(), text, needle, offset, query);
+  }
+
+  /** A query at {@code needle} plus {@code offset}, after compiling {@code text} as the file at {@code path}. */
+  private <T> T query(Path path, String text, String needle, int offset, QueryAt<T> query) throws Exception {
     String filled = fill(text);
-    compile(page(), filled);
+    compile(path, filled);
     int[] p = at(filled, fill(needle), offset);
-    return workspace.contextOf(page()).query(a -> query.apply(a, page().toString(), p[0], p[1])).get(60, TimeUnit.SECONDS);
+    return workspace.contextOf(path).query(a -> query.apply(a, path.toString(), p[0], p[1])).get(60, TimeUnit.SECONDS);
   }
 
   private interface QueryAt<T> {
@@ -328,5 +338,106 @@ abstract class GspTest {
     assertEquals(1, result.diagnostics.size(), result.diagnostics.toString());
     assertEquals(io.github.vdassios.grailsls.api.Diagnostic.ERROR, result.diagnostics.get(0).severity);
     assertTrue(result.diagnostics.get(0).message.contains("if"), result.diagnostics.toString());
+  }
+
+  @Test
+  void codeCompletesInsideExpressionsAndScriptlets() throws Exception {
+    String type = domainType();
+    String imports = "<%@ page import=\"fixture." + app().namespace + "." + type + "\" %>\n";
+    List<String> statics = labels(completion(imports + "<p>${" + type + ".li}</p>\n", "${" + type + ".li"));
+    assertTrue(statics.contains("list"), statics.toString());
+    String declared = imports + "<% def b = new " + type + "() %>\n";
+    List<String> dot = labels(completion(declared + "<p>${b.}</p>\n", "${b."));
+    assertTrue(dot.containsAll(List.of("save", "validate")), "after a dot: " + dot);
+    List<String> open = labels(completion(declared + "<p>${b.\n</p>\n", "${b."));
+    assertTrue(open.containsAll(List.of("save", "validate")), "an expression not closed yet: " + open);
+    List<String> attribute = labels(completion(declared + "<g:if test=\"${b.va}\">x</g:if>\n", "${b.va"));
+    assertTrue(attribute.contains("validate"), "in an attribute's expression: " + attribute);
+    List<String> scriptlet = labels(completion(declared + "<% b.sa %>\n", "<% b.sa"));
+    assertTrue(scriptlet.contains("save"), "in a scriptlet: " + scriptlet);
+    Completion save = completion(declared + "<p>${b.sa}</p>\n", "${b.sa").stream().filter(c -> c.label.equals("save")).findFirst().orElseThrow();
+    assertTrue(save.additionalEdits.isEmpty());
+    CompletionDetail detail = workspace.contextOf(page()).query(a -> a.resolveCompletion(page().toString(), save.id)).get(60, TimeUnit.SECONDS);
+    assertNotNull(detail);
+    assertTrue(detail.detail.contains("save"), detail.detail);
+    assertEquals(List.of("in", "status"), labels(completion("<g:each var=\"b\" >", "<g:each var=\"b\" ")), "tag attributes as before");
+  }
+
+  @Test
+  void signatureHelpInsidePageCode() throws Exception {
+    String type = domainType();
+    String page = "<%@ page import=\"fixture." + app().namespace + "." + type + "\" %>\n<p>${" + type + ".get(}</p>\n";
+    int[] p = at(page, ".get(", 5);
+    CompileContext context = workspace.contextOf(page());
+    CompileRequest request = new CompileRequest(page().toString(), page, workspace.lookup(context, x -> null), () -> false);
+    io.github.vdassios.grailsls.api.SignatureHelp help = context.query(a -> a.signatureHelp(request, p[0], p[1])).get(60, TimeUnit.SECONDS);
+    assertNotNull(help);
+    assertTrue(help.signatures.stream().anyMatch(s -> s.label.contains("get(")), help.signatures.toString());
+  }
+
+  @Test
+  void implicitObjectsAreTypedAsGrailsBindsThem() throws Exception {
+    String page = "<p>${params.int('x')} ${request.contextPath} ${session.id} ${flash.now} ${application.contextPath} ${webRequest.params}</p>\n"
+        + "<% out << pageScope.variables; out << grailsApplication.config; out << controllerName.size() %>\n";
+    assertEquals(List.of(), hints(compile(page(), page)));
+    Map<String, String> types = new TreeMap<>(Map.of("params", "GrailsParameterMap", "request", "HttpServletRequest", "session", "HttpSession", "flash", "FlashScope",
+        "application", "ServletContext", "webRequest", "GrailsWebRequest", "pageScope", "GroovyPageBinding", "grailsApplication", "GrailsApplication", "controllerName", "String"));
+    for (Map.Entry<String, String> entry : types.entrySet()) {
+      String hover = query(page, entry.getKey() + ".", 1, (a, path, line, column) -> a.hover(path, line, column));
+      assertNotNull(hover, entry.getKey());
+      assertTrue(hover.contains(entry.getValue()), entry.getKey() + ": " + hover);
+    }
+    assertNull(definitionOf(page, "params.", 1), "declared by the translation, not on the page");
+    List<String> members = labels(completion("<p>${params.}</p>\n", "${params."));
+    assertTrue(members.containsAll(List.of("int", "long", "list")), members.toString());
+    List<String> names = labels(completion("<p>${para}</p>\n", "${para"));
+    assertTrue(names.contains("params"), names.toString());
+  }
+
+  @Test
+  void tagsCalledAsMethodsInPageCode() throws Exception {
+    String page = fill("<p>${g.createLink(action: 'index')} ${NS.TAG(wanted: 'a')} ${message(code: 'x')}</p>\n");
+    String link = query(page, "createLink", 2, (a, path, line, column) -> a.hover(path, line, column));
+    assertNotNull(link);
+    assertTrue(link.contains("<g:createLink>"), link);
+    String bare = query(page, "message(", 2, (a, path, line, column) -> a.hover(path, line, column));
+    assertNotNull(bare);
+    assertTrue(bare.contains("<g:message>"), "a call with no receiver is a g: tag: " + bare);
+    String own = query(page, fill("NS.TAG"), app().namespace.length() + 2, (a, path, line, column) -> a.hover(path, line, column));
+    assertTrue(own != null && own.contains("`wanted` (required)"), own);
+    Location location = query(page, fill("NS.TAG"), app().namespace.length() + 2, (a, path, line, column) -> a.definition(path, line, column));
+    assertNotNull(location);
+    assertTrue(location.path.replace('\\', '/').endsWith("grails-app/" + app().taglib), location.path);
+    List<String> g = labels(completion("<p>${g.}</p>\n", "${g."));
+    assertTrue(g.containsAll(List.of("createLink", "link", "message", "formatDate")), g.toString());
+    assertTrue(!g.contains("each") && !g.contains("if"), "the GSP compiler's tags are no methods: " + g);
+    assertEquals(List.of(app().tag), labels(completion("<p>${NS.}</p>\n", "${NS.")));
+    List<String> bareNames = labels(completion("<p>${messa}</p>\n", "${messa"));
+    assertTrue(bareNames.contains("message"), bareNames.toString());
+    List<String> keys = labels(completion("<p>${g.link(contr)}</p>\n", "${g.link(contr"));
+    assertTrue(keys.contains("controller"), keys.toString());
+    List<Completion> items = completion("<p>${g.createL}</p>\n", "${g.createL");
+    Completion createLink = items.stream().filter(c -> c.label.equals("createLink")).findFirst().orElseThrow();
+    CompletionDetail detail = workspace.contextOf(page()).query(a -> a.resolveCompletion(page().toString(), createLink.id)).get(60, TimeUnit.SECONDS);
+    assertTrue(detail.documentation.contains("<g:createLink>"), detail.documentation);
+  }
+
+  @Test
+  void tagsCalledAsMethodsInGroovy() throws Exception {
+    Path controller;
+    try (var files = Files.walk(views.getParent().resolve("controllers"))) {
+      controller = files.filter(f -> f.getFileName().toString().equals(controllerFile())).findFirst().orElseThrow();
+    }
+    String text = Files.readString(controller);
+    String call = "\n    def linked() {\n        [url: g.createLink(action: 'index'), own: NS.TAG(wanted: 'a')]\n    }\n}";
+    String edited = fill(text.substring(0, text.lastIndexOf('}')) + call);
+    String hover = query(controller, edited, "createLink", 2, (a, path, line, column) -> a.hover(path, line, column));
+    assertTrue(hover != null && hover.contains("<g:createLink>"), hover);
+    Location location = query(controller, edited, fill("NS.TAG"), app().namespace.length() + 2, (a, path, line, column) -> a.definition(path, line, column));
+    assertNotNull(location);
+    assertTrue(location.path.replace('\\', '/').endsWith("grails-app/" + app().taglib), location.path);
+    String typing = fill(text.substring(0, text.lastIndexOf('}')) + "\n    def linked() {\n        g.createL\n    }\n}");
+    List<String> names = labels(completion(controller, typing, "g.createL"));
+    assertTrue(names.contains("createLink"), names.toString());
   }
 }

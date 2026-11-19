@@ -78,8 +78,12 @@ public final class GroovyAnalyzer implements Analyzer {
    * file grew with every artefact compiled and was read and written again by each compile.
    */
   private final Path output;
+  /** The taglib index, for GSP tags and tags called as methods. */
+  private final Taglibs taglibs;
   /** GSP pages: tags and taglibs. */
   private final GspViews gsp;
+  /** {@link GspTranslation#implicitObjects} of this loader, once read. */
+  private volatile String implicitObjects;
   /** The translation of each GSP page whose generated Groovy is kept in {@link #units}. */
   private final Map<String, GspTranslation> translations = new ConcurrentHashMap<>();
 
@@ -91,7 +95,8 @@ public final class GroovyAnalyzer implements Analyzer {
   GroovyAnalyzer(ClassLoader parent) {
     this.parent = parent;
     this.lateTransforms = new LateTransforms(parent);
-    this.gsp = new GspViews(new Taglibs((path, text) -> parserCache.parsing(() -> parsedClasses(path, text))), this::conventions);
+    this.taglibs = new Taglibs((path, text) -> parserCache.parsing(() -> parsedClasses(path, text)));
+    this.gsp = new GspViews(taglibs, this::conventions);
     try {
       this.output = Files.createTempDirectory("grails-ls-output");
     } catch (IOException e) {
@@ -132,8 +137,9 @@ public final class GroovyAnalyzer implements Analyzer {
     long start = System.nanoTime();
     units.remove(request.path);
     translations.remove(request.path);
+    completions.remove(request.path);
     CompileResult tags = gsp.compile(request);
-    GspTranslation translation = GspTranslation.of(parent, request.path, request.text);
+    GspTranslation translation = translate(request.path, request.text);
     if (translation == null) {
       return tags;
     }
@@ -157,6 +163,16 @@ public final class GroovyAnalyzer implements Analyzer {
       diagnostics.add(diagnostic.path.equals(request.path) ? translation.toPage(diagnostic) : diagnostic);
     }
     return new CompileResult(diagnostics, false, kept.sources, millisSince(start));
+  }
+
+  /** A page's translation, with the implicit objects typed; null without Grails's page parser. */
+  private GspTranslation translate(String path, String text) {
+    String declarations = implicitObjects;
+    if (declarations == null) {
+      declarations = GspTranslation.implicitObjects(parent);
+      implicitObjects = declarations;
+    }
+    return GspTranslation.of(parent, path, text, declarations);
   }
 
   /** Compiles a document to its last phase ({@link #lastPhase}), each phase only if the request is not cancelled. */
@@ -311,6 +327,10 @@ public final class GroovyAnalyzer implements Analyzer {
     if (GspViews.isGsp(documentPath)) {
       Location tag = gsp.definition(documentPath, line, column);
       return tag != null ? tag : pageQuery(documentPath, line, column, (kept, at) -> {
+        Taglibs.Tag called = tagAt(kept, true, at[0], at[1]);
+        if (called != null) {
+          return called.docs().location;
+        }
         Location found = Navigation.definition(kept.ast(), kept.uri, kept.lookup, conventions(kept.lookup, documentPath), kept.text, at[0], at[1]);
         if (found == null || !found.path.equals(documentPath)) {
           return found;
@@ -320,17 +340,38 @@ public final class GroovyAnalyzer implements Analyzer {
       });
     }
     Kept kept = units.get(documentPath);
-    return kept == null ? null : Navigation.definition(kept.ast(), kept.uri, kept.lookup, conventions(kept.lookup, documentPath), kept.text, line, column);
+    if (kept == null) {
+      return null;
+    }
+    Taglibs.Tag called = tagAt(kept, false, line, column);
+    return called != null ? called.docs().location : Navigation.definition(kept.ast(), kept.uri, kept.lookup, conventions(kept.lookup, documentPath), kept.text, line, column);
+  }
+
+  /** The tag a call at a position of a kept compile names ({@link TagCalls}), or null. */
+  private Taglibs.Tag tagAt(Kept kept, boolean page, int line, int column) {
+    ASTNode node = kept.ast().getNodeAtLineAndColumn(kept.uri, line, column);
+    return node == null ? null : tagCalls(kept.lookup, page).at(node, kept.ast());
+  }
+
+  private TagCalls tagCalls(SourceLookup lookup, boolean page) {
+    return new TagCalls(() -> taglibs.all(lookup), page);
   }
 
   @Override
   public String hover(String documentPath, int line, int column) {
     if (GspViews.isGsp(documentPath)) {
       String tag = gsp.hover(documentPath, line, column);
-      return tag != null ? tag : pageQuery(documentPath, line, column, (kept, at) -> Navigation.hover(kept.ast(), kept.uri, kept.lookup, kept.text, at[0], at[1]));
+      return tag != null ? tag : pageQuery(documentPath, line, column, (kept, at) -> {
+        Taglibs.Tag called = tagAt(kept, true, at[0], at[1]);
+        return called != null ? GspViews.markdown(called) : Navigation.hover(kept.ast(), kept.uri, kept.lookup, kept.text, at[0], at[1]);
+      });
     }
     Kept kept = units.get(documentPath);
-    return kept == null ? null : Navigation.hover(kept.ast(), kept.uri, kept.lookup, kept.text, line, column);
+    if (kept == null) {
+      return null;
+    }
+    Taglibs.Tag called = tagAt(kept, false, line, column);
+    return called != null ? GspViews.markdown(called) : Navigation.hover(kept.ast(), kept.uri, kept.lookup, kept.text, line, column);
   }
 
   /** A query at a page position inside page code, on the page's kept translation; null elsewhere. */
@@ -353,22 +394,23 @@ public final class GroovyAnalyzer implements Analyzer {
   @Override
   public CompletionList completion(CompileRequest request, int line, int column) {
     if (GspViews.isGsp(request.path)) {
-      return gsp.completion(request, line, column);
+      return pageCompletion(request, line, column);
     }
     ClasspathTypes types = sourceTypes(request.lookup);
     Kept kept = current(request);
     String typed = lineBefore(request.text, line, column);
     Conventions conventions = conventions(request.lookup, request.path);
-    Completions found = kept == null ? null : Completions.at(kept.ast(), kept.uri, types, conventions, line, column, typed);
+    TagCalls tags = tagCalls(request.lookup, false);
+    Completions found = kept == null ? null : Completions.at(kept.ast(), kept.uri, types, conventions, tags, line, column, typed);
     if (found == null) {
       kept = compileCopy(request, line, column, Completions.placeholder(typed));
-      found = kept == null ? null : Completions.at(kept.ast(), kept.uri, types, conventions, line, column, typed);
+      found = kept == null ? null : Completions.at(kept.ast(), kept.uri, types, conventions, tags, line, column, typed);
     }
     String close = Completions.closeString(typed);
     if (found == null && close != null) {
       // inside a string not closed yet: render(view: 'sh
       kept = compileCopy(request, line, column, Completions.placeholder(typed) + close);
-      found = kept == null ? null : Completions.at(kept.ast(), kept.uri, types, conventions, line, column, typed);
+      found = kept == null ? null : Completions.at(kept.ast(), kept.uri, types, conventions, tags, line, column, typed);
     }
     if (found == null) {
       completions.remove(request.path);
@@ -378,12 +420,97 @@ public final class GroovyAnalyzer implements Analyzer {
     return found.list();
   }
 
+  /**
+   * In a page: tag, attribute and attribute value completion ({@link GspViews}); else, inside page code, completion on
+   * the page's translation, at the generated position. The page is compiled again unless the kept compile is of its
+   * text; when that finds nothing, with a name typed at the position ({@code ${book.}}), then with the expression closed
+   * too ({@code ${book.} without its brace}).
+   */
+  private CompletionList pageCompletion(CompileRequest request, int line, int column) {
+    completions.remove(request.path);
+    CompletionList tags = gsp.completion(request, line, column);
+    if (!tags.items.isEmpty()) {
+      return tags;
+    }
+    ClasspathTypes types = sourceTypes(request.lookup);
+    TagCalls tagCalls = tagCalls(request.lookup, true);
+    String placeholder = Completions.placeholder(lineBefore(request.text, line, column));
+    for (String insert : new String[] { "", placeholder, placeholder + "}" }) {
+      PageCompile compiled = pageCompile(request, line, column, insert);
+      if (compiled == null) {
+        continue;
+      }
+      int[] at = compiled.at;
+      Completions found = Completions.at(compiled.kept.ast(), compiled.kept.uri, types, null, tagCalls, at[0], at[1], lineBefore(compiled.translation.groovy, at[0], at[1]));
+      if (found != null) {
+        completions.put(request.path, new LastCompletion(found, compiled.kept));
+        return onPage(found.list(), compiled.translation);
+      }
+    }
+    return CompletionList.EMPTY;
+  }
+
+  /** Completion items of a translation on its page: replaced ranges mapped back, import edits left out. */
+  private static CompletionList onPage(CompletionList list, GspTranslation translation) {
+    List<Completion> items = new ArrayList<>();
+    for (Completion item : list.items) {
+      Range replace = null;
+      if (item.replace != null) {
+        int[] start = translation.toPage(item.replace.startLine, item.replace.startColumn);
+        int[] end = translation.toPage(item.replace.endLine, item.replace.endColumn);
+        replace = start == null || end == null ? null : new Range(start[0], start[1], end[0], end[1]);
+      }
+      items.add(new Completion(item.label, item.kind, item.detail, item.sortText, replace, List.of(), item.id));
+    }
+    return new CompletionList(items, list.incomplete);
+  }
+
+  /**
+   * The page with text inserted at a position, translated and compiled, and the position in the generated text; the
+   * kept compile when nothing is inserted and it is of the page's text. Null when the position is outside page code,
+   * the page does not translate, or the compile is cancelled.
+   */
+  private PageCompile pageCompile(CompileRequest request, int line, int column, String insert) {
+    Kept kept = units.get(request.path);
+    GspTranslation translation = translations.get(request.path);
+    if (!insert.isEmpty() || kept == null || translation == null || !translation.text.equals(request.text)) {
+      int offset = offset(request.text, line, column);
+      String text = request.text.substring(0, offset) + insert + request.text.substring(offset);
+      translation = translate(request.path, text);
+      if (translation == null || translation.groovy == null || translation.toGroovy(line, column) == null) {
+        return null;
+      }
+      kept = run(new CompileRequest(request.path, translation.groovy, request.lookup, request.cancelled), new ArrayList<>());
+      if (kept.cancelled) {
+        return null;
+      }
+    }
+    int[] at = translation.toGroovy(line, column);
+    return at == null ? null : new PageCompile(kept, translation, at);
+  }
+
+  private static final class PageCompile {
+    final Kept kept;
+    final GspTranslation translation;
+    final int[] at;
+
+    PageCompile(Kept kept, GspTranslation translation, int[] at) {
+      this.kept = kept;
+      this.translation = translation;
+      this.at = at;
+    }
+  }
+
   @Override
   public CompletionDetail resolveCompletion(String documentPath, int id) {
-    if (GspViews.isGsp(documentPath)) {
+    LastCompletion last = completions.get(documentPath);
+    if (GspViews.isGsp(documentPath) && last == null) {
       return gsp.resolveCompletion(documentPath, id);
     }
-    LastCompletion last = completions.get(documentPath);
+    Taglibs.Tag tag = last == null ? null : last.completions.tag(id);
+    if (tag != null) {
+      return new CompletionDetail(tag.owner, GspViews.markdown(tag));
+    }
     ASTNode declaration = last == null ? null : last.completions.declaration(id);
     return declaration == null ? null : Completions.detail(declaration, last.compile.ast(), last.compile.lookup);
   }
@@ -391,6 +518,14 @@ public final class GroovyAnalyzer implements Analyzer {
   @Override
   public SignatureHelp signatureHelp(CompileRequest request, int line, int column) {
     if (GspViews.isGsp(request.path)) {
+      // an unfinished call, "${link(", does not translate to code that parses
+      for (String insert : new String[] { "", ")", ")}" }) {
+        PageCompile compiled = pageCompile(request, line, column, insert);
+        SignatureHelp help = compiled == null ? null : Signatures.at(compiled.kept.ast(), compiled.kept.uri, compiled.kept.lookup, compiled.at[0], compiled.at[1]);
+        if (help != null) {
+          return help;
+        }
+      }
       return null;
     }
     Kept kept = current(request);

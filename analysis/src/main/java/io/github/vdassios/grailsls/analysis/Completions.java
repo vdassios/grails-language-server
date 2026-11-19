@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -52,15 +53,18 @@ public final class Completions {
   private final ASTNodeVisitor ast;
   private final ClasspathTypes classpath;
   private final Conventions conventions;
+  /** Tags called as methods, or null. */
+  private final TagCalls tags;
   private final List<Completion> items = new ArrayList<>();
-  /** The declaration behind each item with an id, by id. */
-  private final List<ASTNode> declarations = new ArrayList<>();
+  /** The declaration behind each item with an id, by id: a node, or a tag ({@link Taglibs.Tag}). */
+  private final List<Object> declarations = new ArrayList<>();
   private boolean incomplete;
 
-  private Completions(ASTNodeVisitor ast, ClasspathTypes classpath, Conventions conventions) {
+  private Completions(ASTNodeVisitor ast, ClasspathTypes classpath, Conventions conventions, TagCalls tags) {
     this.ast = ast;
     this.classpath = classpath;
     this.conventions = conventions;
+    this.tags = tags;
   }
 
   /**
@@ -71,11 +75,16 @@ public final class Completions {
    * @param typed the text of the line before the position
    */
   public static Completions at(ASTNodeVisitor ast, URI document, ClasspathTypes classpath, Conventions conventions, int line, int column, String typed) {
+    return at(ast, document, classpath, conventions, null, line, column, typed);
+  }
+
+  /** As {@link #at(ASTNodeVisitor, URI, ClasspathTypes, Conventions, int, int, String)}, with tags called as methods. */
+  static Completions at(ASTNodeVisitor ast, URI document, ClasspathTypes classpath, Conventions conventions, TagCalls tags, int line, int column, String typed) {
     ASTNode offsetNode = ast.getNodeAtLineAndColumn(document, line, column);
     if (offsetNode == null) {
       return null;
     }
-    Completions completions = new Completions(ast, classpath, conventions);
+    Completions completions = new Completions(ast, classpath, conventions, tags);
     completions.populate(offsetNode, line, column, typed);
     return completions;
   }
@@ -112,7 +121,14 @@ public final class Completions {
 
   /** The declaration behind an item, or null. */
   public ASTNode declaration(int id) {
-    return id >= 0 && id < declarations.size() ? declarations.get(id) : null;
+    Object declaration = id >= 0 && id < declarations.size() ? declarations.get(id) : null;
+    return declaration instanceof ASTNode ? (ASTNode) declaration : null;
+  }
+
+  /** The tag behind an item, or null. */
+  Taglibs.Tag tag(int id) {
+    Object declaration = id >= 0 && id < declarations.size() ? declarations.get(id) : null;
+    return declaration instanceof Taglibs.Tag ? (Taglibs.Tag) declaration : null;
   }
 
   /** Signature and documentation of a declaration. */
@@ -149,10 +165,16 @@ public final class Completions {
           Gorm.properties(queried).keySet().forEach(property -> add(property, Completion.Kind.FIELD, null, prefix, names));
         }
         fromScope(variable, prefix);
+        if (tags != null) {
+          tags(tags.pageTags(), prefix);
+        }
         // a key of named arguments GORM reads: title nullable: true, Book.list(max: 10); after the names in scope
         Set<String> keys = new HashSet<>();
         List<String> named = new ArrayList<>(Gorm.argumentKeys(variable, ast));
         named.addAll(Conventions.argumentKeys(variable, ast));
+        if (tags != null) {
+          named.addAll(tags.argumentKeys(variable, ast));
+        }
         for (String key : named) {
           if (key.startsWith(prefix) && keys.add(key)) {
             items.add(new Completion(key, Completion.Kind.FIELD, null, "~" + key, null, List.of(), -1));
@@ -231,7 +253,11 @@ public final class Completions {
   private void fromMethodCallExpression(MethodCallExpression call, int line, int column) {
     Range range = NodeRanges.of(call.getMethod());
     if (range != null) {
-      fromReceiver(call.getObjectExpression(), call, prefix(call.getMethodAsString(), range, line, column));
+      String prefix = prefix(call.getMethodAsString(), range, line, column);
+      fromReceiver(call.getObjectExpression(), call, prefix);
+      if (tags != null && call.isImplicitThis()) {
+        tags(tags.pageTags(), prefix);
+      }
     }
   }
 
@@ -257,6 +283,11 @@ public final class Completions {
 
   /** Members of the receiver's type: static ones for a class ({@code Book.}), the others for a value. */
   private void fromReceiver(Expression receiver, ASTNode expression, String prefix) {
+    Map<String, Taglibs.Tag> namespace = tags == null ? null : tags.namespaceOf(receiver);
+    if (namespace != null) {
+      tags(namespace, prefix);
+      return;
+    }
     ClassNode type = GroovyASTUtils.getTypeOfReceiver(receiver, expression, ast);
     if (type != null) {
       if (receiver instanceof ClassExpression && Gorm.isDomain(type)) {
@@ -276,6 +307,15 @@ public final class Completions {
       Gorm.Finder finder = Gorm.finder(domain, name);
       boolean whole = finder != null && finder.name.problems.isEmpty();
       items.add(new Completion(name, Completion.Kind.METHOD, null, "0" + name, null, List.of(), whole ? remember(finder.method()) : -1));
+    }
+  }
+
+  /** Tags called as methods ({@code g.li}, or {@code mess} in page code): after the members, by name. */
+  private void tags(Map<String, Taglibs.Tag> namespace, String prefix) {
+    for (Taglibs.Tag tag : namespace.values()) {
+      if (tag.name.startsWith(prefix) && tag.owner != null) {
+        items.add(new Completion(tag.name, Completion.Kind.METHOD, tag.simpleOwner(), null, null, List.of(), remember(tag)));
+      }
     }
   }
 
@@ -389,7 +429,7 @@ public final class Completions {
     items.add(new Completion(name, kind, null, null, null, List.of(), declaration == null ? -1 : remember(declaration)));
   }
 
-  private int remember(ASTNode declaration) {
+  private int remember(Object declaration) {
     declarations.add(declaration);
     return declarations.size() - 1;
   }

@@ -31,6 +31,8 @@ import io.github.vdassios.grailsls.api.Range;
 final class GspTranslation {
   static final String PARSER = "org.grails.gsp.compiler.GroovyPageParser";
 
+  /** The page's text. */
+  final String text;
   /** The generated Groovy, or null when the parser rejected the page ({@link #error}). */
   final String groovy;
   /** The parser's message for a page it rejects (a tag not closed, a bad directive), and its 0-based page line. */
@@ -43,7 +45,8 @@ final class GspTranslation {
   private final Lines page;
   private final Lines generated;
 
-  private GspTranslation(String text, String groovy, int[] matrix, String error, int errorLine) {
+  private GspTranslation(String text, String groovy, int[] matrix, String error, int errorLine, int declarationLine) {
+    this.text = text;
     this.groovy = groovy;
     this.error = error;
     this.errorLine = errorLine;
@@ -51,15 +54,18 @@ final class GspTranslation {
     this.generated = new Lines(groovy == null ? "" : groovy);
     this.pageLines = new int[generated.count()];
     for (int i = 0; i < pageLines.length; i++) {
-      pageLines[i] = matrix != null && i < matrix.length && matrix[i] > 0 ? Math.min(matrix[i] - 1, page.count() - 1) : -1;
+      pageLines[i] = matrix != null && i < matrix.length && matrix[i] > 0 && i != declarationLine ? Math.min(matrix[i] - 1, page.count() - 1) : -1;
     }
     if (groovy != null) {
       match(text);
     }
   }
 
-  /** The page translated with the parser on {@code loader}; null when the loader has no GSP parser. */
-  static GspTranslation of(ClassLoader loader, String path, String text) {
+  /**
+   * The page translated with the parser on {@code loader}, with {@code declarations} ({@link #implicitObjects}) added
+   * to the generated class; null when the loader has no GSP parser.
+   */
+  static GspTranslation of(ClassLoader loader, String path, String text, String declarations) {
     Class<?> parser;
     try {
       parser = Class.forName(PARSER, true, loader);
@@ -72,12 +78,73 @@ final class GspTranslation {
       Writer out = new StringWriter();
       parser.getMethod("generateGsp", Writer.class).invoke(instance, out);
       int[] matrix = (int[]) parser.getMethod("getLineNumberMatrix").invoke(instance);
-      return new GspTranslation(text, out.toString(), matrix, null, -1);
+      String groovy = out.toString();
+      // on the line of the class's init(), after the page's code: no generated line moves
+      int init = groovy.lastIndexOf(INIT);
+      int line = -1;
+      if (init >= 0 && !declarations.isEmpty()) {
+        line = (int) groovy.substring(0, init).chars().filter(c -> c == '\n').count();
+        groovy = groovy.substring(0, init) + declarations + groovy.substring(init);
+      }
+      return new GspTranslation(text, groovy, matrix, null, -1, line);
     } catch (InvocationTargetException e) {
       Throwable cause = e.getCause();
-      return new GspTranslation(text, null, null, String.valueOf(cause.getMessage()).trim(), lineOf(cause));
+      return new GspTranslation(text, null, null, String.valueOf(cause.getMessage()).trim(), lineOf(cause), -1);
     } catch (ReflectiveOperationException | LinkageError | RuntimeException e) {
       return null;
+    }
+  }
+
+  /**
+   * The objects Grails binds for every page, as typed property declarations on one line: Grails's
+   * {@code WebRequestTemplateVariableBinding} takes each from the request's {@code GrailsWebRequest}, so each is typed
+   * by that class's getter on the project's class path ({@code javax} or {@code jakarta} servlet types alike).
+   * {@code pageScope} is the page's binding; {@code out} is already a getter of the page. Empty without Grails's web
+   * classes.
+   */
+  static String implicitObjects(ClassLoader loader) {
+    StringBuilder declarations = new StringBuilder();
+    try {
+      Class<?> request = Class.forName(WEB_REQUEST, false, loader);
+      declare(declarations, request, "webRequest");
+      for (String[] getter : REQUEST_GETTERS) {
+        Class<?> type = request;
+        for (int i = 1; i < getter.length && type != null; i++) {
+          type = returnType(type, getter[i]);
+        }
+        declare(declarations, type, getter[0]);
+      }
+    } catch (ClassNotFoundException | LinkageError e) {
+      // not a web module: no request objects
+    }
+    try {
+      declare(declarations, Class.forName("org.grails.gsp.GroovyPageBinding", false, loader), "pageScope");
+    } catch (ClassNotFoundException | LinkageError e) {
+      // no page binding: pageScope stays untyped
+    }
+    return declarations.toString();
+  }
+
+  private static final String WEB_REQUEST = "org.grails.web.servlet.mvc.GrailsWebRequest";
+  /** The generated class's {@code init()}, emitted after {@code run()} by Grails 3 to 8. */
+  private static final String INIT = "protected void init() {";
+  /** Name, then the getters that lead from the {@code GrailsWebRequest} to it. */
+  private static final String[][] REQUEST_GETTERS = {
+      { "request", "getCurrentRequest" }, { "response", "getCurrentResponse" }, { "session", "getSession" }, { "flash", "getFlashScope" },
+      { "application", "getServletContext" }, { "params", "getParams" }, { "actionName", "getActionName" }, { "controllerName", "getControllerName" },
+      { "applicationContext", "getAttributes", "getApplicationContext" }, { "grailsApplication", "getAttributes", "getGrailsApplication" } };
+
+  private static Class<?> returnType(Class<?> type, String getter) {
+    try {
+      return type.getMethod(getter).getReturnType();
+    } catch (NoSuchMethodException | LinkageError e) {
+      return null;
+    }
+  }
+
+  private static void declare(StringBuilder declarations, Class<?> type, String name) {
+    if (type != null && !type.isPrimitive() && type.getCanonicalName() != null) {
+      declarations.append(type.getCanonicalName()).append(' ').append(name).append("; ");
     }
   }
 
