@@ -621,6 +621,9 @@ class LatencyTest {
     record("complete page code at a name, page compiled", start);
     count("page code completions at a name: empty", names.items.isEmpty() ? 1 : 0);
     count("page code completions", 1);
+    // the name: a model variable, a g:set or g:each variable, an implicit object, a tag called as a method, ...
+    count("page code names with a hover", context.query(a -> a.hover(compiled.path, at[0], at[1] - 1)).get(5, TimeUnit.MINUTES) != null ? 1 : 0);
+    count("page code names with a definition", context.query(a -> a.definition(compiled.path, at[0], at[1] - 1)).get(5, TimeUnit.MINUTES) != null ? 1 : 0);
     boolean dotted = compiled.text.charAt(end) == '.';
     CompileRequest request = dotted ? compiled : new CompileRequest(compiled.path, compiled.text.substring(0, end) + "." + compiled.text.substring(end), compiled.lookup, () -> false);
     String kind = dotted ? "after the name's dot, page compiled" : "after a typed dot";
