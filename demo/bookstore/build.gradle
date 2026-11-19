@@ -1,0 +1,30 @@
+buildscript {
+  repositories {
+    mavenCentral()
+    gradlePluginPortal()
+  }
+  dependencies {
+    classpath platform("org.apache.grails:grails-bom:$grailsVersion")
+    classpath "org.apache.grails:grails-gradle-plugins"
+  }
+}
+
+apply plugin: "org.apache.grails.gradle.grails-web"
+
+repositories {
+  mavenCentral()
+}
+
+dependencies {
+  implementation platform("org.apache.grails:grails-bom:$grailsVersion")
+  implementation "org.springframework.boot:spring-boot-autoconfigure"
+  implementation "org.apache.grails:grails-core"
+  implementation "org.apache.grails:grails-logging"
+  implementation "org.apache.grails:grails-web-boot"
+  implementation "org.apache.grails:grails-controllers"
+  implementation "org.apache.grails:grails-services"
+  implementation "org.apache.grails:grails-domain-class"
+  implementation "org.apache.grails:grails-data-hibernate5"
+  implementation "org.apache.grails:grails-gsp"
+  implementation "org.apache.grails:grails-layout"
+}
