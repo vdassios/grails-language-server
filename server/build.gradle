@@ -27,7 +27,9 @@ shadowJar {
   archiveBaseName = "grails-language-server"
   archiveClassifier = "all"
   destinationDirectory = rootProject.layout.buildDirectory.dir("libs")
-  manifest { attributes "Main-Class": mainClassName }
+  // ParserCache shares ANTLR's parser cache by writing a final field: JDK 26+ warns about that (JEP 500) unless the
+  // executable jar allows it. Older JDKs ignore the attribute.
+  manifest { attributes "Main-Class": mainClassName, "Enable-Final-Field-Mutation": "ALL-UNNAMED" }
 }
 
 tasks.named("build") { dependsOn tasks.named("shadowJar") }
