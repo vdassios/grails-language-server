@@ -211,20 +211,54 @@ public final class GroovyAnalyzer implements Analyzer {
   /** {@link Conventions} whose parses are kept while a file's text stays the same (open text, else the file). */
   private Conventions modelConventions(SourceLookup lookup, String documentPath) {
     return new Conventions(lookup, documentPath, file -> {
-      String text = lookup == null ? null : lookup.openText(file);
-      try {
-        text = text != null ? text : Files.readString(Path.of(file));
-      } catch (IOException | RuntimeException e) {
+      String text = textOf(file, lookup);
+      if (text == null) {
         return List.of();
       }
       Parsed parsed = controllerParses.get(file);
       if (parsed == null || !parsed.text.equals(text)) {
-        String read = text;
-        parsed = new Parsed(text, parserCache.parsing(() -> parsedClasses(file, read)));
+        parsed = new Parsed(text, parserCache.parsing(() -> parsedClasses(file, text)));
         controllerParses.put(file, parsed);
       }
       return parsed.classes;
-    });
+    }, file -> textOf(file, lookup));
+  }
+
+  /** Texts of files read from disk, with the modification time and size they were read at: each page compile reads every controller. */
+  private final Map<String, FileText> fileTexts = new ConcurrentHashMap<>();
+
+  private static final class FileText {
+    final long modified;
+    final long size;
+    final String text;
+
+    FileText(long modified, long size, String text) {
+      this.modified = modified;
+      this.size = size;
+      this.text = text;
+    }
+  }
+
+  /** A file's open text, else its text on disk (read again only when its modification time or size changed); null when unreadable. */
+  private String textOf(String file, SourceLookup lookup) {
+    String open = lookup == null ? null : lookup.openText(file);
+    if (open != null) {
+      return open;
+    }
+    try {
+      java.nio.file.attribute.BasicFileAttributes attributes = Files.readAttributes(Path.of(file), java.nio.file.attribute.BasicFileAttributes.class);
+      long modified = attributes.lastModifiedTime().toMillis();
+      FileText known = fileTexts.get(file);
+      if (known != null && known.modified == modified && known.size == attributes.size()) {
+        return known.text;
+      }
+      String text = Files.readString(Path.of(file));
+      fileTexts.put(file, new FileText(modified, attributes.size(), text));
+      return text;
+    } catch (IOException | RuntimeException e) {
+      fileTexts.remove(file);
+      return null;
+    }
   }
 
   /** Links each page variable of a page's compile to what types it ({@link PageVariables#link}). */
@@ -726,6 +760,7 @@ public final class GroovyAnalyzer implements Analyzer {
   @Override
   public void close() {
     controllerParses.clear();
+    fileTexts.clear();
     units.clear();
     translations.clear();
     completions.clear();

@@ -90,11 +90,18 @@ public final class Conventions {
   private final String documentPath;
   /** The classes a file declares, from a parse only. */
   private final Function<String, List<ClassNode>> parse;
+  /** A file's text: the open text, else the file's; null when it cannot be read. Null: no models are read ({@link #models}). */
+  private final Function<String, String> texts;
 
   Conventions(SourceLookup lookup, String documentPath, Function<String, List<ClassNode>> parse) {
+    this(lookup, documentPath, parse, null);
+  }
+
+  Conventions(SourceLookup lookup, String documentPath, Function<String, List<ClassNode>> parse, Function<String, String> texts) {
     this.lookup = lookup;
     this.documentPath = documentPath;
     this.parse = parse;
+    this.texts = texts;
   }
 
   // what a string names
@@ -592,7 +599,7 @@ public final class Conventions {
     String page = viewPath.replace('\\', '/');
     int app = page.lastIndexOf("/grails-app/views/");
     String relative = app < 0 ? "" : page.substring(app + "/grails-app/".length());
-    if (!relative.endsWith(".gsp") || relative.startsWith("views/layouts/") || relative.substring(relative.lastIndexOf('/') + 1).startsWith("_")) {
+    if (texts == null || !relative.endsWith(".gsp") || relative.startsWith("views/layouts/") || relative.substring(relative.lastIndexOf('/') + 1).startsWith("_")) {
       return List.of();
     }
     List<ModelEntry> found = new ArrayList<>();
@@ -603,13 +610,8 @@ public final class Conventions {
     Pattern named = Pattern.compile("[\"']" + Pattern.quote(absolute) + "(\\.gsp)?[\"']");
     controllers().forEach((name, file) -> {
       if (segments.length == 1 || !name.equals(segments[0])) {
-        String text = lookup.openText(file.toString());
-        try {
-          text = text != null ? text : Files.readString(file);
-        } catch (IOException | RuntimeException e) {
-          return;
-        }
-        if (!named.matcher(text).find()) {
+        String text = texts.apply(file.toString());
+        if (text == null || !named.matcher(text).find()) {
           return;
         }
       }
