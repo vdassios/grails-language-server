@@ -9,6 +9,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -26,6 +27,12 @@ import org.codehaus.groovy.ast.AnnotationNode;
 import org.codehaus.groovy.ast.ClassNode;
 import org.codehaus.groovy.ast.MethodNode;
 import org.codehaus.groovy.ast.ModuleNode;
+import org.codehaus.groovy.ast.expr.ConstantExpression;
+import org.codehaus.groovy.ast.expr.Expression;
+import org.codehaus.groovy.ast.expr.MapEntryExpression;
+import org.codehaus.groovy.ast.expr.MapExpression;
+import org.codehaus.groovy.ast.expr.MethodCallExpression;
+import org.codehaus.groovy.ast.expr.TupleExpression;
 import org.codehaus.groovy.ast.expr.VariableExpression;
 import org.codehaus.groovy.control.CompilationFailedException;
 import org.codehaus.groovy.control.CompilationUnit;
@@ -57,6 +64,7 @@ import io.github.vdassios.grailsls.api.SourceLookup;
 import io.github.vdassios.grailsls.api.Symbol;
 import net.prominic.groovyls.compiler.ast.ASTNodeVisitor;
 import net.prominic.groovyls.compiler.control.io.StringReaderSourceWithURI;
+import net.prominic.groovyls.compiler.util.GroovyASTUtils;
 
 /**
  * Compiles one document per {@link CompilationUnit}, in the module loader that loaded this class: the project's own
@@ -140,7 +148,7 @@ public final class GroovyAnalyzer implements Analyzer {
     translations.remove(request.path);
     completions.remove(request.path);
     CompileResult tags = gsp.compile(request);
-    GspTranslation translation = translate(request.path, request.text, request.lookup);
+    GspTranslation translation = translate(request.path, request.text, request.lookup, request.cancelled);
     if (translation == null) {
       return tags;
     }
@@ -159,6 +167,7 @@ public final class GroovyAnalyzer implements Analyzer {
       return new CompileResult(List.of(), true, kept.sources, millisSince(start));
     }
     linkPage(kept, request.path);
+    compiledModels.put(request.path, new CompiledModels(request.text, renderModelTypes(kept, request.path, request.lookup)));
     units.put(request.path, kept);
     translations.put(request.path, translation);
     for (Diagnostic diagnostic : found) {
@@ -168,7 +177,7 @@ public final class GroovyAnalyzer implements Analyzer {
   }
 
   /** A page's translation, with the implicit objects typed and its variables declared; null without Grails's page parser. */
-  private GspTranslation translate(String path, String text, SourceLookup lookup) {
+  private GspTranslation translate(String path, String text, SourceLookup lookup, java.util.function.BooleanSupplier cancelled) {
     String declarations = implicitObjects;
     if (declarations == null) {
       declarations = GspTranslation.implicitObjects(parent);
@@ -178,7 +187,7 @@ public final class GroovyAnalyzer implements Analyzer {
     for (String declaration : declarations.split(";")) {
       taken.add(declaration.trim().substring(declaration.trim().lastIndexOf(' ') + 1));
     }
-    PageVariables variables = PageVariables.of(path, text, modelConventions(lookup, path), taken, name -> resolves(name, lookup));
+    PageVariables variables = PageVariables.of(path, text, modelConventions(lookup, path), taken, name -> resolves(name, lookup), model -> compiledType(model, lookup, cancelled));
     return GspTranslation.of(parent, path, text, declarations + variables.declarations, variables.definitions);
   }
 
@@ -221,7 +230,7 @@ public final class GroovyAnalyzer implements Analyzer {
         controllerParses.put(file, parsed);
       }
       return parsed.classes;
-    }, file -> textOf(file, lookup));
+    }, file -> textOf(file, lookup), snippet -> parserCache.parsing(() -> parsedClasses("model.groovy", snippet)));
   }
 
   /** Texts of files read from disk, with the modification time and size they were read at: each page compile reads every controller. */
@@ -259,6 +268,144 @@ public final class GroovyAnalyzer implements Analyzer {
       fileTexts.remove(file);
       return null;
     }
+  }
+
+  /**
+   * Types of the model values in a file, from a compile of it, with the text compiled; by path. A controller's are
+   * computed when a page needs them; a page's (the models it gives templates) are recorded by each compile of the page.
+   */
+  private final Map<String, CompiledModels> compiledModels = new ConcurrentHashMap<>();
+
+  private static final class CompiledModels {
+    final String text;
+    /** Type by {@link #modelKey}. */
+    final Map<String, String> types;
+
+    CompiledModels(String text, Map<String, String> types) {
+      this.text = text;
+      this.types = types;
+    }
+  }
+
+  /** A model value's key in {@link CompiledModels#types}: its position in a controller; template, tag and key in a page. */
+  private static String modelKey(Conventions.ModelEntry model) {
+    Expression value = model.entry.getValueExpression();
+    return model.render == null ? value.getLineNumber() + ":" + value.getColumnNumber()
+        : model.render.template + "#" + model.render.index + ":" + model.entry.getKeyExpression().getText();
+  }
+
+  /**
+   * A model value's type from a compile, in this module, of the file holding the map: the controller (compiled now
+   * unless its types are known for its text), or the page rendering the template (only when that page was compiled
+   * with its current text: compiling the pages that render a template took seconds per page on the corpus). Null when
+   * none is known or the compile is cancelled.
+   */
+  private String compiledType(Conventions.ModelEntry model, SourceLookup lookup, java.util.function.BooleanSupplier cancelled) {
+    String text = model.render != null ? model.render.pageText : textOf(model.path, lookup);
+    CompiledModels known = text == null ? null : compiledModels.get(model.path);
+    if (text != null && model.render == null && (known == null || !known.text.equals(text))) {
+      Map<String, String> types = controllerModelTypes(model, text, lookup, cancelled);
+      if (types == null) {
+        return null;
+      }
+      known = new CompiledModels(text, types);
+      compiledModels.put(model.path, known);
+    }
+    return known == null || !known.text.equals(text) ? null : known.types.get(modelKey(model));
+  }
+
+  /** The types of a controller's map values, from a compile of it (the kept one if it is of this text); null when cancelled. */
+  private Map<String, String> controllerModelTypes(Conventions.ModelEntry model, String text, SourceLookup lookup, java.util.function.BooleanSupplier cancelled) {
+    if (!resolves(model.controller.getName(), lookup)) {
+      // another module's controller, whose classes this module may not see
+      return Map.of();
+    }
+    Kept kept = units.get(model.path);
+    if (kept == null || !text.equals(kept.text)) {
+      kept = run(new CompileRequest(model.path, text, lookup, cancelled), new ArrayList<>());
+      if (kept.cancelled) {
+        return null;
+      }
+    }
+    Map<String, String> types = new LinkedHashMap<>();
+    ASTNodeVisitor ast = kept.ast();
+    for (ClassNode type : classesOf(kept, model.path)) {
+      new org.codehaus.groovy.ast.ClassCodeVisitorSupport() {
+        @Override
+        protected SourceUnit getSourceUnit() {
+          return null;
+        }
+
+        @Override
+        public void visitMapEntryExpression(MapEntryExpression entry) {
+          Expression value = entry.getValueExpression();
+          if (value.getLineNumber() > 0) {
+            String name = PageVariables.declared(GroovyASTUtils.getTypeOfNode(value, ast), qualified -> resolves(qualified, lookup));
+            if (name != null) {
+              types.putIfAbsent(value.getLineNumber() + ":" + value.getColumnNumber(), name);
+            }
+          }
+          super.visitMapEntryExpression(entry);
+        }
+      }.visitClass(type);
+    }
+    return types;
+  }
+
+  /** The types of the model values a page's compile gives templates ({@code <g:render template model="[...]"/>}). */
+  private Map<String, String> renderModelTypes(Kept kept, String path, SourceLookup lookup) {
+    Map<String, String> types = new LinkedHashMap<>();
+    Map<String, Integer> seen = new HashMap<>();
+    ASTNodeVisitor ast = kept.ast();
+    for (ClassNode type : classesOf(kept, path)) {
+      new org.codehaus.groovy.ast.ClassCodeVisitorSupport() {
+        @Override
+        protected SourceUnit getSourceUnit() {
+          return null;
+        }
+
+        @Override
+        public void visitMethodCallExpression(MethodCallExpression call) {
+          // invokeTag('render', 'g', line, ['template': 'row', 'model': [book: book]], -1)
+          List<Expression> arguments = call.getArguments() instanceof TupleExpression ? ((TupleExpression) call.getArguments()).getExpressions() : List.of();
+          if (call.isImplicitThis() && "invokeTag".equals(call.getMethodAsString()) && arguments.size() >= 4 && "render".equals(arguments.get(0).getText())
+              && "g".equals(arguments.get(1).getText()) && arguments.get(3) instanceof MapExpression) {
+            String template = null;
+            MapExpression map = null;
+            for (MapEntryExpression entry : ((MapExpression) arguments.get(3)).getMapEntryExpressions()) {
+              Expression value = entry.getValueExpression();
+              if ("template".equals(entry.getKeyExpression().getText()) && value instanceof ConstantExpression && ((ConstantExpression) value).getValue() instanceof String) {
+                template = (String) ((ConstantExpression) value).getValue();
+              } else if ("model".equals(entry.getKeyExpression().getText()) && value instanceof MapExpression) {
+                map = (MapExpression) value;
+              }
+            }
+            if (template != null) {
+              int index = seen.merge(template, 1, Integer::sum) - 1;
+              for (MapEntryExpression entry : map == null ? List.<MapEntryExpression>of() : map.getMapEntryExpressions()) {
+                String name = PageVariables.declared(GroovyASTUtils.getTypeOfNode(entry.getValueExpression(), ast), qualified -> resolves(qualified, lookup));
+                if (name != null) {
+                  types.putIfAbsent(template + "#" + index + ":" + entry.getKeyExpression().getText(), name);
+                }
+              }
+            }
+          }
+          super.visitMethodCallExpression(call);
+        }
+      }.visitClass(type);
+    }
+    return types;
+  }
+
+  /** The classes a compile made of one of its sources. */
+  private static List<ClassNode> classesOf(Kept kept, String path) {
+    List<ClassNode> classes = new ArrayList<>();
+    for (ModuleNode module : kept.unit.getAST().getModules()) {
+      if (module.getContext() != null && path.equals(module.getContext().getName())) {
+        classes.addAll(module.getClasses());
+      }
+    }
+    return classes;
   }
 
   /** Links each page variable of a page's compile to what types it ({@link PageVariables#link}). */
@@ -577,7 +724,7 @@ public final class GroovyAnalyzer implements Analyzer {
     if (!insert.isEmpty() || kept == null || translation == null || !translation.text.equals(request.text)) {
       int offset = offset(request.text, line, column);
       String text = request.text.substring(0, offset) + insert + request.text.substring(offset);
-      translation = translate(request.path, text, request.lookup);
+      translation = translate(request.path, text, request.lookup, request.cancelled);
       if (translation == null || translation.groovy == null || translation.toGroovy(line, column) == null) {
         return null;
       }
@@ -761,6 +908,7 @@ public final class GroovyAnalyzer implements Analyzer {
   public void close() {
     controllerParses.clear();
     fileTexts.clear();
+    compiledModels.clear();
     units.clear();
     translations.clear();
     completions.clear();

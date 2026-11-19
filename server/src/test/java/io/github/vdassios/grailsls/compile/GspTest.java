@@ -491,6 +491,70 @@ abstract class GspTest {
     }
   }
 
+  private String hoverAt(Path page, String text, String needle, int offset) throws Exception {
+    return query(page, text, needle, offset, (a, path, line, column) -> a.hover(path, line, column));
+  }
+
+  @Test
+  void modelValuesTheParseCannotTypeAreTypedByCompilingTheController() throws Exception {
+    String c = app().controller;
+    open = Map.of(controllerPath(), "package fixture." + app().namespace + "\n\nclass " + controllerFile().replace(".groovy", "") + " {\n"
+        + "    def shown(Long id) {\n        String title = 't'\n        render view: 'shown', model: [upper: title.toUpperCase(), size: title.length(), owner: " + domainType() + ".get(id), unknown: id.foo]\n    }\n}\n");
+    Path shown = views.resolve(c).resolve("shown.gsp");
+    String page = "<p>${upper} ${size} ${owner} ${unknown}</p>\n";
+    assertEquals(List.of(), hints(compile(shown, page)));
+    for (Map.Entry<String, String> entry : Map.of("upper", "String", "size", "int", "owner", domainType()).entrySet()) {
+      String hover = hoverAt(shown, page, "${" + entry.getKey() + "}", 3);
+      assertTrue(hover != null && hover.contains(entry.getValue()), entry.getKey() + ": " + hover);
+    }
+    String unknown = hoverAt(shown, page, "${unknown}", 3);
+    assertTrue(unknown == null || !unknown.contains("Long"), "a value of no known type stays untyped: " + unknown);
+    assertTrue(labels(completion(shown, "<p>${upper.}</p>\n", "${upper.")).contains("toLowerCase"));
+  }
+
+  @Test
+  void templatesTakeTheModelsTheirRendersGive() throws Exception {
+    String c = app().controller;
+    Path controller = controllerPath();
+    Path shown = views.resolve(c).resolve("shown.gsp");
+    Path other = views.resolve("elsewhere").resolve("page.gsp");
+    String shownText = "<g:each in=\"${words}\" var=\"word\">\n  <g:render template=\"row\" model=\"[label: word, n: 2]\"/>\n</g:each>\n";
+    String otherText = "<g:render template=\"/" + c + "/row\" model=\"${[elsewhere: 'x']}\"/>\n";
+    open = Map.of(controller, "package fixture." + app().namespace + "\n\nclass " + controllerFile().replace(".groovy", "") + " {\n"
+        + "    def shown() {\n        List<String> words = []\n        render view: 'shown', model: [words: words]\n    }\n\n"
+        + "    def row() {\n        render template: 'row', model: [count: 1L]\n    }\n}\n");
+    // the template's renders are read from the pages on disk
+    Files.writeString(shown, shownText);
+    Files.createDirectories(other.getParent());
+    Files.writeString(other, otherText);
+    try {
+      Path row = views.resolve(c).resolve("_row.gsp");
+      String template = "<p>${label} ${n} ${count} ${elsewhere}</p>\n";
+      String untyped = hoverAt(row, template, "${label}", 3);
+      assertTrue(untyped == null || !untyped.contains("String"), "typed only by a compile of the rendering page: " + untyped);
+      // the rendering pages' compiles record the types of the models they give
+      assertEquals(List.of(), hints(compile(shown, shownText)));
+      assertEquals(List.of(), hints(compile(other, otherText)));
+      assertEquals(List.of(), hints(compile(row, template)));
+      Map<String, String> types = Map.of("label", "String", "n", "Integer", "count", "Long", "elsewhere", "String");
+      for (Map.Entry<String, String> entry : types.entrySet()) {
+        String hover = hoverAt(row, template, "${" + entry.getKey() + "}", 3);
+        assertTrue(hover != null && hover.contains(entry.getValue()), entry.getKey() + ": " + hover);
+      }
+      Location label = query(row, template, "${label}", 3, (a, path, line, column) -> a.definition(path, line, column));
+      assertNotNull(label);
+      assertEquals(shown + ":1:" + shownText.split("\n")[1].indexOf("label"), label.path + ":" + label.range.startLine + ":" + label.range.startColumn, "the key in the rendering page");
+      Location elsewhere = query(row, template, "${elsewhere}", 3, (a, path, line, column) -> a.definition(path, line, column));
+      assertNotNull(elsewhere);
+      assertEquals(other + ":0:" + otherText.indexOf("elsewhere"), elsewhere.path + ":" + elsewhere.range.startLine + ":" + elsewhere.range.startColumn, "a key inside ${}");
+      assertTrue(labels(completion(row, "<p>${label.}</p>\n", "${label.")).contains("toLowerCase"));
+    } finally {
+      Files.delete(shown);
+      Files.delete(other);
+      Files.delete(other.getParent());
+    }
+  }
+
   @Test
   void itInAnEachWithoutVarIsTheElement() throws Exception {
     String c = app().controller;

@@ -5,6 +5,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.function.Predicate;
 
 import org.codehaus.groovy.ast.ASTNode;
@@ -48,9 +49,10 @@ import net.prominic.groovyls.compiler.util.GroovyASTUtils;
  * Names a GSP page uses without declaring them, made properties of its translation so that completion offers them and
  * queries type them (plan B4 2.6):
  * <ul>
- * <li>model variables: the keys of the literal model maps of the actions rendering the view
- * ({@link Conventions#models}), typed when the controller's code states the value's type (a typed declaration or
- * parameter, {@code new}, a cast, a literal); their definition is the map entry;
+ * <li>model variables: the keys of the literal model maps of the actions rendering the view, or of the actions and
+ * pages rendering the template ({@link Conventions#models}), typed when the controller's code states the value's type
+ * (a typed declaration or parameter, {@code new}, a cast, a literal), else by a compile of the file holding the map;
+ * their definition is the map entry;
  * <li>{@code g:set var} variables, typed after the compile by their {@code value} ({@link #link}); their definition is
  * the {@code var} attribute.
  * </ul>
@@ -72,9 +74,10 @@ final class PageVariables {
 
   /**
    * The variables of a page; {@code taken} are names declared already (implicit objects), {@code resolves} says
-   * whether a qualified class name resolves in the page's module.
+   * whether a qualified class name resolves in the page's module, {@code compiled} types a model entry the parse does
+   * not (null when it cannot).
    */
-  static PageVariables of(String path, String text, Conventions conventions, Set<String> taken, Predicate<String> resolves) {
+  static PageVariables of(String path, String text, Conventions conventions, Set<String> taken, Predicate<String> resolves, Function<Conventions.ModelEntry, String> compiled) {
     Map<String, String> types = new LinkedHashMap<>();
     Map<String, Location> definitions = new LinkedHashMap<>();
     for (Conventions.ModelEntry model : conventions.models(path)) {
@@ -84,9 +87,12 @@ final class PageVariables {
         continue;
       }
       String type = typeOf(model, resolves);
+      if (type == null) {
+        type = compiled.apply(model);
+      }
       if (!types.containsKey(name)) {
         types.put(name, type);
-        definitions.put(name, new Location(model.path, new Range(key.getLineNumber() - 1, key.getColumnNumber() - 1, key.getLastLineNumber() - 1, key.getLastColumnNumber() - 1)));
+        definitions.put(name, new Location(model.path, model.keyRange()));
       } else if (types.get(name) != null && !types.get(name).equals(type)) {
         // actions disagree: untyped
         types.put(name, null);
@@ -208,7 +214,6 @@ final class PageVariables {
     });
   }
 
-
   /**
    * The page's own expression in Grails's wrapper: in development mode an expression is translated to
    * {@code evaluate('text', line, it) { return expression }}.
@@ -258,10 +263,11 @@ final class PageVariables {
     ClassNode type = null;
     if (value instanceof ConstructorCallExpression || value instanceof CastExpression) {
       type = value.getType();
-    } else if (value instanceof VariableExpression) {
+    } else if (value instanceof VariableExpression && model.action != null) {
       type = declaredType(((VariableExpression) value).getName(), model);
     }
-    return type == null ? null : name(type, model.controller.getModule(), resolves);
+    // in a page, classes are named as imported there: left to the page's compile
+    return type == null || model.controller == null ? null : name(type, model.controller.getModule(), resolves);
   }
 
   /**
@@ -301,6 +307,41 @@ final class PageVariables {
     }
     FieldNode field = model.controller.getField(name);
     return field == null || field.isDynamicTyped() ? null : field.getOriginType();
+  }
+
+  /**
+   * A type a compile inferred, as a page declares it: qualified, with its type arguments when each is a known class;
+   * null for {@code Object}, a type variable or a class that does not resolve in the page's module.
+   */
+  static String declared(ClassNode type, Predicate<String> resolves) {
+    if (type == null || type.isGenericsPlaceHolder() || ClassHelper.OBJECT_TYPE.equals(type) || ClassHelper.DYNAMIC_TYPE.equals(type)) {
+      return null;
+    }
+    if (ClassHelper.isPrimitiveType(type)) {
+      return type.getName();
+    }
+    if (type.isArray()) {
+      String component = declared(type.getComponentType(), resolves);
+      return component == null ? null : component + "[]";
+    }
+    String binary = type.getName();
+    if (!resolves.test(binary)) {
+      return null;
+    }
+    String qualified = binary.replace('$', '.');
+    GenericsType[] generics = type.getGenericsTypes();
+    if (generics == null || generics.length == 0) {
+      return qualified;
+    }
+    List<String> arguments = new ArrayList<>();
+    for (GenericsType generic : generics) {
+      String argument = generic.isWildcard() || generic.isPlaceholder() ? null : declared(generic.getType(), resolves);
+      if (argument == null) {
+        return qualified;
+      }
+      arguments.add(argument);
+    }
+    return qualified + "<" + String.join(", ", arguments) + ">";
   }
 
   private static final List<String> DEFAULT_PACKAGES = List.of("java.lang.", "java.util.", "java.io.", "java.net.", "groovy.lang.", "groovy.util.");
