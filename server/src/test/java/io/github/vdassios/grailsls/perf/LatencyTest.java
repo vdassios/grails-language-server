@@ -273,14 +273,16 @@ class LatencyTest {
           CompileResult result = context.compile(request).get(5, TimeUnit.MINUTES);
           record("compile page", start);
           count("pages", 1);
+          // a translated page compiles at least itself
+          count("pages compiled", result.sources > 0 ? 1 : 0);
           for (Diagnostic d : result.diagnostics) {
             String kind = d.message.startsWith("Unknown tag") ? "unknown tag"
                 : d.message.contains("needs the attribute") ? "missing required attribute"
                     : d.message.startsWith("No ") ? "unresolved " + d.message.split(" ")[1] : "other";
-            count((d.severity == Diagnostic.HINT ? "hints " : "non-hint diagnostics ") + kind, 1);
+            count(d.severity == Diagnostic.HINT ? "hints " + kind : d.severity == Diagnostic.ERROR ? "errors" : "warnings", 1);
             hintsOut.append(page).append(':').append(d.startLine + 1).append(':').append(d.startColumn + 1).append(' ').append(d.message).append('\n');
           }
-          count("pages with hints", result.diagnostics.isEmpty() ? 0 : 1);
+          count("pages with diagnostics", result.diagnostics.isEmpty() ? 0 : 1);
           context.forget(page.toString());
         }
       }
