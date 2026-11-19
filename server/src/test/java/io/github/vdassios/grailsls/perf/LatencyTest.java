@@ -242,7 +242,9 @@ class LatencyTest {
 
   /**
    * GSP pages (M5a): every {@code .gsp} file below a module's {@code grails-app}, "compiled" (tags read, hints given) in
-   * its page context. Valid views should get no hint: counts per hint kind, and the compile time. Writes counts only to
+   * its page context. Valid views should get no hint: counts per hint kind, and the compile time. Completion in the
+   * first expression that starts with a name (M5b): at the name's end, and after the dot that follows it or after one
+   * typed there. Writes counts only to
    * {@code server/build/perf/gsp.txt}; the hints go to {@code GLS_PERF_DETAILS} when set.
    */
   @Test
@@ -283,6 +285,7 @@ class LatencyTest {
             hintsOut.append(page).append(':').append(d.startLine + 1).append(':').append(d.startColumn + 1).append(' ').append(d.message).append('\n');
           }
           count("pages with diagnostics", result.diagnostics.isEmpty() ? 0 : 1);
+          completeInPageCode(context, request);
           context.forget(page.toString());
         }
       }
@@ -597,6 +600,41 @@ class LatencyTest {
     });
     counts.forEach((name, n) -> out.append(name).append(": ").append(n).append('\n'));
     return out.toString();
+  }
+
+  /** The name an expression starts with, as in "${name}" or "${name.x}": followed by a dot, a space or the brace. */
+  private static final Pattern PAGE_EXPRESSION = Pattern.compile("(?<!\\\\)\\$\\{\\s*([A-Za-z_]\\w*)(?=[.}\\s])");
+
+  /**
+   * Completion at the end of the page's first expression's name, on the compiled page; then after a dot: the one that
+   * follows the name, on the compiled page, else one typed after the name (the page compiled again). Timed and counted.
+   */
+  private void completeInPageCode(CompileContext context, CompileRequest compiled) throws Exception {
+    Matcher matcher = PAGE_EXPRESSION.matcher(compiled.text);
+    if (!matcher.find()) {
+      return;
+    }
+    int end = matcher.end(1);
+    int[] at = position(compiled.text, end);
+    long start = System.nanoTime();
+    CompletionList names = context.query(a -> a.completion(compiled, at[0], at[1])).get(5, TimeUnit.MINUTES);
+    record("complete page code at a name, page compiled", start);
+    count("page code completions at a name: empty", names.items.isEmpty() ? 1 : 0);
+    count("page code completions", 1);
+    boolean dotted = compiled.text.charAt(end) == '.';
+    CompileRequest request = dotted ? compiled : new CompileRequest(compiled.path, compiled.text.substring(0, end) + "." + compiled.text.substring(end), compiled.lookup, () -> false);
+    String kind = dotted ? "after the name's dot, page compiled" : "after a typed dot";
+    int[] after = position(request.text, end + 1);
+    start = System.nanoTime();
+    CompletionList members = context.query(a -> a.completion(request, after[0], after[1])).get(5, TimeUnit.MINUTES);
+    record("complete page code " + kind, start);
+    count("page code completions " + kind + ": empty", members.items.isEmpty() ? 1 : 0);
+    count("page code completions " + kind, 1);
+  }
+
+  private static int[] position(String text, int offset) {
+    int line = (int) text.substring(0, offset).chars().filter(c -> c == '\n').count();
+    return new int[] { line, offset - (text.lastIndexOf('\n', offset - 1) + 1) };
   }
 
   /** Line and column of the dot of the first member access outside comments, imports and strings; null if none. */
