@@ -5,6 +5,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
@@ -16,6 +17,7 @@ import io.github.vdassios.grailsls.StatusParams;
  * {@code onModel} (state {@code indexing}) before the project is reported ready.
  */
 public final class ProjectService {
+  static final int STOP_WAIT_SECONDS = 5;
   static final String UNTRUSTED = "workspace not trusted: the client must send initializationOptions.trusted = true";
 
   private final ExecutorService executor = Executors.newSingleThreadExecutor(r -> {
@@ -83,11 +85,20 @@ public final class ProjectService {
     return done;
   }
 
+  /**
+   * Cancels the running resolution or download and waits, at most {@link #STOP_WAIT_SECONDS}, until it has killed its
+   * Gradle process: the server may exit right after.
+   */
   public synchronized void stop() {
     if (running != null) {
       running.cancel(true);
     }
     executor.shutdownNow();
+    try {
+      executor.awaitTermination(STOP_WAIT_SECONDS, TimeUnit.SECONDS);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+    }
   }
 
   private synchronized CompletableFuture<Void> submit(boolean force) {

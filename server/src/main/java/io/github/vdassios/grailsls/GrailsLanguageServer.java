@@ -9,6 +9,9 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.IntConsumer;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -84,6 +87,10 @@ import io.github.vdassios.grailsls.project.SourcesReport;
  *
  * <p>Initialization options: {@code trusted} (required before any project code runs), {@code gradle.timeoutSeconds}
  * (default 300) and {@code cacheDir}.
+ *
+ * <p>The server exits when its client goes away, even without the {@code exit} notification: when its input ends,
+ * or when the process named by {@code InitializeParams.processId} ends. It stops a running Gradle first. The exit code
+ * is 0 after a {@code shutdown} request, else 1, as LSP asks.
  */
 public class GrailsLanguageServer implements LanguageServer, LanguageClientAware {
   static final int DEFAULT_TIMEOUT_SECONDS = 300;
@@ -93,15 +100,40 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
     OutputStream out = System.out;
     // stdout carries LSP messages only
     System.setOut(new PrintStream(System.err));
-    GrailsLanguageServer server = new GrailsLanguageServer();
+    serve(new GrailsLanguageServer(), in, out);
+  }
+
+  /** Answers messages from {@code in} until it ends, then exits as {@link #clientGone()} does. */
+  static void serve(GrailsLanguageServer server, InputStream in, OutputStream out) {
     Launcher<GrailsLanguageClient> launcher = Launcher.createLauncher(server, GrailsLanguageClient.class, in, out);
     server.connect(launcher.getRemoteProxy());
-    launcher.startListening();
+    try {
+      launcher.startListening().get();
+    } catch (ExecutionException e) {
+      // the stream broke rather than ended: the client is gone all the same
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+    }
+    server.clientGone();
+  }
+
+  private final IntConsumer exit;
+  private final AtomicBoolean stopped = new AtomicBoolean();
+  private final AtomicBoolean exited = new AtomicBoolean();
+  private volatile boolean shutdownRequested;
+
+  public GrailsLanguageServer() {
+    this(System::exit);
+  }
+
+  /** @param exit ends the process with the code given; tests pass their own */
+  GrailsLanguageServer(IntConsumer exit) {
+    this.exit = exit;
   }
 
   private GrailsLanguageClient client;
-  private ProjectService project;
-  private CompileService compiles;
+  private volatile ProjectService project;
+  private volatile CompileService compiles;
   private boolean watchFiles;
 
   @Override
@@ -136,6 +168,10 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
     watchFiles = params.getCapabilities() != null && params.getCapabilities().getWorkspace() != null
         && params.getCapabilities().getWorkspace().getDidChangeWatchedFiles() != null
         && Boolean.TRUE.equals(params.getCapabilities().getWorkspace().getDidChangeWatchedFiles().getDynamicRegistration());
+    if (params.getProcessId() != null) {
+      // a client killed while another process holds its end of the pipe never closes our input
+      ProcessHandle.of(params.getProcessId()).ifPresent(parent -> parent.onExit().thenRun(this::clientGone));
+    }
 
     ServerCapabilities capabilities = new ServerCapabilities();
     TextDocumentSyncOptions sync = new TextDocumentSyncOptions();
@@ -179,18 +215,35 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
 
   @Override
   public CompletableFuture<Object> shutdown() {
-    if (project != null) {
-      project.stop();
-    }
-    if (compiles != null) {
-      compiles.shutdown();
-    }
+    shutdownRequested = true;
+    stop();
     return CompletableFuture.completedFuture(null);
   }
 
   @Override
   public void exit() {
-    System.exit(0);
+    clientGone();
+  }
+
+  /** Stops the work in progress (Gradle, compiles) and exits: 0 after {@code shutdown}, else 1. Runs once. */
+  void clientGone() {
+    if (exited.compareAndSet(false, true)) {
+      stop();
+      exit.accept(shutdownRequested ? 0 : 1);
+    }
+  }
+
+  private void stop() {
+    if (stopped.compareAndSet(false, true)) {
+      ProjectService currentProject = project;
+      if (currentProject != null) {
+        currentProject.stop();
+      }
+      CompileService currentCompiles = compiles;
+      if (currentCompiles != null) {
+        currentCompiles.shutdown();
+      }
+    }
   }
 
   @Override

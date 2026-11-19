@@ -243,6 +243,8 @@ The server logs each startup stage once with `window/logMessage`, as `startup: <
 
 Initialization options: `trusted` (boolean, required to do anything), `gradle.timeoutSeconds` (default 300), `cacheDir` (default `$XDG_CACHE_HOME/grails-language-server`, else `~/.cache/grails-language-server`).
 
+The server exits when its client goes away, even if the client never sends `exit`: when its standard input ends, or when the process named by `processId` in `initialize` ends. It kills a running Gradle first. The exit code is 0 if `shutdown` came first, else 1. So an editor need not wait for the server when it quits.
+
 ## Build
 
 Building needs JDK 17 or later (Gradle 9); the server itself targets Java 11 and runs on the project's JDK.
