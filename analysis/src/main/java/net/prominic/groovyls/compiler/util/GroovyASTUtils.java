@@ -289,6 +289,11 @@ public class GroovyASTUtils {
                     return enclosingClass;
                 }
             } else if (var.isDynamicTyped()) {
+                // it in a GSP g:each without var: linked itself (PageVariables)
+                ClassNode own = linkedType(node, astVisitor);
+                if (own != null) {
+                    return own;
+                }
                 ASTNode defNode = GroovyASTUtils.getDefinition(node, false, astVisitor);
                 // def fooService in an artefact: the service Grails injects by name
                 ClassNode injected = Injections.typeOf(defNode);

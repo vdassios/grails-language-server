@@ -484,4 +484,25 @@ abstract class GspTest {
     Path template = views.resolve(c).resolve("_listed.gsp");
     assertNull(query(template, "<p>${count}</p>\n", "count", 2, (a, path, line, column) -> a.definition(path, line, column)), "a template has no action's model");
   }
+
+  private Path controllerPath() throws Exception {
+    try (var files = Files.walk(views.getParent().resolve("controllers"))) {
+      return files.filter(f -> f.getFileName().toString().equals(controllerFile())).findFirst().orElseThrow();
+    }
+  }
+
+  @Test
+  void itInAnEachWithoutVarIsTheElement() throws Exception {
+    String c = app().controller;
+    open = Map.of(controllerPath(), "package fixture." + app().namespace + "\n\nclass " + controllerFile().replace(".groovy", "") + " {\n"
+        + "    def shown() {\n        List<String> words = []\n        List<Integer> sizes = []\n        render view: 'shown', model: [words: words, sizes: sizes]\n    }\n}\n");
+    Path shown = views.resolve(c).resolve("shown.gsp");
+    assertTrue(labels(completion(shown, "<g:each in=\"${words}\">\n  ${it.}\n</g:each>\n", "${it.")).contains("toLowerCase"), "the element type");
+    List<String> inner = labels(completion(shown, "<g:each in=\"${words}\"><g:each in=\"${sizes}\">${it.}</g:each></g:each>\n", "${it."));
+    assertTrue(inner.contains("intValue") && !inner.contains("toLowerCase"), "the inner loop's it: " + inner);
+    List<String> closure = labels(completion(shown, "<g:each in=\"${words}\">${[1].collect { it. }}</g:each>\n", "{ it."));
+    assertTrue(!closure.contains("toLowerCase"), "a closure's own it: " + closure);
+    String page = "<g:each in=\"${words}\">${it}</g:each>\n";
+    assertEquals(List.of(), hints(compile(shown, page)));
+  }
 }

@@ -54,8 +54,8 @@ import net.prominic.groovyls.compiler.util.GroovyASTUtils;
  * <li>{@code g:set var} variables, typed after the compile by their {@code value} ({@link #link}); their definition is
  * the {@code var} attribute.
  * </ul>
- * {@code g:each var} variables are locals of the translation ({@code for (var in ...)}); {@link #link} gives them the
- * element type of their collection.
+ * {@code g:each var} variables are locals of the translation ({@code for (var in ...)}); {@link #link} gives them, and
+ * {@code it} in a {@code g:each} without {@code var}, the element type of their collection.
  */
 final class PageVariables {
   /** Property declarations for the generated class, on one line. */
@@ -155,11 +155,59 @@ final class PageVariables {
         Parameter variable = loop.getVariable();
         if (variable != null && variable != ForStatement.FOR_LOOP_DUMMY && variable.isDynamicTyped()) {
           variable.putNodeMetaData(GroovyASTUtils.ELEMENT_OF, unwrap(loop.getCollectionExpression()));
+          if (changesIt(loop)) {
+            linkIt(loop.getLoopBlock(), unwrap(loop.getCollectionExpression()));
+          }
         }
         super.visitForLoop(loop);
       }
     });
   }
+
+  /**
+   * Whether a loop is a {@code g:each} without {@code var}: Grails names its variable {@code _it<n>} and makes each
+   * element the page's {@code it} ({@code changeItVariable(_it<n>)}).
+   */
+  private static boolean changesIt(ForStatement loop) {
+    Statement block = loop.getLoopBlock();
+    List<Statement> statements = block instanceof BlockStatement ? ((BlockStatement) block).getStatements() : List.of(block);
+    Statement first = statements.isEmpty() ? null : statements.get(0);
+    Expression call = first instanceof ExpressionStatement ? ((ExpressionStatement) first).getExpression() : null;
+    return loop.getVariable().getName().startsWith("_it") && call instanceof MethodCallExpression && ((MethodCallExpression) call).isImplicitThis()
+        && "changeItVariable".equals(((MethodCallExpression) call).getMethodAsString());
+  }
+
+  /** Each {@code it} of a loop's body takes the element type of its collection; not inside closures, nor in an inner loop that changes it again. */
+  private static void linkIt(Statement body, Expression collection) {
+    body.visit(new ClassCodeVisitorSupport() {
+      @Override
+      protected SourceUnit getSourceUnit() {
+        return null;
+      }
+
+      @Override
+      public void visitVariableExpression(VariableExpression expression) {
+        if ("it".equals(expression.getName()) && expression.getNodeMetaData(GroovyASTUtils.ELEMENT_OF) == null) {
+          expression.putNodeMetaData(GroovyASTUtils.ELEMENT_OF, collection);
+        }
+      }
+
+      @Override
+      public void visitClosureExpression(ClosureExpression closure) {
+        // its own it
+      }
+
+      @Override
+      public void visitForLoop(ForStatement loop) {
+        if (loop.getVariable() != null && loop.getVariable() != ForStatement.FOR_LOOP_DUMMY && changesIt(loop)) {
+          loop.getCollectionExpression().visit(this);
+          return;
+        }
+        super.visitForLoop(loop);
+      }
+    });
+  }
+
 
   /**
    * The page's own expression in Grails's wrapper: in development mode an expression is translated to
