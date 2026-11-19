@@ -22,13 +22,16 @@ package net.prominic.groovyls.compiler.util;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 import org.codehaus.groovy.ast.ASTNode;
 import org.codehaus.groovy.ast.ClassNode;
 import org.codehaus.groovy.ast.FieldNode;
+import org.codehaus.groovy.ast.GenericsType;
 import org.codehaus.groovy.ast.ImportNode;
 import org.codehaus.groovy.ast.MethodNode;
 import org.codehaus.groovy.ast.Parameter;
@@ -56,6 +59,16 @@ import io.github.vdassios.grailsls.analysis.Injections;
 import net.prominic.groovyls.compiler.ast.ASTNodeVisitor;
 
 public class GroovyASTUtils {
+    /**
+     * Node metadata of a dynamically typed variable: the expression whose type it takes (a GSP page variable, the value
+     * of its {@code g:set}).
+     */
+    public static final String VALUE_OF = "grailsls.valueOf";
+    /** Node metadata of a dynamically typed variable: the expression whose elements it takes (a {@code g:each} variable). */
+    public static final String ELEMENT_OF = "grailsls.elementOf";
+    /** Variables whose {@link #VALUE_OF} or {@link #ELEMENT_OF} is being typed: {@code value="${x.next}"} names its own variable. */
+    private static final ThreadLocal<Set<ASTNode>> TYPING = ThreadLocal.withInitial(HashSet::new);
+
     /**
      * Reads members of a class node, or {@code none}. A class from a jar or class directory loads its members on first
      * use, and Groovy throws when the type of one of them is missing from the classpath (e.g. stale build output).
@@ -282,6 +295,10 @@ public class GroovyASTUtils {
                 if (injected != null) {
                     return injected;
                 }
+                ClassNode linked = linkedType(defNode, astVisitor);
+                if (linked != null) {
+                    return linked;
+                }
                 // a member added by a transformation: its getter, or a field or property with a declared type
                 if (defNode instanceof MethodNode) {
                     return ((MethodNode) defNode).getReturnType();
@@ -311,6 +328,36 @@ public class GroovyASTUtils {
             return expression.getType();
         }
         return null;
+    }
+
+    /** The type a variable takes from its {@link #VALUE_OF} or {@link #ELEMENT_OF} expression; null without one. */
+    private static ClassNode linkedType(ASTNode variable, ASTNodeVisitor astVisitor) {
+        Object value = variable == null ? null : variable.getNodeMetaData(VALUE_OF);
+        Object items = variable == null ? null : variable.getNodeMetaData(ELEMENT_OF);
+        if (!(value instanceof Expression || items instanceof Expression) || !TYPING.get().add(variable)) {
+            return null;
+        }
+        try {
+            if (value instanceof Expression) {
+                return getTypeOfNode((Expression) value, astVisitor);
+            }
+            ClassNode collection = getTypeOfNode((Expression) items, astVisitor);
+            return collection == null ? null : elementType(collection);
+        } finally {
+            TYPING.get().remove(variable);
+        }
+    }
+
+    /** The element type of an array or of an {@code Iterable} with its type argument; null when unknown. */
+    static ClassNode elementType(ClassNode collection) {
+        if (collection.isArray()) {
+            return collection.getComponentType();
+        }
+        GenericsType[] generics = collection.getGenericsTypes();
+        if (generics == null || generics.length != 1 || generics[0].isPlaceholder() || generics[0].isWildcard()) {
+            return null;
+        }
+        return members(() -> collection.implementsInterface(ClassHelper.make(Iterable.class)) || collection.equals(ClassHelper.make(Iterable.class)), false) ? generics[0].getType() : null;
     }
 
     public static List<MethodNode> getMethodOverloadsFromCallExpression(MethodCall node, ASTNodeVisitor astVisitor) {

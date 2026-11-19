@@ -7,8 +7,10 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import io.github.vdassios.grailsls.api.Diagnostic;
+import io.github.vdassios.grailsls.api.Location;
 import io.github.vdassios.grailsls.api.Range;
 
 /**
@@ -38,6 +40,10 @@ final class GspTranslation {
   /** The parser's message for a page it rejects (a tag not closed, a bad directive), and its 0-based page line. */
   final String error;
   final int errorLine;
+  /** The generated line (0-based) holding the added declarations; -1 when none were added. */
+  final int declarationLine;
+  /** Where each declared page variable is defined ({@link PageVariables}). */
+  final Map<String, Location> definitions;
   /** Per generated line (0-based), its 0-based page line; -1 when unknown. */
   private final int[] pageLines;
   /** {@code {pageStart, groovyStart, length}} of each piece of page code found in the generated text. */
@@ -45,11 +51,13 @@ final class GspTranslation {
   private final Lines page;
   private final Lines generated;
 
-  private GspTranslation(String text, String groovy, int[] matrix, String error, int errorLine, int declarationLine) {
+  private GspTranslation(String text, String groovy, int[] matrix, String error, int errorLine, int declarationLine, Map<String, Location> definitions) {
     this.text = text;
     this.groovy = groovy;
     this.error = error;
     this.errorLine = errorLine;
+    this.declarationLine = declarationLine;
+    this.definitions = definitions;
     this.page = new Lines(text);
     this.generated = new Lines(groovy == null ? "" : groovy);
     this.pageLines = new int[generated.count()];
@@ -62,10 +70,10 @@ final class GspTranslation {
   }
 
   /**
-   * The page translated with the parser on {@code loader}, with {@code declarations} ({@link #implicitObjects}) added
-   * to the generated class; null when the loader has no GSP parser.
+   * The page translated with the parser on {@code loader}, with {@code declarations} ({@link #implicitObjects},
+   * {@link PageVariables}) added to the generated class; null when the loader has no GSP parser.
    */
-  static GspTranslation of(ClassLoader loader, String path, String text, String declarations) {
+  static GspTranslation of(ClassLoader loader, String path, String text, String declarations, Map<String, Location> definitions) {
     Class<?> parser;
     try {
       parser = Class.forName(PARSER, true, loader);
@@ -86,10 +94,10 @@ final class GspTranslation {
         line = (int) groovy.substring(0, init).chars().filter(c -> c == '\n').count();
         groovy = groovy.substring(0, init) + declarations + groovy.substring(init);
       }
-      return new GspTranslation(text, groovy, matrix, null, -1, line);
+      return new GspTranslation(text, groovy, matrix, null, -1, line, definitions);
     } catch (InvocationTargetException e) {
       Throwable cause = e.getCause();
-      return new GspTranslation(text, null, null, String.valueOf(cause.getMessage()).trim(), lineOf(cause), -1);
+      return new GspTranslation(text, null, null, String.valueOf(cause.getMessage()).trim(), lineOf(cause), -1, Map.of());
     } catch (ReflectiveOperationException | LinkageError | RuntimeException e) {
       return null;
     }
@@ -198,7 +206,8 @@ final class GspTranslation {
       int best = -1;
       int distance = Integer.MAX_VALUE;
       for (int at = groovy.indexOf(code); at >= 0; at = groovy.indexOf(code, at + 1)) {
-        if (overlaps(claimed, at, code.length()) || !standsAlone(code, at)) {
+        // g:each's variable in the loop header the compiler writes is not page code: ${book} on the tag's line
+        if (overlaps(claimed, at, code.length()) || !standsAlone(code, at) || groovy.startsWith(LOOP, at - LOOP.length())) {
           continue;
         }
         int mapped = pageLines[generated.line(at)];
@@ -214,6 +223,9 @@ final class GspTranslation {
       }
     }
   }
+
+  /** The start of the loop the GSP compiler writes for {@code g:each} ({@code for( var in (collection) ) {}). */
+  private static final String LOOP = "for( ";
 
   /** Not part of a longer name: {@code ${t}} is not the {@code t} of {@code printHtmlPart}. */
   private boolean standsAlone(String code, int at) {

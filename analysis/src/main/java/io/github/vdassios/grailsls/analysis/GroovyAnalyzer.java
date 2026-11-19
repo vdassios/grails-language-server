@@ -26,6 +26,7 @@ import org.codehaus.groovy.ast.AnnotationNode;
 import org.codehaus.groovy.ast.ClassNode;
 import org.codehaus.groovy.ast.MethodNode;
 import org.codehaus.groovy.ast.ModuleNode;
+import org.codehaus.groovy.ast.expr.VariableExpression;
 import org.codehaus.groovy.control.CompilationFailedException;
 import org.codehaus.groovy.control.CompilationUnit;
 import org.codehaus.groovy.control.CompilerConfiguration;
@@ -139,7 +140,7 @@ public final class GroovyAnalyzer implements Analyzer {
     translations.remove(request.path);
     completions.remove(request.path);
     CompileResult tags = gsp.compile(request);
-    GspTranslation translation = translate(request.path, request.text);
+    GspTranslation translation = translate(request.path, request.text, request.lookup);
     if (translation == null) {
       return tags;
     }
@@ -157,6 +158,7 @@ public final class GroovyAnalyzer implements Analyzer {
     if (kept.cancelled) {
       return new CompileResult(List.of(), true, kept.sources, millisSince(start));
     }
+    linkPage(kept, request.path);
     units.put(request.path, kept);
     translations.put(request.path, translation);
     for (Diagnostic diagnostic : found) {
@@ -165,14 +167,73 @@ public final class GroovyAnalyzer implements Analyzer {
     return new CompileResult(diagnostics, false, kept.sources, millisSince(start));
   }
 
-  /** A page's translation, with the implicit objects typed; null without Grails's page parser. */
-  private GspTranslation translate(String path, String text) {
+  /** A page's translation, with the implicit objects typed and its variables declared; null without Grails's page parser. */
+  private GspTranslation translate(String path, String text, SourceLookup lookup) {
     String declarations = implicitObjects;
     if (declarations == null) {
       declarations = GspTranslation.implicitObjects(parent);
       implicitObjects = declarations;
     }
-    return GspTranslation.of(parent, path, text, declarations);
+    Set<String> taken = new HashSet<>(Set.of("out"));
+    for (String declaration : declarations.split(";")) {
+      taken.add(declaration.trim().substring(declaration.trim().lastIndexOf(' ') + 1));
+    }
+    PageVariables variables = PageVariables.of(path, text, modelConventions(lookup, path), taken, name -> resolves(name, lookup));
+    return GspTranslation.of(parent, path, text, declarations + variables.declarations, variables.definitions);
+  }
+
+  /** Whether a qualified class name resolves in this module: a project source, or a class on its class path. */
+  private boolean resolves(String name, SourceLookup lookup) {
+    if (lookup != null && lookup.fileOf(name) != null) {
+      return true;
+    }
+    try {
+      Class.forName(name, false, parent);
+      return true;
+    } catch (ClassNotFoundException | LinkageError e) {
+      return false;
+    }
+  }
+
+  /** Controller parses by path, with the text parsed: model variables read every controller for each page compile. */
+  private final Map<String, Parsed> controllerParses = new ConcurrentHashMap<>();
+
+  private static final class Parsed {
+    final String text;
+    final List<ClassNode> classes;
+
+    Parsed(String text, List<ClassNode> classes) {
+      this.text = text;
+      this.classes = classes;
+    }
+  }
+
+  /** {@link Conventions} whose parses are kept while a file's text stays the same (open text, else the file). */
+  private Conventions modelConventions(SourceLookup lookup, String documentPath) {
+    return new Conventions(lookup, documentPath, file -> {
+      String text = lookup == null ? null : lookup.openText(file);
+      try {
+        text = text != null ? text : Files.readString(Path.of(file));
+      } catch (IOException | RuntimeException e) {
+        return List.of();
+      }
+      Parsed parsed = controllerParses.get(file);
+      if (parsed == null || !parsed.text.equals(text)) {
+        String read = text;
+        parsed = new Parsed(text, parserCache.parsing(() -> parsedClasses(file, read)));
+        controllerParses.put(file, parsed);
+      }
+      return parsed.classes;
+    });
+  }
+
+  /** Links each page variable of a page's compile to what types it ({@link PageVariables#link}). */
+  private static void linkPage(Kept kept, String path) {
+    for (ModuleNode module : kept.unit.getAST().getModules()) {
+      if (module.getContext() != null && path.equals(module.getContext().getName())) {
+        module.getClasses().forEach(PageVariables::link);
+      }
+    }
   }
 
   /** Compiles a document to its last phase ({@link #lastPhase}), each phase only if the request is not cancelled. */
@@ -335,7 +396,13 @@ public final class GroovyAnalyzer implements Analyzer {
         if (found == null || !found.path.equals(documentPath)) {
           return found;
         }
-        Range range = translations.get(documentPath).toPage(found.range);
+        GspTranslation translation = translations.get(documentPath);
+        if (found.range.startLine == translation.declarationLine) {
+          // a page variable: its model entry or g:set; an implicit object has none
+          ASTNode node = kept.ast().getNodeAtLineAndColumn(kept.uri, at[0], at[1]);
+          return node instanceof VariableExpression ? translation.definitions.get(((VariableExpression) node).getName()) : null;
+        }
+        Range range = translation.toPage(found.range);
         return range == null ? null : new Location(documentPath, range);
       });
     }
@@ -476,7 +543,7 @@ public final class GroovyAnalyzer implements Analyzer {
     if (!insert.isEmpty() || kept == null || translation == null || !translation.text.equals(request.text)) {
       int offset = offset(request.text, line, column);
       String text = request.text.substring(0, offset) + insert + request.text.substring(offset);
-      translation = translate(request.path, text);
+      translation = translate(request.path, text, request.lookup);
       if (translation == null || translation.groovy == null || translation.toGroovy(line, column) == null) {
         return null;
       }
@@ -484,6 +551,7 @@ public final class GroovyAnalyzer implements Analyzer {
       if (kept.cancelled) {
         return null;
       }
+      linkPage(kept, request.path);
     }
     int[] at = translation.toGroovy(line, column);
     return at == null ? null : new PageCompile(kept, translation, at);
@@ -657,6 +725,7 @@ public final class GroovyAnalyzer implements Analyzer {
 
   @Override
   public void close() {
+    controllerParses.clear();
     units.clear();
     translations.clear();
     completions.clear();

@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -30,6 +31,10 @@ import org.codehaus.groovy.ast.expr.MapExpression;
 import org.codehaus.groovy.ast.expr.MethodCallExpression;
 import org.codehaus.groovy.ast.expr.TupleExpression;
 import org.codehaus.groovy.ast.expr.VariableExpression;
+import org.codehaus.groovy.ast.stmt.BlockStatement;
+import org.codehaus.groovy.ast.stmt.ExpressionStatement;
+import org.codehaus.groovy.ast.stmt.ReturnStatement;
+import org.codehaus.groovy.ast.stmt.Statement;
 import org.codehaus.groovy.control.SourceUnit;
 
 import io.github.vdassios.grailsls.api.Completion;
@@ -557,6 +562,132 @@ public final class Conventions {
     } catch (IOException | UncheckedIOException e) {
       return List.of();
     }
+  }
+
+  // models
+
+  /** A key of a literal model map an action gives a view, and where it is. */
+  static final class ModelEntry {
+    final MapEntryExpression entry;
+    /** The action: a method, or a property assigned a closure. */
+    final AnnotatedNode action;
+    final ClassNode controller;
+    final String path;
+
+    ModelEntry(MapEntryExpression entry, AnnotatedNode action, ClassNode controller, String path) {
+      this.entry = entry;
+      this.action = action;
+      this.controller = controller;
+      this.path = path;
+    }
+  }
+
+  /**
+   * The literal model maps of the actions that render a view, from a parse of every controller: {@code render(view:
+   * 'show', model: [book: b])}, {@code respond x, model: [...]} (its view the action's name unless named), and a map
+   * the action returns (its view the action's name). Empty for a template or a layout. Actions inherited from a
+   * superclass are not read.
+   */
+  List<ModelEntry> models(String viewPath) {
+    String page = viewPath.replace('\\', '/');
+    int app = page.lastIndexOf("/grails-app/views/");
+    String relative = app < 0 ? "" : page.substring(app + "/grails-app/".length());
+    if (!relative.endsWith(".gsp") || relative.startsWith("views/layouts/") || relative.substring(relative.lastIndexOf('/') + 1).startsWith("_")) {
+      return List.of();
+    }
+    List<ModelEntry> found = new ArrayList<>();
+    String[] segments = relative.substring("views/".length(), relative.length() - ".gsp".length()).split("/");
+    // only the controller of the page's directory renders it unnamed or by a relative name; another names it by its
+    // absolute name ('/book/show'), so files that do not hold that name are not parsed
+    String absolute = "/" + String.join("/", segments);
+    Pattern named = Pattern.compile("[\"']" + Pattern.quote(absolute) + "(\\.gsp)?[\"']");
+    controllers().forEach((name, file) -> {
+      if (segments.length == 1 || !name.equals(segments[0])) {
+        String text = lookup.openText(file.toString());
+        try {
+          text = text != null ? text : Files.readString(file);
+        } catch (IOException | RuntimeException e) {
+          return;
+        }
+        if (!named.matcher(text).find()) {
+          return;
+        }
+      }
+      ClassNode type = declared(file);
+      if (type == null) {
+        return;
+      }
+      actions(type).forEach((action, node) -> {
+        Statement code = node instanceof MethodNode ? ((MethodNode) node).getCode() : ((ClosureExpression) ((PropertyNode) node).getInitialExpression()).getCode();
+        for (Object[] model : modelsOf(code, action)) {
+          if (viewPaths(new Reference(Kind.VIEW, (String) model[0], null, name)).contains(relative)) {
+            for (MapEntryExpression entry : ((MapExpression) model[1]).getMapEntryExpressions()) {
+              found.add(new ModelEntry(entry, node, type, file.toString()));
+            }
+          }
+        }
+      });
+    });
+    return found;
+  }
+
+  /** {@code {view, map}} of each literal model in an action's code. */
+  private static List<Object[]> modelsOf(Statement code, String action) {
+    List<Object[]> models = new ArrayList<>();
+    if (code == null) {
+      return models;
+    }
+    code.visit(new ClassCodeVisitorSupport() {
+      private int closures;
+
+      @Override
+      protected SourceUnit getSourceUnit() {
+        return null;
+      }
+
+      @Override
+      public void visitMethodCallExpression(MethodCallExpression call) {
+        String method = call.getMethodAsString();
+        if (call.isImplicitThis() && ("render".equals(method) || "respond".equals(method))) {
+          String view = argumentValue(call, "view");
+          Expression model = null;
+          for (MapEntryExpression entry : entries(call)) {
+            if (entry.getKeyExpression().getText().equals("model")) {
+              model = entry.getValueExpression();
+            }
+          }
+          if (view == null && "respond".equals(method)) {
+            view = action;
+          }
+          if (view != null && !view.isEmpty() && model instanceof MapExpression) {
+            models.add(new Object[] { view, model });
+          }
+        }
+        super.visitMethodCallExpression(call);
+      }
+
+      @Override
+      public void visitClosureExpression(ClosureExpression closure) {
+        closures++;
+        super.visitClosureExpression(closure);
+        closures--;
+      }
+
+      @Override
+      public void visitReturnStatement(ReturnStatement statement) {
+        if (closures == 0 && statement.getExpression() instanceof MapExpression) {
+          models.add(new Object[] { action, statement.getExpression() });
+        }
+        super.visitReturnStatement(statement);
+      }
+    });
+    // the action's last statement, returned without "return"
+    List<Statement> statements = code instanceof BlockStatement ? ((BlockStatement) code).getStatements() : List.of(code);
+    Statement last = statements.isEmpty() ? null : statements.get(statements.size() - 1);
+    if (last instanceof ExpressionStatement && ((ExpressionStatement) last).getExpression() instanceof MapExpression) {
+      models.add(new Object[] { action, ((ExpressionStatement) last).getExpression() });
+    }
+    return models;
   }
 
   // completion

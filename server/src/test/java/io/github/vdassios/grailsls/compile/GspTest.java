@@ -59,6 +59,8 @@ abstract class GspTest {
 
   private Workspace workspace;
   private Path views;
+  /** Unsaved texts by path, as the editor holds them. */
+  private Map<Path, String> open = Map.of();
 
   @BeforeEach
   void setUp() throws Exception {
@@ -80,7 +82,7 @@ abstract class GspTest {
   private CompileResult compile(Path path, String text) throws Exception {
     CompileContext context = workspace.contextOf(path);
     assertNotNull(context, "no context for " + path);
-    return context.compile(new CompileRequest(path.toString(), text, workspace.lookup(context, p -> null), () -> false)).get(120, TimeUnit.SECONDS);
+    return context.compile(new CompileRequest(path.toString(), text, workspace.lookup(context, open::get), () -> false)).get(120, TimeUnit.SECONDS);
   }
 
   private static List<String> hints(CompileResult result) {
@@ -104,7 +106,7 @@ abstract class GspTest {
     String filled = fill(text);
     int[] p = at(filled, fill(needle), fill(needle).length());
     CompileContext context = workspace.contextOf(path);
-    CompileRequest request = new CompileRequest(path.toString(), filled, workspace.lookup(context, x -> null), () -> false);
+    CompileRequest request = new CompileRequest(path.toString(), filled, workspace.lookup(context, open::get), () -> false);
     return context.query(a -> a.completion(request, p[0], p[1])).get(60, TimeUnit.SECONDS).items;
   }
 
@@ -439,5 +441,47 @@ abstract class GspTest {
     String typing = fill(text.substring(0, text.lastIndexOf('}')) + "\n    def linked() {\n        g.createL\n    }\n}");
     List<String> names = labels(completion(controller, typing, "g.createL"));
     assertTrue(names.contains("createLink"), names.toString());
+  }
+
+  @Test
+  void modelVariablesComeFromTheActionsRenderingTheView() throws Exception {
+    Path controller;
+    try (var files = Files.walk(views.getParent().resolve("controllers"))) {
+      controller = files.filter(f -> f.getFileName().toString().equals(controllerFile())).findFirst().orElseThrow();
+    }
+    String c = app().controller;
+    String actions = "package fixture." + app().namespace + "\n\nclass " + controllerFile().replace(".groovy", "") + " {\n"
+        + "    def index() {\n        render(view: 'index', model: [total: 3])\n    }\n\n"
+        + "    def shown(Long id) {\n        String title = 't'\n        List<String> words = []\n        def other = id\n"
+        + "        render view: '/" + c + "/shown', model: [title: title, words: words, other: other, owner: new " + domainType() + "(), found: id]\n    }\n\n"
+        + "    def listed() {\n        [count: 1L]\n    }\n}\n";
+    open = Map.of(controller, actions);
+    String index = "<p>${total}</p>\n";
+    assertEquals(List.of(), hints(compile(page(), index)));
+    assertEquals("controllers/" + controller.toString().replace('\\', '/').split("grails-app/controllers/")[1] + ":4", definitionOf(index, "total", 2), "the model entry");
+    assertTrue(labels(completion("<p>${tot}</p>\n", "${tot")).contains("total"));
+    assertTrue(labels(completion("<p>${total.}</p>\n", "${total.")).contains("intValue"), "typed Integer");
+
+    Path shown = views.resolve(c).resolve("shown.gsp");
+    String page = "<g:set var=\"shout\" value=\"${title.toUpperCase()}\"/>\n<p>${owner} ${other} ${found} ${shout}</p>\n"
+        + "<g:each in=\"${words}\" var=\"word\" status=\"i\">${word} ${i}</g:each>\n";
+    assertEquals(List.of(), hints(compile(shown, page)));
+    Map<String, String> types = Map.of("owner", domainType(), "found", "Long", "shout", "String", "word", "String");
+    for (Map.Entry<String, String> entry : types.entrySet()) {
+      String hover = query(shown, page, "${" + entry.getKey() + "}", 3, (a, path, line, column) -> a.hover(path, line, column));
+      assertTrue(hover != null && hover.contains(entry.getValue()), entry.getKey() + ": " + hover);
+    }
+    Location set = query(shown, page, "${shout}", 3, (a, path, line, column) -> a.definition(path, line, column));
+    assertNotNull(set);
+    assertEquals(shown.toString() + ":0:12", set.path + ":" + set.range.startLine + ":" + set.range.startColumn, "the var attribute");
+    assertTrue(labels(completion(shown, "<g:set var=\"shout\" value=\"${title.toUpperCase()}\"/>${shout.}\n", "${shout.")).contains("toLowerCase"));
+    assertTrue(labels(completion(shown, "<g:each in=\"${words}\" var=\"word\">\n  ${word.}\n</g:each>\n", "${word.")).contains("toLowerCase"), "the element type");
+    assertTrue(labels(completion(shown, "<p>${owner.}</p>\n", "${owner.")).contains("save"), "the domain class");
+
+    Path listed = views.resolve(c).resolve("listed.gsp");
+    String hover = query(listed, "<p>${count}</p>\n", "count", 2, (a, path, line, column) -> a.hover(path, line, column));
+    assertTrue(hover != null && hover.contains("Long"), "a returned map: " + hover);
+    Path template = views.resolve(c).resolve("_listed.gsp");
+    assertNull(query(template, "<p>${count}</p>\n", "count", 2, (a, path, line, column) -> a.definition(path, line, column)), "a template has no action's model");
   }
 }
