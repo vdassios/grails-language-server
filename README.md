@@ -2,7 +2,9 @@
 
 A [language server](https://microsoft.github.io/language-server-protocol/) for Groovy with Grails support, usable from any LSP editor. It compiles each open file with the **project's own** Groovy and Grails jars, so the members Grails adds at compile time (`render`, `params`, `save`, `get`, finders, ...) are visible to completion, hover and navigation.
 
-**Status: pre-alpha, milestone M5b (GSP expressions).** The server resolves the Gradle project model in the background, reports progress through `grails/status`, compiles each open Groovy file and publishes its diagnostics. It answers completion (with resolve, including types not imported yet), hover, signature help, definition (into library and JDK sources too), document symbols and workspace symbols. Controllers, domain classes, services and taglibs get the members Grails adds (tested on Grails 4 and Grails 7), and `def fooService` is typed as the service of that name. GORM dynamic finders, criteria, `where`, `constraints` and `mapping` blocks are understood, and so are the strings that name views, templates, layouts, controllers and actions. In GSP pages the server knows the tags and the attribute values that name files and controllers, and compiles the Groovy inside `${ }` and scriptlets as Grails translates it, with errors, completion, hover and definition there.
+**Status: pre-alpha, milestone M6 (distribution).** The server resolves the Gradle project model in the background, reports progress through `grails/status`, compiles each open Groovy file and publishes its diagnostics. It answers completion (with resolve, including types not imported yet), hover, signature help, definition (into library and JDK sources too), document symbols and workspace symbols. Controllers, domain classes, services and taglibs get the members Grails adds (tested on Grails 4 and Grails 7), and `def fooService` is typed as the service of that name. GORM dynamic finders, criteria, `where`, `constraints` and `mapping` blocks are understood, and so are the strings that name views, templates, layouts, controllers and actions. In GSP pages the server knows the tags and the attribute values that name files and controllers, and compiles the Groovy inside `${ }` and scriptlets as Grails translates it, with errors, completion, hover and definition there.
+
+What is covered, planned or out of scope, feature by feature: [docs/conformance.md](docs/conformance.md).
 
 ## Grails artefacts
 
@@ -79,6 +81,144 @@ Definition and hover reach classes that have no source in the project: jars, the
 - Hover, completion resolve and signature help show the declaration's documentation comment. For the project's own sources on Groovy 2.5, which keeps no comments on its nodes, it is read from the text each source was compiled from, the same way.
 - The declaration is found by scanning the source text for its names, since the project's Groovy parses no Java: among overloads, the one with the same number of parameters and the most matching type names. A getter or setter with no method of that name in the text goes to the property it reads or writes. A member the scan misses (a record component) goes to its class.
 
+## Install
+
+Download `grails-language-server-all.jar` from the [releases](https://github.com/vdassios/grails-language-server/releases), or build it (`./gradlew shadowJar`, see "Build"). It speaks LSP over stdio:
+
+```sh
+java -jar grails-language-server-all.jar
+```
+
+**Run it on the project's JDK** (the one its Gradle build uses): the server compiles with the project's own Groovy, which reads the JDK's class files with its bundled ASM, and it runs the project's Gradle wrapper on the same JDK. The newest JDK a Groovy release can run on depends on its ASM; measured for some releases:
+
+| Project's Groovy | Grails | Newest JDK for the server |
+|---|---|---|
+| 2.5.14 | 4 | 15 (the JDK's class files up to version 59) |
+| 3.0.14 | 5, 6 | 19 (version 63) |
+| 3.0.23 | 5, 6 | 23 (version 67) |
+| 4.0.4 | 7 | 19 (version 63) |
+| 4.0.33 | 7 | 27 (version 71) |
+| 5.1.3 | 8 | 27 (version 71) |
+
+The server itself needs Java 11 or later, Grails 7 and 8 need 17.
+
+The server does nothing until the client sends `initializationOptions.trusted = true` (see "Trust"). The workspace root must be the Gradle root, the directory with `settings.gradle` (or `gradlew`); the server reads the project model from there.
+
+## Editor setup
+
+Each setup below starts `java` from `PATH`; give the full path of the project's JDK's `java` if `PATH` points at another. Replace `/path/to/grails-language-server-all.jar`. Each was checked by opening a Grails 4 controller and asking for hover on `render`, except Zed.
+
+### Neovim (0.11 or later)
+
+```lua
+vim.lsp.config('grails_ls', {
+  cmd = { 'java', '-jar', '/path/to/grails-language-server-all.jar' },
+  filetypes = { 'groovy', 'gsp' },
+  root_markers = { 'settings.gradle', 'settings.gradle.kts', 'gradlew' },
+  init_options = { trusted = true },
+})
+vim.lsp.enable 'grails_ls'
+```
+
+Neovim detects `*.gsp` as `gsp`; [grails.nvim](https://github.com/vdassios/grails.nvim) adds a GSP tree-sitter grammar.
+
+### Helix
+
+In `~/.config/helix/languages.toml`:
+
+```toml
+[language-server.grails-language-server]
+command = "java"
+args = ["-jar", "/path/to/grails-language-server-all.jar"]
+config = { trusted = true }
+
+[[language]]
+name = "groovy"
+language-servers = ["grails-language-server"]
+roots = ["settings.gradle", "settings.gradle.kts"]
+```
+
+Helix sends `config` as the initialization options. It takes the topmost of the `roots` markers below the workspace (the version-control root), which is the Gradle root unless the repository holds several Gradle builds. Helix has no GSP language.
+
+### Emacs (eglot, Emacs 29 or later)
+
+With a `groovy-mode` (for example `groovy-emacs-modes` from MELPA):
+
+```elisp
+(with-eval-after-load 'eglot
+  (add-to-list 'eglot-server-programs
+               '(groovy-mode . ("java" "-jar" "/path/to/grails-language-server-all.jar"
+                                :initializationOptions (:trusted t)))))
+;; Without this, the project root is the version-control root.
+(setq project-vc-extra-root-markers '("settings.gradle" "settings.gradle.kts"))
+```
+
+Then `M-x eglot` in a Groovy buffer, or `(add-hook 'groovy-mode-hook #'eglot-ensure)`.
+
+### VS Code
+
+VS Code starts language servers only from extensions. A local extension of two files is enough: put them in a folder, run `npm install` there, and link the folder into `~/.vscode/extensions/` (or open it and press F5 to try it). Set `grailsLanguageServer.jar` (and `grailsLanguageServer.java` if `java` on `PATH` is not the project's JDK) in the settings.
+
+`package.json`:
+
+```json
+{
+  "name": "grails-language-server-local",
+  "version": "0.0.1",
+  "engines": { "vscode": "^1.91.0" },
+  "main": "extension.js",
+  "activationEvents": ["onLanguage:groovy"],
+  "contributes": {
+    "configuration": {
+      "properties": {
+        "grailsLanguageServer.jar": { "type": "string", "description": "Path to grails-language-server-all.jar" },
+        "grailsLanguageServer.java": { "type": "string", "default": "java", "description": "java to run it with (the project's JDK)" }
+      }
+    }
+  },
+  "dependencies": { "vscode-languageclient": "^11.0.0" }
+}
+```
+
+`extension.js`:
+
+```js
+const vscode = require('vscode');
+const { LanguageClient } = require('vscode-languageclient/node');
+
+let client;
+
+exports.activate = async () => {
+  const config = vscode.workspace.getConfiguration('grailsLanguageServer');
+  client = new LanguageClient(
+    'grails-language-server',
+    'Grails',
+    { command: config.get('java'), args: ['-jar', config.get('jar')] },
+    {
+      documentSelector: [
+        { scheme: 'file', language: 'groovy' },
+        { scheme: 'file', pattern: '**/*.gsp' },
+      ],
+      initializationOptions: { trusted: true },
+    },
+  );
+  await client.start();
+};
+
+exports.deactivate = () => client?.stop();
+```
+
+The workspace folder is the root, so open the Gradle root.
+
+### Zed
+
+Not set up yet. Zed starts language servers only through its extensions (compiled to WebAssembly), and the Groovy extension in its registry downloads and starts its own server; its source reads no `binary` setting that could point it here. Zed needs a small extension of its own for this server; none exists yet.
+
+## Known limits
+
+- **JDK 17 with Groovy 4:** after the project model changes, a closed module loader can stay in memory when the server runs on JDK 17: JDK 17 keeps method-handle type caches that refer to the loader's classes (seen on a Groovy 4 project). JDK 19 and later do not. A Grails 7 project on a recent Groovy 4 can run the server on JDK 21 (see the table under "Install").
+- **Heap:** the JVM's defaults apply (a quarter of the RAM at most). Give `-Xmx` before `-jar` to cap it; a large multi-module project can use 2 GB or more after compiling many files.
+
 ## How it works
 
 - **Project model.** The server runs the project's Gradle wrapper with an init script and records, per module: source roots, compile classpath, class directories, sibling modules, the Groovy version and the `.java` files that are compiled together with Groovy. Results are cached on disk, keyed by a hash of the build files. Resolution runs in the background with a timeout; `grails/reloadProject` runs it again.
@@ -112,6 +252,8 @@ Building needs JDK 17 or later (Gradle 9); the server itself targets Java 11 and
 ./gradlew shadowJar  # build/libs/grails-language-server-all.jar
 java -jar build/libs/grails-language-server-all.jar   # LSP over stdio
 ```
+
+Releases: pushing a tag `v*` runs CI, and once the build passes it publishes the tested jar as a GitHub release (a tag with a hyphen, such as `v0.6.0-alpha.1`, as a pre-release).
 
 The project-model tests run the fixture builds under `fixtures/` (see its README) with their own Gradle wrappers. They need a JDK 11 (Grails 4 fixture) and a JDK 17 (Grails 7 and plain Groovy fixtures), given as `GLS_TEST_JDK11` and `GLS_TEST_JDK17`; a test whose JDK is not set is skipped. `-PtestJavaHome=<jdk>` runs the tests on another JDK; CI runs them on JDK 11, the oldest the server supports, with both fixture JDKs set.
 
