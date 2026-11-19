@@ -178,6 +178,21 @@ abstract class GormTest {
     }
   }
 
+  /** GORM adds {@code id} and {@code version} with no position: definition goes to the domain class's declaration. */
+  @Test
+  void idAndVersionGoToTheDomainClass() throws Exception {
+    try (Workspace workspace = workspace()) {
+      App app = app();
+      String text = serviceWith("def d = D.get(1)", "[d.id, d.version, D.get(2)?.id]");
+      Map<String, String> found = new TreeMap<>();
+      found.put("id", definition(workspace, service(), text, "d.id", 2));
+      found.put("version", definition(workspace, service(), text, "d.version", 2));
+      found.put("safe id", definition(workspace, service(), text, "?.id", 2));
+      String declaration = declared(app.domain, "class " + app.domain);
+      assertEquals(Map.of("id", declaration, "version", declaration, "safe id", declaration), found);
+    }
+  }
+
   @Test
   void aFinderHasASignatureAndTypesItsResult() throws Exception {
     try (Workspace workspace = workspace()) {

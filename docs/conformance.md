@@ -34,7 +34,7 @@ Every feature of the [Grails VS Code extension](https://github.com/Johan070119/G
 | From | On | To | Status |
 |---|---|---|---|
 | Controller | a domain class name | the domain class | covered |
-| Controller | `book.title`, `book?.title` | the property's line | covered (`id` and `version`, added by Grails, have no line) |
+| Controller | `book.title`, `book?.title` | the property's line | covered (`id` and `version`, which Grails adds, go to the domain class's declaration) |
 | Controller | `Area.findByName(` | the property's line | covered |
 | Controller | `render(view: 'show')`, `render(view: '/layouts/main')` | the view | covered |
 | Controller | `render(template: 'row')` | `_row.gsp` | covered |

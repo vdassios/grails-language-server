@@ -43,7 +43,12 @@ public final class Navigation {
     if (definition == null || definition.getLineNumber() == -1 || definition.getColumnNumber() == -1) {
       // not declared in the compile's sources: a class file's source, when one is on disk
       ClassFileSource source = ClassFileSource.of(definition != null ? definition : GroovyASTUtils.getDefinition(offsetNode, false, ast), lookup);
-      return source == null ? null : new Location(source.path, source.range);
+      ClassNode owner = definition instanceof AnnotatedNode ? ((AnnotatedNode) definition).getDeclaringClass() : null;
+      if (source != null || owner == null || owner.getLineNumber() == -1 || !Gorm.isDomain(owner)) {
+        return source == null ? null : new Location(source.path, source.range);
+      }
+      // a member GORM adds with no position (id, version): the domain class's declaration
+      definition = owner;
     }
     URI uri = ast.getURI(definition);
     if (uri == null && gorm != null) {
