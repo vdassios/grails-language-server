@@ -517,7 +517,7 @@ public final class Gorm {
 
   /** The domain class a block is a {@code where} query of ({@code where}, {@code find} or {@code findAll} with a closure), or null. */
   static ClassNode whereDomain(ClosureExpression block, ASTNodeVisitor ast) {
-    MethodCall call = callTaking(block, ast);
+    MethodCall call = GroovyASTUtils.callWithArguments(ast.getParent(block), ast);
     return call instanceof MethodCallExpression && WHERE_METHODS.contains(call.getMethodAsString()) ? criteriaDomain(block, ast) : null;
   }
 
@@ -535,18 +535,14 @@ public final class Gorm {
       if (entry.getValueExpression() != string || !"sort".equals(entry.getKeyExpression().getText())) {
         return null;
       }
-      ASTNode call = ast.getParent(ast.getParent(parent));
-      if (!(call instanceof MethodCallExpression)) {
-        call = ast.getParent(call);
-      }
+      MethodCall call = GroovyASTUtils.callWithArguments(ast.getParent(ast.getParent(parent)), ast);
       return call instanceof MethodCallExpression ? queried((MethodCallExpression) call, ast) : null;
     }
-    ASTNode call = ast.getParent(parent);
-    if (!(parent instanceof TupleExpression) || !(call instanceof MethodCallExpression) || !((MethodCallExpression) call).isImplicitThis()
-        || ((TupleExpression) parent).getExpressions().indexOf(string) != 0) {
+    MethodCall call = GroovyASTUtils.callWithArguments(parent, ast);
+    if (!(call instanceof MethodCallExpression) || !((MethodCallExpression) call).isImplicitThis() || ((TupleExpression) parent).getExpressions().indexOf(string) != 0) {
       return null;
     }
-    return criteriaDomain(call, ast);
+    return criteriaDomain((MethodCallExpression) call, ast);
   }
 
   /** The domain class a query call is about: its receiver, or the class its criteria receiver was made from. */
@@ -594,7 +590,7 @@ public final class Gorm {
     List<MethodCallExpression> calls = new ArrayList<>();
     for (ASTNode current = node; current != null; current = ast.getParent(current)) {
       if (current instanceof ClosureExpression) {
-        MethodCall call = callTaking((ClosureExpression) current, ast);
+        MethodCall call = GroovyASTUtils.callWithArguments(ast.getParent(current), ast);
         if (!(call instanceof MethodCallExpression)) {
           break;
         }
@@ -618,13 +614,6 @@ public final class Gorm {
       return domain;
     }
     return null;
-  }
-
-  /** The call a closure is an argument of, or null. */
-  static MethodCall callTaking(ClosureExpression closure, ASTNodeVisitor ast) {
-    ASTNode arguments = ast.getParent(closure);
-    ASTNode call = arguments == null ? null : ast.getParent(arguments);
-    return arguments instanceof TupleExpression && call instanceof MethodCall && ((MethodCall) call).getArguments() == arguments ? (MethodCall) call : null;
   }
 
   /**
@@ -658,12 +647,11 @@ public final class Gorm {
    * ({@code title nul}); the query settings, in a query on a domain class ({@code Book.list(ma)}). Empty elsewhere.
    */
   static List<String> argumentKeys(VariableExpression typed, ASTNodeVisitor ast) {
-    ASTNode arguments = ast.getParent(typed);
-    ASTNode parent = arguments == null ? null : ast.getParent(arguments);
-    if (!(arguments instanceof TupleExpression) || !(parent instanceof MethodCallExpression) || ((MethodCallExpression) parent).getArguments() != arguments) {
+    MethodCall found = GroovyASTUtils.callWithArguments(ast.getParent(typed), ast);
+    if (!(found instanceof MethodCallExpression)) {
       return List.of();
     }
-    MethodCallExpression call = (MethodCallExpression) parent;
+    MethodCallExpression call = (MethodCallExpression) found;
     List<String> keys;
     if (call.isImplicitThis()) {
       ClassNode owner = propertyBlockOwner(call, ast);
@@ -677,7 +665,7 @@ public final class Gorm {
     } else {
       return List.of();
     }
-    return unusedKeys(keys, (TupleExpression) arguments);
+    return unusedKeys(keys, (TupleExpression) call.getArguments());
   }
 
   /** The keys not given yet among a call's named arguments. */
@@ -710,7 +698,7 @@ public final class Gorm {
    * parameter it is passed for ({@code withCriteria}, a criteria's {@code list}). Null without one.
    */
   public static ClassNode delegateOf(ClosureExpression closure, ASTNodeVisitor ast) {
-    MethodCall call = callTaking(closure, ast);
+    MethodCall call = GroovyASTUtils.callWithArguments(ast.getParent(closure), ast);
     if (call == null) {
       return null;
     }

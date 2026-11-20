@@ -77,6 +77,15 @@ public class GroovyASTUtils {
         }
     }
 
+    /**
+     * The call whose argument list a node is, or null. For the call a node is an argument of, pass the node's parent:
+     * {@code callWithArguments(ast.getParent(argument), ast)}.
+     */
+    public static MethodCall callWithArguments(ASTNode arguments, ASTNodeVisitor astVisitor) {
+        ASTNode call = arguments instanceof TupleExpression ? astVisitor.getParent(arguments) : null;
+        return call instanceof MethodCall && ((MethodCall) call).getArguments() == arguments ? (MethodCall) call : null;
+    }
+
     public static ASTNode getEnclosingNodeOfType(ASTNode offsetNode, Class<? extends ASTNode> nodeType,
             ASTNodeVisitor astVisitor) {
         ASTNode current = offsetNode;

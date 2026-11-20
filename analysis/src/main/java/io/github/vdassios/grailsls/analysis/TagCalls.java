@@ -9,6 +9,7 @@ import org.codehaus.groovy.ast.ASTNode;
 import org.codehaus.groovy.ast.DynamicVariable;
 import org.codehaus.groovy.ast.expr.ConstantExpression;
 import org.codehaus.groovy.ast.expr.Expression;
+import org.codehaus.groovy.ast.expr.MethodCall;
 import org.codehaus.groovy.ast.expr.MethodCallExpression;
 import org.codehaus.groovy.ast.expr.TupleExpression;
 import org.codehaus.groovy.ast.expr.VariableExpression;
@@ -82,16 +83,15 @@ final class TagCalls {
 
   /** The attributes not given yet of the tag whose named arguments a name is typed in: {@code g.link(con)}. */
   List<String> argumentKeys(VariableExpression typed, ASTNodeVisitor ast) {
-    ASTNode arguments = ast.getParent(typed);
-    ASTNode parent = arguments == null ? null : ast.getParent(arguments);
-    if (!(arguments instanceof TupleExpression) || !(parent instanceof MethodCallExpression) || ((MethodCallExpression) parent).getArguments() != arguments) {
+    MethodCall call = GroovyASTUtils.callWithArguments(ast.getParent(typed), ast);
+    if (!(call instanceof MethodCallExpression)) {
       return List.of();
     }
-    Taglibs.Tag tag = called((MethodCallExpression) parent, ast);
+    Taglibs.Tag tag = called((MethodCallExpression) call, ast);
     if (tag == null) {
       return List.of();
     }
     List<String> names = tag.docs().attributes.stream().map(attribute -> attribute.name).collect(Collectors.toList());
-    return Gorm.unusedKeys(names, (TupleExpression) arguments);
+    return Gorm.unusedKeys(names, (TupleExpression) ((MethodCallExpression) call).getArguments());
   }
 }

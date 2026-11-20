@@ -29,6 +29,7 @@ import org.codehaus.groovy.ast.expr.ConstantExpression;
 import org.codehaus.groovy.ast.expr.Expression;
 import org.codehaus.groovy.ast.expr.MapEntryExpression;
 import org.codehaus.groovy.ast.expr.MapExpression;
+import org.codehaus.groovy.ast.expr.MethodCall;
 import org.codehaus.groovy.ast.expr.MethodCallExpression;
 import org.codehaus.groovy.ast.expr.TupleExpression;
 import org.codehaus.groovy.ast.expr.VariableExpression;
@@ -166,9 +167,8 @@ public final class Conventions {
   /** The call a named argument belongs to: {@code render(view: 'x')}, {@code render([view: 'x'])}. */
   private static MethodCallExpression callOf(MapEntryExpression entry, ASTNodeVisitor ast) {
     ASTNode map = ast.getParent(entry);
-    ASTNode arguments = map instanceof MapExpression ? ast.getParent(map) : null;
-    ASTNode call = arguments instanceof TupleExpression ? ast.getParent(arguments) : arguments;
-    return call instanceof MethodCallExpression && ((MethodCallExpression) call).getArguments() == arguments ? (MethodCallExpression) call : null;
+    MethodCall call = map instanceof MapExpression ? GroovyASTUtils.callWithArguments(ast.getParent(map), ast) : null;
+    return call instanceof MethodCallExpression ? (MethodCallExpression) call : null;
   }
 
   /** A named argument's string value; empty when the argument is not a string, null when there is none. */
@@ -200,15 +200,13 @@ public final class Conventions {
 
   /** Keys of the named arguments of {@code render} or {@code redirect} not given yet, when {@code typed} is one of their arguments. */
   static List<String> argumentKeys(VariableExpression typed, ASTNodeVisitor ast) {
-    ASTNode arguments = ast.getParent(typed);
-    ASTNode parent = arguments == null ? null : ast.getParent(arguments);
-    if (!(arguments instanceof TupleExpression) || !(parent instanceof MethodCallExpression) || ((MethodCallExpression) parent).getArguments() != arguments
-        || !((MethodCallExpression) parent).isImplicitThis()) {
+    MethodCall call = GroovyASTUtils.callWithArguments(ast.getParent(typed), ast);
+    if (!(call instanceof MethodCallExpression) || !((MethodCallExpression) call).isImplicitThis()) {
       return List.of();
     }
-    String method = ((MethodCallExpression) parent).getMethodAsString();
+    String method = ((MethodCallExpression) call).getMethodAsString();
     List<String> keys = "render".equals(method) ? RENDER_KEYS : "redirect".equals(method) ? REDIRECT_KEYS : List.of();
-    return Gorm.unusedKeys(keys, (TupleExpression) arguments);
+    return Gorm.unusedKeys(keys, (TupleExpression) ((MethodCallExpression) call).getArguments());
   }
 
   /** The logical name of the controller a class is ({@code BookController} → {@code book}), or null. */

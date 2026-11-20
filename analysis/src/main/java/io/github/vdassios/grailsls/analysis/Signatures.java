@@ -51,10 +51,9 @@ public final class Signatures {
     MethodCall call = null;
     // the innermost argument list holding the position; a closure in between starts code of its own
     for (ASTNode current = offsetNode; current != null && !(current instanceof ClosureExpression); current = ast.getParent(current)) {
-      ASTNode parent = ast.getParent(current);
-      if (current instanceof TupleExpression && parent instanceof MethodCall && ((MethodCall) parent).getArguments() == current) {
+      call = GroovyASTUtils.callWithArguments(current, ast);
+      if (call != null) {
         arguments = (TupleExpression) current;
-        call = (MethodCall) parent;
         break;
       }
     }
