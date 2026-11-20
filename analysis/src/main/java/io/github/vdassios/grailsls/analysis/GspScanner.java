@@ -84,10 +84,11 @@ final class GspScanner {
   }
 
   /**
-   * The Groovy code of a page, as {@code {start, end}} offset pairs in text order: the body of each expression
+   * The Groovy code of a page, as {@code {start, end, open}} offsets in text order: the body of each expression
    * ({@code ${ }}, in attribute values too) and scriptlet ({@code <% %>}, {@code <%= %>}, {@code %{ }%}), without the
-   * surrounding white space, which the GSP compiler drops. Comments, directives ({@code <%@ %>}) and escaped
-   * expressions ({@code \${}) hold none; an empty body is left out.
+   * surrounding white space, which the GSP compiler drops, and where the construct opens ({@code open}, the offset of
+   * its {@code ${}, {@code <%} or {@code %{}). Comments, directives ({@code <%@ %>}), declarations ({@code <%! %>},
+   * which Grails rejects) and escaped expressions ({@code \${}) hold none; an empty body is left out.
    */
   static List<int[]> code(String text) {
     GspScanner scanner = new GspScanner(text);
@@ -104,7 +105,7 @@ final class GspScanner {
       if (text.startsWith("${", i)) {
         start = i + 2;
         end = text.charAt(skipped - 1) == '}' ? skipped - 1 : skipped;
-      } else if (text.startsWith("<%", i) && !text.startsWith("<%--", i) && !text.startsWith("<%@", i)) {
+      } else if (text.startsWith("<%", i) && !text.startsWith("<%--", i) && !text.startsWith("<%@", i) && !text.startsWith("<%!", i)) {
         start = text.startsWith("<%=", i) ? i + 3 : i + 2;
         end = text.startsWith("%>", skipped - 2) ? skipped - 2 : skipped;
       } else if (text.startsWith("%{", i) && !text.startsWith("%{--", i)) {
@@ -118,7 +119,7 @@ final class GspScanner {
         end--;
       }
       if (start >= 0 && end > start) {
-        regions.add(new int[] { start, end });
+        regions.add(new int[] { start, end, i });
       }
       i = skipped;
     }

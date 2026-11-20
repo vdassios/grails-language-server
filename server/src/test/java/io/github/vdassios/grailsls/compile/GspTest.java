@@ -382,6 +382,50 @@ abstract class GspTest {
     assertTrue(message.endsWith(":3] Unclosed GSP expression"), message);
   }
 
+  /** Grails moves an attribute's code after the tag's body: {@code b} is no prefix of the body's {@code b?.validate()}. */
+  @Test
+  void anExpressionAnAttributeStartsLikeHasItsOwnPlace() throws Exception {
+    String declared = "<%@ page import=\"fixture." + app().namespace + "." + domainType() + "\" %>\n<% def b = new " + domainType() + "() %>\n";
+    String page = declared + "<g:form resource=\"${b}\">${b?.validate()}</g:form>\n";
+    String hover = query(page, "validate", 2, (a, path, line, column) -> a.hover(path, line, column));
+    assertTrue(hover != null && hover.contains("validate"), hover);
+    List<String> items = labels(completion(declared + "<g:form resource=\"${b}\">${b?.va}</g:form>\n", "${b?.va"));
+    assertTrue(items.contains("validate"), items.toString());
+  }
+
+  /** Grails writes {@code %{ }%} code with each run of white space as one space, so statements need a {@code ;}. */
+  @Test
+  void codeInEveryKindOfScriptletMaps() throws Exception {
+    String imports = "<%@ page import=\"fixture." + app().namespace + "." + domainType() + "\" %>\n";
+    String page = imports + "%{\n  def c = new " + domainType() + "();\n  c.validate()  &amp;&amp;   c.save()\n}%\n<%= c.validate() %>\n";
+    assertEquals(List.of(), hints(compile(page(), page)));
+    String multiLine = query(page, "save", 2, (a, path, line, column) -> a.hover(path, line, column));
+    assertTrue(multiLine != null && multiLine.contains("save"), "in %{ }%, after an entity: " + multiLine);
+    String output = query(page, "validate() %>", 2, (a, path, line, column) -> a.hover(path, line, column));
+    assertTrue(output != null && output.contains("validate"), "in <%= %>: " + output);
+    List<String> items = labels(completion(imports + "%{\n  def c = new " + domainType() + "();\n  c.sa\n}%\n", "c.sa"));
+    assertTrue(items.contains("save"), items.toString());
+    CompileResult error = compile(page(), "<p>\n%{\n  def x = 1;\n     new NoSuchType()\n}%\n</p>\n");
+    assertEquals(List.of("4:6 " + io.github.vdassios.grailsls.api.Diagnostic.ERROR), severities(error), error.diagnostics.toString());
+  }
+
+  @Test
+  void errorsAfterCommentsAndScriptletsLandOnTheirLines() throws Exception {
+    String before = "%{-- one\ntwo --}%\n<%-- three\nfour --%>\n%{\n  def x = 1\n}%\n";
+    CompileResult syntax = compile(page(), before + "<p>${a.}</p>\n");
+    assertEquals(1, syntax.diagnostics.size(), syntax.diagnostics.toString());
+    assertEquals(7, syntax.diagnostics.get(0).startLine, syntax.diagnostics.toString());
+    CompileResult type = compile(page(), before + "<p>${new NoSuchType()}</p>\n");
+    assertEquals(List.of("8:6 " + io.github.vdassios.grailsls.api.Diagnostic.ERROR), severities(type), type.diagnostics.toString());
+  }
+
+  @Test
+  void aRepeatedExpressionHasErrorsInEachPlace() throws Exception {
+    CompileResult result = compile(page(), "<g:each in=\"${[1]}\">${new NoSuchType()}</g:each>\n<g:each in=\"${[2]}\">${new NoSuchType()}</g:each>\n");
+    String error = " " + io.github.vdassios.grailsls.api.Diagnostic.ERROR;
+    assertEquals(List.of("1:23" + error, "2:23" + error), severities(result), result.diagnostics.toString());
+  }
+
   @Test
   void codeCompletesInsideExpressionsAndScriptlets() throws Exception {
     String type = domainType();

@@ -25,10 +25,27 @@ configurations {
 dependencies {
   grails8Taglibs "org.apache.grails:grails-gsp:8.0.0"
 }
+// Grails's GSP page parser as the Grails 4 and Grails 7 fixtures have it, with what it needs (its own Groovy):
+// GspTranslationTest runs it in a class loader of its own, as the server runs a project's.
+configurations {
+  grails4Gsp
+  grails7Gsp
+}
+dependencies {
+  grails4Gsp platform("org.grails:grails-bom:4.1.4")
+  grails4Gsp "org.grails:grails-gsp:4.0.3"
+  grails7Gsp platform("org.apache.grails:grails-bom:7.2.4")
+  grails7Gsp "org.apache.grails.views:grails-gsp-core"
+}
 tasks.withType(Test).configureEach {
   def taglibs = configurations.grails8Taglibs
+  def gsp4 = configurations.grails4Gsp
+  def gsp7 = configurations.grails7Gsp
   inputs.files(taglibs).withPropertyName("grails8Taglibs").withNormalizer(ClasspathNormalizer)
-  jvmArgumentProviders.add({ ["-Dgrails8.taglibs=${taglibs.singleFile}".toString()] } as CommandLineArgumentProvider)
+  inputs.files(gsp4).withPropertyName("grails4Gsp").withNormalizer(ClasspathNormalizer)
+  inputs.files(gsp7).withPropertyName("grails7Gsp").withNormalizer(ClasspathNormalizer)
+  jvmArgumentProviders.add({ ["-Dgrails8.taglibs=${taglibs.singleFile}".toString(), "-Dgrails4.gsp=${gsp4.asPath}".toString(),
+      "-Dgrails7.gsp=${gsp7.asPath}".toString()] } as CommandLineArgumentProvider)
 }
 
 groovyRuntimes.each { name, coordinates ->
@@ -40,7 +57,26 @@ groovyRuntimes.each { name, coordinates ->
     group = "verification"
     testClassesDirs = sourceSets.test.output.classesDirs
     classpath = sourceSets.test.runtimeClasspath.filter { !it.name.startsWith("groovy-2.") } + configuration
-    useJUnitPlatform()
+    useJUnitPlatform { excludeTags "jdk17" }
   }
   tasks.named("check") { dependsOn task }
 }
+
+// Tests tagged jdk17 run Grails 7's page parser, whose classes need Java 17: on the JDK in GLS_TEST_JDK17, else
+// Gradle's (17 or later), never on -PtestJavaHome.
+test {
+  useJUnitPlatform { excludeTags "jdk17" }
+}
+def testJdk17 = tasks.register("testJdk17", Test) {
+  description = "Runs the tests tagged jdk17 on the JDK in GLS_TEST_JDK17."
+  group = "verification"
+  testClassesDirs = sourceSets.test.output.classesDirs
+  classpath = sourceSets.test.runtimeClasspath
+  useJUnitPlatform { includeTags "jdk17" }
+  def jdk17 = System.getenv("GLS_TEST_JDK17")
+  if (jdk17) {
+    executable = "${jdk17}/bin/java"
+  }
+  inputs.property("jdk17", jdk17.toString())
+}
+tasks.named("check") { dependsOn testJdk17 }
