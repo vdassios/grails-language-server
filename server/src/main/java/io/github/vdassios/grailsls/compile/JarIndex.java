@@ -26,7 +26,7 @@ import java.util.zip.ZipFile;
  *
  * <p>Jars are read once: they are not rebuilt under a running server (the loader keeps no build output) and the URL
  * class path keeps them open. Directories (sibling modules' class output) are probed on every lookup, as a build
- * writes them.
+ * writes them; a directory URL (ending in a slash) counts as one before it exists, as the URL class path does.
  */
 final class JarIndex {
   /** Says every resource may be there: for URLs that are not files. */
@@ -50,7 +50,7 @@ final class JarIndex {
       if (path == null) {
         return NONE;
       }
-      if (Files.isDirectory(path)) {
+      if (Files.isDirectory(path) || url.getPath().endsWith("/")) {
         directories.add(path);
       } else if (Files.isRegularFile(path)) {
         jars.add(path);

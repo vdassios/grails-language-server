@@ -73,6 +73,17 @@ class JarIndexTest {
     assertTrue(index.mayHave("a/B.class"), "a class the build wrote after the index");
   }
 
+  /** A directory URL (trailing slash) for class output that is not built yet: probed from the first lookup after the build. */
+  @Test
+  void aClassDirectoryBuiltAfterTheIndexIsLookedAt() throws IOException {
+    Path classes = tmp.resolve("build/classes");
+    JarIndex index = JarIndex.of(new URL[] {new URL(classes.toUri() + "/")});
+    assertFalse(index.mayHave("a/B.class"));
+    Files.createDirectories(classes.resolve("a"));
+    Files.writeString(classes.resolve("a/B.class"), "");
+    assertTrue(index.mayHave("a/B.class"));
+  }
+
   @Test
   void jarsNamedInAManifestClassPathAreIndexed() throws IOException {
     jar(tmp.resolve("lib/named.jar"), new String[] {"n/Named.class"});

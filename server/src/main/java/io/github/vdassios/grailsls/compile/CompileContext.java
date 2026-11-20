@@ -4,6 +4,7 @@ import java.beans.Introspector;
 import java.io.IOException;
 import java.net.MalformedURLException;
 import java.net.URL;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -158,11 +159,7 @@ public final class CompileContext implements AutoCloseable {
   private void start() {
     List<URL> urls = new ArrayList<>();
     for (Path entry : classpath) {
-      try {
-        urls.add(entry.toUri().toURL());
-      } catch (MalformedURLException e) {
-        throw new IllegalArgumentException(entry.toString(), e);
-      }
+      urls.add(url(entry));
     }
     loader = new ModuleClassLoader(name, urls, javaClasses, resources, antlr);
     ModuleClassLoader threadLoader = loader;
@@ -172,6 +169,21 @@ public final class CompileContext implements AutoCloseable {
       t.setContextClassLoader(threadLoader);
       return t;
     });
+  }
+
+  /**
+   * A class path entry as a URL. A class directory ends in a slash even when it is not built yet: without one the URL
+   * class path takes it for a jar, fails to open it and drops it for good, so classes built later would never show.
+   */
+  static URL url(Path entry) {
+    String name = entry.getFileName() == null ? "" : entry.getFileName().toString();
+    boolean archive = Files.isRegularFile(entry) || name.endsWith(".jar") || name.endsWith(".zip");
+    String uri = entry.toUri().toString();
+    try {
+      return new URL(archive || uri.endsWith("/") ? uri : uri + "/");
+    } catch (MalformedURLException e) {
+      throw new IllegalArgumentException(entry.toString(), e);
+    }
   }
 
   /** Stops the thread (and the thread-locals project code left on it), closes the loader and drops JDK caches of its classes. */

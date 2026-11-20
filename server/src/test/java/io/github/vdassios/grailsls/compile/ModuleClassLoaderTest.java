@@ -1,5 +1,6 @@
 package io.github.vdassios.grailsls.compile;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -54,6 +55,29 @@ class ModuleClassLoaderTest {
       list[i] = urls[i].toUri().toURL();
     }
     return new ModuleClassLoader("test", List.of(list), javaClasses, Map.of(), null);
+  }
+
+  /** A sibling's class output that is not built when the loader starts: its classes show once Gradle writes them. */
+  @Test
+  void aClassDirectoryBuiltAfterTheLoaderStartedIsFound() throws Exception {
+    Path classes = tmp.resolve("lib/build/classes/groovy/main");
+    try (ModuleClassLoader loader = new ModuleClassLoader("test", List.of(CompileContext.url(classes)), Map.of(), Map.of(), null)) {
+      assertNull(loader.getResource(SAMPLE_FILE));
+      Path file = classes.resolve(SAMPLE_FILE);
+      Files.createDirectories(file.getParent());
+      Files.write(file, sampleBytes());
+      assertNotNull(loader.getResource(SAMPLE_FILE));
+      assertSame(loader, loader.loadClass(SAMPLE).getClassLoader());
+    }
+  }
+
+  @Test
+  void aClassPathEntryIsADirectoryUnlessItIsAnArchive() throws IOException {
+    Path jar = tmp.resolve("missing.jar");
+    assertEquals(jar.toUri().toURL(), CompileContext.url(jar));
+    assertEquals(new URL(tmp.resolve("classes").toUri() + "/"), CompileContext.url(tmp.resolve("classes")));
+    Path file = Files.writeString(tmp.resolve("lib-without-extension"), "");
+    assertEquals(file.toUri().toURL(), CompileContext.url(file));
   }
 
   @Test
