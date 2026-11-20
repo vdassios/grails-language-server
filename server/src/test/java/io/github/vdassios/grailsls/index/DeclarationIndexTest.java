@@ -2,6 +2,7 @@ package io.github.vdassios.grailsls.index;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -95,5 +96,72 @@ class DeclarationIndexTest {
     assertEquals(List.of("BookService", "a.BookService", "b.BookService"), found.stream().sorted().collect(Collectors.toList()));
     assertEquals(List.of(), index.classesNamed("BookService2", List.of(first)), "nested types are not top-level");
     assertEquals(List.of("a.BookService"), index.classesNamed("BookService", List.of(first)), "only the roots asked for");
+  }
+
+  /** A rename delivered as create-then-delete: both files declare the class for a moment, and it must survive the delete. */
+  @Test
+  void aRenameDeliveredAsCreateThenDeleteKeepsTheClass() throws IOException {
+    Path root = tmp.resolve("src");
+    Path old = write("src/p/A.groovy", "package p\nclass A {}\n");
+    DeclarationIndex index = new DeclarationIndex(Set.of());
+    index.addRoots(List.of(root));
+
+    Path moved = write("src/p/sub/A.groovy", "package p\nclass A {}\n");
+    index.update(moved);
+    Files.delete(old);
+    index.update(old);
+    assertEquals(moved, index.fileOf("p.A", List.of(root)));
+    assertEquals(1, index.files());
+  }
+
+  /** A deleted directory is one event: every file below it goes. A directory created with files in it is scanned. */
+  @Test
+  void aDeletedDirectoryTakesItsFilesAndACreatedOneIsScanned() throws IOException {
+    Path root = tmp.resolve("src");
+    write("src/p/Keep.groovy", "package p\nclass Keep {}\n");
+    write("src/p/gone/A.groovy", "package p.gone\nclass A {}\n");
+    write("src/p/gone/deeper/B.groovy", "package p.gone.deeper\nclass B {}\n");
+    DeclarationIndex index = new DeclarationIndex(Set.of());
+    index.addRoots(List.of(root));
+    assertEquals(3, index.files());
+
+    Path gone = root.resolve("p/gone");
+    Files.delete(gone.resolve("deeper/B.groovy"));
+    Files.delete(gone.resolve("deeper"));
+    Files.delete(gone.resolve("A.groovy"));
+    Files.delete(gone);
+    index.update(gone);
+    assertNull(index.fileOf("p.gone.A", List.of(root)));
+    assertNull(index.fileOf("p.gone.deeper.B", List.of(root)));
+    assertEquals(1, index.files());
+
+    Path c = write("src/p/made/C.groovy", "package p.made\nclass C {}\n");
+    index.update(root.resolve("p/made"));
+    assertEquals(c, index.fileOf("p.made.C", List.of(root)));
+    assertEquals(2, index.files());
+  }
+
+  /** A rescan finds what changed on disk without any event: created, edited and deleted files. */
+  @Test
+  void aRescanAppliesWhatChangedOnDisk() throws IOException {
+    Path root = tmp.resolve("src");
+    Path edited = write("src/p/A.groovy", "package p\nclass A {}\n");
+    Path deleted = write("src/p/B.groovy", "package p\nclass B {}\n");
+    write("src/p/Same.groovy", "package p\nclass Same {}\n");
+    DeclarationIndex index = new DeclarationIndex(Set.of());
+    index.addRoots(List.of(root));
+
+    Files.writeString(edited, "package p\nclass A2 {}\n");
+    Files.setLastModifiedTime(edited, java.nio.file.attribute.FileTime.fromMillis(Files.getLastModifiedTime(edited).toMillis() + 2000));
+    Files.delete(deleted);
+    Path created = write("src/q/C.groovy", "package q\nclass C {}\n");
+    DeclarationIndex.Changes changes = index.rescan();
+    assertEquals(Set.of(edited, deleted, created), Set.copyOf(changes.files), "only the files that changed are read again");
+    assertTrue(changes.declarations);
+    assertNull(index.fileOf("p.A", List.of(root)));
+    assertEquals(edited, index.fileOf("p.A2", List.of(root)));
+    assertNull(index.fileOf("p.B", List.of(root)));
+    assertEquals(created, index.fileOf("q.C", List.of(root)));
+    assertEquals(List.of(), index.rescan().files, "nothing changed since");
   }
 }

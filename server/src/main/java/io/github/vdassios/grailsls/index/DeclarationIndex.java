@@ -8,6 +8,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.nio.file.attribute.FileTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
@@ -15,10 +16,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.BiConsumer;
 
 /**
  * Maps type names to the Groovy files that declare them, per source root. Built by a scan of the roots, then kept
- * current file by file ({@link #update}). The modules' build directories are never source, wherever they lie.
+ * current file by file ({@link #update}) and by {@link #rescan}. The modules' build directories are never source,
+ * wherever they lie.
  */
 public final class DeclarationIndex {
   private final Map<Path, Root> roots = new ConcurrentHashMap<>();
@@ -40,9 +43,9 @@ public final class DeclarationIndex {
   public Path fileOf(String className, List<Path> searchRoots) {
     for (Path path : searchRoots) {
       Root root = roots.get(path);
-      Path file = root == null ? null : root.files.get(className);
-      if (file != null) {
-        return file;
+      List<Path> declaring = root == null ? null : root.files.get(className);
+      if (declaring != null) {
+        return declaring.get(0);
       }
     }
     return null;
@@ -65,16 +68,71 @@ public final class DeclarationIndex {
     return new ArrayList<>(found);
   }
 
-  /** Re-reads one file after it was saved, created or deleted. Files outside every root are ignored. */
-  public void update(Path file) {
-    if (!file.toString().endsWith(".groovy")) {
-      return;
+  /**
+   * Re-reads what changed at {@code path}: a Groovy file that was saved, created, changed on disk or deleted, or a
+   * directory that was created or deleted (a deleted one takes every file below it). Other files, and paths outside
+   * every root or in a build directory, are ignored.
+   */
+  public Changes update(Path path) {
+    if (path.toString().endsWith(".groovy")) {
+      Changes changes = new Changes();
+      for (Root root : roots.values()) {
+        if (path.startsWith(root.path) && isSource(path)) {
+          root.reindex(path, changes);
+        }
+      }
+      return changes;
     }
+    if (Files.exists(path) && !Files.isDirectory(path)) {
+      return new Changes();
+    }
+    return sync(path);
+  }
+
+  /** Brings every root in line with the disk: files created, deleted or modified since they were read (by modification time). */
+  public Changes rescan() {
+    Changes changes = new Changes();
     for (Root root : roots.values()) {
-      if (file.startsWith(root.path) && isSource(file)) {
-        root.reindex(file);
+      sync(root, root.path, changes);
+    }
+    return changes;
+  }
+
+  /** {@link #rescan} below {@code dir}, an existing or deleted directory. */
+  private Changes sync(Path dir) {
+    Changes changes = new Changes();
+    for (Root root : roots.values()) {
+      if (dir.startsWith(root.path) && isSource(dir)) {
+        sync(root, dir, changes);
+      } else if (root.path.startsWith(dir)) {
+        sync(root, root.path, changes); // the root itself went or came back
       }
     }
+    return changes;
+  }
+
+  private void sync(Root root, Path dir, Changes changes) {
+    Map<Path, FileTime> onDisk = new HashMap<>();
+    walk(dir, (file, attrs) -> onDisk.put(file, attrs.lastModifiedTime()));
+    Map<Path, FileTime> known = root.modifiedBelow(dir);
+    onDisk.forEach((file, modified) -> {
+      if (!modified.equals(known.get(file))) {
+        root.reindex(file, changes);
+      }
+    });
+    for (Path file : known.keySet()) {
+      if (!onDisk.containsKey(file)) {
+        root.reindex(file, changes);
+      }
+    }
+  }
+
+  /** What an update or rescan changed. */
+  public static final class Changes {
+    /** The files read again, deleted ones included. */
+    public final List<Path> files = new ArrayList<>();
+    /** Whether a type name was added or removed, or moved to another file. */
+    public boolean declarations;
   }
 
   /** The Groovy files indexed below {@code paths}, each once. */
@@ -96,7 +154,7 @@ public final class DeclarationIndex {
 
   /** Files indexed over all roots. */
   public int files() {
-    return roots.values().stream().mapToInt(r -> r.namesByFile.size()).sum();
+    return roots.values().stream().mapToInt(Root::fileCount).sum();
   }
 
   /** True unless the file or directory lies in a module's build directory. */
@@ -106,20 +164,26 @@ public final class DeclarationIndex {
 
   private Root scan(Path path) {
     Root root = new Root(path);
-    if (!Files.isDirectory(path)) {
-      return root;
+    walk(path, (file, attrs) -> root.reindex(file, new Changes()));
+    return root;
+  }
+
+  /** Visits the Groovy files below {@code dir} (nothing when it does not exist), skipping the build directories. */
+  private void walk(Path dir, BiConsumer<Path, BasicFileAttributes> visit) {
+    if (!Files.isDirectory(dir)) {
+      return;
     }
     try {
-      Files.walkFileTree(path, new SimpleFileVisitor<>() {
+      Files.walkFileTree(dir, new SimpleFileVisitor<>() {
         @Override
-        public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
-          return buildDirs.contains(dir) ? FileVisitResult.SKIP_SUBTREE : FileVisitResult.CONTINUE;
+        public FileVisitResult preVisitDirectory(Path child, BasicFileAttributes attrs) {
+          return buildDirs.contains(child) ? FileVisitResult.SKIP_SUBTREE : FileVisitResult.CONTINUE;
         }
 
         @Override
         public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
-          if (file.toString().endsWith(".groovy")) {
-            root.reindex(file);
+          if (attrs.isRegularFile() && file.toString().endsWith(".groovy")) {
+            visit.accept(file, attrs);
           }
           return FileVisitResult.CONTINUE;
         }
@@ -132,40 +196,81 @@ public final class DeclarationIndex {
     } catch (IOException e) {
       throw new UncheckedIOException(e);
     }
-    return root;
   }
 
+  /**
+   * One root's files and names. Every file declaring a name is kept, in the order they were read, and the first answers:
+   * a rename delivered as create-then-delete has two for a moment, and the class must outlive the delete.
+   */
   private static final class Root {
     final Path path;
-    final Map<String, Path> files = new ConcurrentHashMap<>();
-    final Map<Path, List<String>> namesByFile = new HashMap<>();
+    /** Name to its declaring files; each list is replaced, never changed, so readers need no lock. */
+    final Map<String, List<Path>> files = new ConcurrentHashMap<>();
+    final Map<Path, Entry> byFile = new HashMap<>();
 
     Root(Path path) {
       this.path = path;
     }
 
     synchronized List<Path> files() {
-      return new ArrayList<>(namesByFile.keySet());
+      return new ArrayList<>(byFile.keySet());
     }
 
-    synchronized void reindex(Path file) {
-      List<String> old = namesByFile.remove(file);
-      if (old != null) {
-        old.forEach(name -> files.remove(name, file));
-      }
-      List<String> names;
-      try {
-        names = Declarations.of(Files.readString(file, StandardCharsets.UTF_8));
-      } catch (IOException e) {
-        return; // deleted or unreadable
-      }
-      List<String> added = new ArrayList<>();
-      for (String name : names) {
-        if (files.putIfAbsent(name, file) == null) {
-          added.add(name);
+    synchronized int fileCount() {
+      return byFile.size();
+    }
+
+    /** Modification times of the files indexed below {@code dir}, as last read. */
+    synchronized Map<Path, FileTime> modifiedBelow(Path dir) {
+      Map<Path, FileTime> found = new HashMap<>();
+      byFile.forEach((file, entry) -> {
+        if (file.startsWith(dir)) {
+          found.put(file, entry.modified);
         }
+      });
+      return found;
+    }
+
+    synchronized void reindex(Path file, Changes changes) {
+      changes.files.add(file);
+      Entry old = byFile.remove(file);
+      List<String> oldNames = old == null ? List.of() : old.names;
+      for (String name : oldNames) {
+        files.computeIfPresent(name, (n, declaring) -> {
+          List<Path> rest = new ArrayList<>(declaring);
+          rest.remove(file);
+          return rest.isEmpty() ? null : List.copyOf(rest);
+        });
       }
-      namesByFile.put(file, added);
+      List<String> names = List.of();
+      try {
+        // the time first: a write after it is seen by the next rescan
+        FileTime modified = Files.getLastModifiedTime(file);
+        names = List.copyOf(new LinkedHashSet<>(Declarations.of(Files.readString(file, StandardCharsets.UTF_8))));
+        byFile.put(file, new Entry(modified, names));
+      } catch (IOException e) {
+        // deleted or unreadable
+      }
+      for (String name : names) {
+        files.merge(name, List.of(file), (declaring, added) -> {
+          List<Path> all = new ArrayList<>(declaring);
+          all.add(file);
+          return List.copyOf(all);
+        });
+      }
+      if (!oldNames.equals(names)) {
+        changes.declarations = true;
+      }
+    }
+  }
+
+  private static final class Entry {
+    final FileTime modified;
+    final List<String> names;
+
+    Entry(FileTime modified, List<String> names) {
+      this.modified = modified;
+      this.names = names;
     }
   }
 }
