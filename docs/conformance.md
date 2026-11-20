@@ -48,7 +48,7 @@ Every feature of the [Grails VS Code extension](https://github.com/Johan070119/G
 | GSP | `<g:render template="row">` | `_row.gsp` | covered |
 | GSP | `controller="book" action="show"` | the action | covered |
 | GSP | `<app:badge>` | the tag's closure in the project's taglib | covered |
-| GSP | `<asset:javascript src="application.js">` | the asset | covered (assets inside plugin jars are not looked up) |
+| GSP | `<asset:javascript src="application.js">` | the asset | covered (assets inside plugin jars are not looked up; they get no "missing" hint) |
 | GSP | `<meta name="layout" content="main">` | the layout | covered |
 
 ## Other features (Grails VS Code extension)

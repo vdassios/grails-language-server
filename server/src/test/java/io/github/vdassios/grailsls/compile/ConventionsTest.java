@@ -8,6 +8,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
@@ -264,5 +265,41 @@ abstract class ConventionsTest {
       assertEquals(List.of((nowhere[0] + 1) + ":" + (nowhere[1] + 1) + " No view '/nowhere/index': grails-app/views/nowhere/index.gsp does not exist",
           (gone[0] + 1) + ":" + (gone[1] + 1) + " No template 'gone': grails-app/views/" + app().controller + "/_gone.gsp does not exist"), messages(result, Diagnostic.HINT));
     }
+  }
+
+  /**
+   * No hint where the file may come from somewhere the server does not model: a relative name in a namespaced or
+   * abstract controller (whose views depend on the namespace or the subclass), a {@code plugin} or {@code contextPath}
+   * argument, a view a plugin jar supplies. An absolute name in such a controller is still checked.
+   */
+  @Test
+  void noHintWhereTheFileMayComeFromElsewhere() throws Exception {
+    try (Workspace workspace = workspace()) {
+      String relative = "def a() { render(view: 'gone') }";
+      String absolute = "def b() { render(view: '/nowhere/index') }";
+      String nowhere = "No view '/nowhere/index': grails-app/views/nowhere/index.gsp does not exist";
+      Map<String, List<String>> found = new TreeMap<>();
+      Map<String, List<String>> expected = new TreeMap<>();
+      found.put("namespaced", hints(workspace, controllerWith("static namespace = 'admin'", relative, absolute), Set.of()));
+      expected.put("namespaced", List.of(nowhere));
+      found.put("abstract", hints(workspace, controllerWith(relative, absolute).replace("class " + cap(), "abstract class " + cap()), Set.of()));
+      expected.put("abstract", List.of(nowhere));
+      found.put("plugin and contextPath",
+          hints(workspace, controllerWith("def a() { render(template: 'gone', plugin: 'x') }", "def b() { render(view: '/nowhere/index', contextPath: '/p') }"), Set.of()));
+      expected.put("plugin and contextPath", List.of());
+      String plugged = controllerWith("def a() { render(view: '/login/auth') }", "def b() { render(template: 'part') }", "def c() { render(view: '/login/gone') }");
+      found.put("plugin's views", hints(workspace, plugged, Set.of("views/login/auth.gsp", fill("views/ctrl/_part.gsp"))));
+      expected.put("plugin's views", List.of("No view '/login/gone': grails-app/views/login/gone.gsp does not exist"));
+      assertEquals(expected, found);
+    }
+  }
+
+  /** The hints of the controller with {@code text}, compiled as if the class path's jars supplied {@code pluginFiles}. */
+  private List<String> hints(Workspace workspace, String text, Set<String> pluginFiles) throws Exception {
+    CompileContext context = workspace.contextOf(controller());
+    CompileRequest request = new CompileRequest(controller().toString(), text, new WithPluginFiles(workspace.lookup(context, p -> null), pluginFiles), () -> false);
+    CompileResult result = context.compile(request).get(120, TimeUnit.SECONDS);
+    assertEquals(List.of(), messages(result, Diagnostic.ERROR));
+    return result.diagnostics.stream().filter(d -> d.severity == Diagnostic.HINT).map(d -> d.message).collect(Collectors.toList());
   }
 }

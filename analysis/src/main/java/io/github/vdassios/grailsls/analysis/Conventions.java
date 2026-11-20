@@ -2,6 +2,7 @@ package io.github.vdassios.grailsls.analysis;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.lang.reflect.Modifier;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -222,6 +223,16 @@ public final class Conventions {
     return name.endsWith(CONTROLLER) && name.length() > CONTROLLER.length() ? logicalName(name.substring(0, name.length() - CONTROLLER.length())) : null;
   }
 
+  /**
+   * Whether the views of a controller's relative names depend on more than its name: it declares {@code static
+   * namespace} (Grails looks below {@code views/<namespace>/} first) or is abstract (its subclasses render them).
+   */
+  private static boolean viewsUnknown(ClassNode type) {
+    ClassNode top = topLevel(type);
+    FieldNode namespace = top.getField("namespace");
+    return Modifier.isAbstract(top.getModifiers()) || namespace != null && namespace.isStatic();
+  }
+
   private boolean urlMappings(ClassNode type) {
     ClassNode top = topLevel(type);
     return top != null && top.getNameWithoutPackage().endsWith("UrlMappings") && inGrailsApp("controllers");
@@ -280,14 +291,21 @@ public final class Conventions {
       return null;
     }
     if (reference.kind == Kind.ASSET) {
-      return assetFile(reference) != null || assetDirs().isEmpty() ? null : "No asset '" + reference.value + "' under any grails-app/assets/*/";
+      return assetFile(reference) != null || assetDirs().isEmpty() || fromPlugin("assets/", assetPaths(reference)) ? null
+          : "No asset '" + reference.value + "' under any grails-app/assets/*/";
     }
     List<String> paths = viewPaths(reference);
-    if (paths.isEmpty() || viewFile(reference) != null) {
+    if (paths.isEmpty() || viewFile(reference) != null || fromPlugin("", paths)) {
       return null;
     }
     String what = reference.kind == Kind.TEMPLATE ? "template" : reference.kind == Kind.LAYOUT ? "layout" : "view";
     return "No " + what + " '" + reference.value + "': grails-app/" + paths.get(0) + " does not exist";
+  }
+
+  /** Whether a jar of the class path supplies one of the paths, below {@code grails-app} after {@code prefix}. */
+  private boolean fromPlugin(String prefix, List<String> paths) {
+    Set<String> files = lookup.pluginFiles();
+    return !files.isEmpty() && paths.stream().anyMatch(path -> files.contains(prefix + path));
   }
 
   // assets
@@ -908,7 +926,11 @@ public final class Conventions {
 
   // hints
 
-  /** A hint for each {@code render(view:)} and {@code render(template:)} whose file does not exist. */
+  /**
+   * A hint for each {@code render(view:)} and {@code render(template:)} whose file does not exist. None where the file
+   * may come from somewhere not modelled: a call with a {@code plugin} or {@code contextPath} argument, a relative
+   * name in a controller whose views depend on more than its name ({@link #viewsUnknown}), a plugin's file.
+   */
   List<Diagnostic> problems(ModuleNode module) {
     List<Diagnostic> problems = new ArrayList<>();
     if (grailsApps().isEmpty()) {
@@ -917,6 +939,7 @@ public final class Conventions {
     Set<String> seen = new HashSet<>();
     for (ClassNode type : module.getClasses()) {
       String controller = controllerName(type);
+      boolean relativeUnknown = viewsUnknown(type);
       new ClassCodeVisitorSupport() {
         @Override
         protected SourceUnit getSourceUnit() {
@@ -926,7 +949,7 @@ public final class Conventions {
         @Override
         public void visitMethodCallExpression(MethodCallExpression call) {
           super.visitMethodCallExpression(call);
-          if (!"render".equals(call.getMethodAsString()) || !call.isImplicitThis()) {
+          if (!"render".equals(call.getMethodAsString()) || !call.isImplicitThis() || argumentValue(call, "plugin") != null || argumentValue(call, "contextPath") != null) {
             return;
           }
           for (MapEntryExpression entry : entries(call)) {
@@ -935,7 +958,7 @@ public final class Conventions {
               continue;
             }
             Reference reference = argument(call, entry.getKeyExpression().getText(), (String) ((ConstantExpression) value).getValue(), (ConstantExpression) value, controller, false);
-            Range range = reference == null ? null : NodeRanges.of(value);
+            Range range = reference == null || relativeUnknown && !reference.value.startsWith("/") ? null : NodeRanges.of(value);
             if (range == null || !seen.add(range.startLine + ":" + range.startColumn)) {
               continue;
             }

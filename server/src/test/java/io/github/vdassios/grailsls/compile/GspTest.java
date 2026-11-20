@@ -9,6 +9,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
@@ -284,6 +285,22 @@ abstract class GspTest {
         "3:18 No view 'nope': grails-app/views/" + c + "/nope.gsp does not exist",
         "4:24 No asset 'nope.css' under any grails-app/assets/*/",
         "5:22 No layout 'nope': grails-app/views/layouts/nope.gsp does not exist"), hints(compile(page(), page)));
+  }
+
+  /**
+   * No hint where the file may come from somewhere the server does not model: a tag with a {@code plugin} or
+   * {@code contextPath} attribute, a layout, template or asset a plugin jar supplies.
+   */
+  @Test
+  void noHintWhereTheFileMayComeFromAPluginOrAnotherPath() throws Exception {
+    String page = "<g:render template=\"nope\" plugin=\"x\"/>\n<g:render contextPath=\"/p\" template=\"/nowhere/nope\"/>\n<g:include view=\"nope\" plugin=\"x\"/>\n"
+        + "<meta name=\"layout\" content=\"plugged\"/>\n<g:render template=\"/templates/_fields/list\"/>\n<asset:javascript src=\"plugged.js\"/>\n"
+        + "<asset:stylesheet src=\"plugged.css\"/>\n<g:applyLayout name=\"plugged\">x</g:applyLayout>\n<g:render template=\"gone\"/>\n";
+    Set<String> pluginFiles = Set.of("views/layouts/plugged.gsp", "views/templates/_fields/_list.gsp", "assets/plugged.js", "assets/plugged.scss");
+    CompileContext context = workspace.contextOf(page());
+    CompileRequest request = new CompileRequest(page().toString(), page, new WithPluginFiles(workspace.lookup(context, open::get), pluginFiles), () -> false);
+    assertEquals(List.of("9:21 No template 'gone': grails-app/views/" + app().controller + "/_gone.gsp does not exist"),
+        hints(context.compile(request).get(120, TimeUnit.SECONDS)));
   }
 
   @Test

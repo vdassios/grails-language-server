@@ -2,6 +2,7 @@ package io.github.vdassios.grailsls.api;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /** Where the classes a compile needs are declared. Owned by the server: its declaration index and open documents. */
 public interface SourceLookup {
@@ -66,5 +67,15 @@ public interface SourceLookup {
    */
   default Map<String, String> taglibClasses() {
     return Map.of();
+  }
+
+  /**
+   * Files below {@code grails-app} that jars of the class path and of the run-time class path supply, so that a
+   * name Grails resolves by convention may come from a plugin: the views a jar lists as precompiled in its
+   * {@code gsp/views.properties} ({@code views/layouts/main.gsp}), and the files below a jar's {@code META-INF/assets/},
+   * by their path below an asset directory ({@code assets/application.js}).
+   */
+  default Set<String> pluginFiles() {
+    return Set.of();
   }
 }

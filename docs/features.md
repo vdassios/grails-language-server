@@ -37,7 +37,7 @@ Strings that name a view, template, layout, controller or action go to that file
 | `view:` in `UrlMappings` | an absolute view, or one of the `controller:` given beside it |
 
 - **Completion** of these strings offers the views and templates of the controller first, then every one by absolute path, the layouts, the controllers by logical name and the actions of the controller. The keys of `render` and `redirect` complete as named arguments.
-- **Hints** for a `render(view:)` or `render(template:)` whose file does not exist.
+- **Hints** for a `render(view:)` or `render(template:)` whose file does not exist. None where the file may come from somewhere the server does not model: a `render` with a `plugin` or `contextPath` argument, a relative name in a controller that declares `static namespace` or is abstract, a view a plugin jar on the class path lists as precompiled (`gsp/views.properties`).
 
 Not covered: actions inherited from a superclass in a jar (such as `RestfulController`), views of namespaced controllers, `grailsApplication.getXxxClasses()`. For GSP pages, see below.
 
@@ -62,9 +62,9 @@ The server reads a page's tags and attributes, then translates the page to Groov
 | `src` or `href` of `asset:stylesheet`, `javascript`, `image`, `assetPath`, `link` | the file below any `grails-app/assets/*/` directory; a stylesheet or script name also matches the extensions asset-pipeline compiles (`.scss`, `.less`, `.ts`, ...) |
 | `controller` and `action` of any `g:` tag | the controller class, and the action in the tag's controller or the page's |
 
-  A page's controller is the first directory below `views/` (`views/book/show.gsp` and `views/book/part/x.gsp` belong to `book`), which is how Grails resolves relative names. A value holding `${ }` or a URL names nothing. Hints: a template, view, layout or asset that does not exist.
+  A page's controller is the first directory below `views/` (`views/book/show.gsp` and `views/book/part/x.gsp` belong to `book`), which is how Grails resolves relative names. A value holding `${ }` or a URL names nothing. Hints: a template, view, layout or asset that does not exist; none for a tag with a `plugin` or `contextPath` attribute, nor for a view, template or layout a plugin jar lists as precompiled (`gsp/views.properties`) or an asset below a jar's `META-INF/assets/`.
 
-Not covered: assets that come from plugin jars (`META-INF/assets`), `contextPath` and `plugin` attributes of `g:render`.
+Not covered: assets that come from plugin jars (`META-INF/assets`), `contextPath` and `plugin` attributes of `g:render` (no definition; no hint either).
 
 ## Library sources
 

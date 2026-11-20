@@ -1,6 +1,7 @@
 package io.github.vdassios.grailsls.compile;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.Reader;
 import java.io.UncheckedIOException;
 import java.net.URL;
@@ -60,8 +61,10 @@ public final class Workspace implements AutoCloseable {
   private final ClassSources classSources;
   /** Every module's {@code grails-app} directory that exists. */
   private final List<Path> grailsApps = new ArrayList<>();
-  /** The taglib classes of each jar of the contexts' class paths, read once. */
-  private final Map<Path, List<String>> jarTaglibs = new ConcurrentHashMap<>();
+  /** What each jar of the contexts' class paths holds, read once. */
+  private final Map<Path, JarContents> jars = new ConcurrentHashMap<>();
+  /** Per context, {@link SourceLookup#pluginFiles()}. */
+  private final Map<CompileContext, Set<String>> pluginFiles = new ConcurrentHashMap<>();
   /**
    * Per context, jars not on its class path whose taglibs its pages may use: its own runtime-only jars
    * ({@link SourceSetRecord#runtimeOnly}, e.g. Grails 7's {@code RenderTagLib}), then the main class path and
@@ -237,16 +240,39 @@ public final class Workspace implements AutoCloseable {
    */
   Map<String, String> taglibClasses(CompileContext context) {
     Map<String, String> found = new LinkedHashMap<>();
-    List<Path> jars = new ArrayList<>(context.classpath());
-    jars.addAll(pageJars.getOrDefault(context, List.of()));
-    for (Path entry : jars) {
-      if (entry.getFileName() != null && entry.getFileName().toString().endsWith(".jar")) {
-        for (String name : jarTaglibs.computeIfAbsent(entry, Workspace::taglibsIn)) {
-          found.putIfAbsent(name, entry.toString());
-        }
+    for (Path jar : jarsOf(context)) {
+      for (String name : contents(jar).taglibs) {
+        found.putIfAbsent(name, jar.toString());
       }
     }
     return found;
+  }
+
+  /** {@link SourceLookup#pluginFiles()} of the jars of a context's class path and of its {@link #pageJars}. */
+  Set<String> pluginFiles(CompileContext context) {
+    return pluginFiles.computeIfAbsent(context, c -> {
+      Set<String> files = new LinkedHashSet<>();
+      for (Path jar : jarsOf(c)) {
+        files.addAll(contents(jar).pluginFiles);
+      }
+      return Set.copyOf(files);
+    });
+  }
+
+  /** The jars of a context's class path, then its {@link #pageJars}. */
+  private List<Path> jarsOf(CompileContext context) {
+    List<Path> found = new ArrayList<>();
+    for (Path entry : context.classpath()) {
+      if (entry.getFileName() != null && entry.getFileName().toString().endsWith(".jar")) {
+        found.add(entry);
+      }
+    }
+    found.addAll(pageJars.getOrDefault(context, List.of()));
+    return found;
+  }
+
+  private JarContents contents(Path jar) {
+    return jars.computeIfAbsent(jar, JarContents::read);
   }
 
   /** A class file in one of the context's {@link #pageJars}, as a {@code jar:} URL; null when none holds it. */
@@ -263,20 +289,60 @@ public final class Workspace implements AutoCloseable {
     return null;
   }
 
-  private static List<String> taglibsIn(Path jar) {
-    List<String> names = new ArrayList<>();
-    try (ZipFile zip = new ZipFile(jar.toFile())) {
-      Enumeration<? extends ZipEntry> entries = zip.entries();
-      while (entries.hasMoreElements()) {
-        String name = entries.nextElement().getName();
-        if (name.endsWith("TagLib.class") && !name.contains("$") && !name.endsWith("/TagLib.class") && !name.startsWith("META-INF/")) {
-          names.add(name.substring(0, name.length() - ".class".length()).replace('/', '.'));
+  /** What a jar holds that the analysis asks for by name: its taglib classes and the {@code grails-app} files it supplies. */
+  static final class JarContents {
+    private static final JarContents NONE = new JarContents(List.of(), List.of());
+    private static final String VIEWS = "gsp/views.properties";
+    private static final String ASSETS = "META-INF/assets/";
+
+    /** Binary names of the classes named {@code *TagLib}. */
+    final List<String> taglibs;
+    /** {@link SourceLookup#pluginFiles()} of this jar. */
+    final List<String> pluginFiles;
+
+    private JarContents(List<String> taglibs, List<String> pluginFiles) {
+      this.taglibs = taglibs;
+      this.pluginFiles = pluginFiles;
+    }
+
+    static JarContents read(Path jar) {
+      List<String> taglibs = new ArrayList<>();
+      List<String> files = new ArrayList<>();
+      try (ZipFile zip = new ZipFile(jar.toFile())) {
+        Enumeration<? extends ZipEntry> entries = zip.entries();
+        while (entries.hasMoreElements()) {
+          ZipEntry entry = entries.nextElement();
+          String name = entry.getName();
+          if (name.endsWith("TagLib.class") && !name.contains("$") && !name.endsWith("/TagLib.class") && !name.startsWith("META-INF/")) {
+            taglibs.add(name.substring(0, name.length() - ".class".length()).replace('/', '.'));
+          } else if (name.startsWith(ASSETS) && !entry.isDirectory() && name.length() > ASSETS.length()) {
+            files.add("assets/" + name.substring(ASSETS.length()));
+          } else if (name.equals(VIEWS)) {
+            files.addAll(views(zip, entry));
+          }
+        }
+      } catch (IOException e) {
+        // not a jar: the class path skips it too
+        return NONE;
+      }
+      return new JarContents(List.copyOf(taglibs), List.copyOf(files));
+    }
+
+    /** A plugin's precompiled views: {@code /WEB-INF/grails-app/views/login/auth.gsp=gsp_..._loginauth_gsp} → {@code views/login/auth.gsp}. */
+    private static List<String> views(ZipFile zip, ZipEntry entry) throws IOException {
+      Properties properties = new Properties();
+      try (InputStream in = zip.getInputStream(entry)) {
+        properties.load(in);
+      }
+      List<String> views = new ArrayList<>();
+      for (String key : properties.stringPropertyNames()) {
+        int at = key.indexOf("grails-app/");
+        if (at >= 0) {
+          views.add(key.substring(at + "grails-app/".length()));
         }
       }
-    } catch (IOException e) {
-      // not a jar: the class path skips it too
+      return views;
     }
-    return names;
   }
 
   /** Class lookup for compiles in {@code context}: the declaration index over its search roots, and open text. */
@@ -321,6 +387,11 @@ public final class Workspace implements AutoCloseable {
       @Override
       public Map<String, String> taglibClasses() {
         return Workspace.this.taglibClasses(context);
+      }
+
+      @Override
+      public Set<String> pluginFiles() {
+        return Workspace.this.pluginFiles(context);
       }
 
       @Override

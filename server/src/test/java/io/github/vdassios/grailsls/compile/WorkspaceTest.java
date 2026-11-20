@@ -226,4 +226,38 @@ class WorkspaceTest {
       assertEquals(java.util.Map.of("t.OtherTagLib", otherJar.toString()), workspace.taglibClasses(other));
     }
   }
+
+  /**
+   * The files below {@code grails-app} that plugin jars supply, from the class path and the runtime-only jars: the
+   * precompiled views a jar's {@code gsp/views.properties} lists and the files below its {@code META-INF/assets/}.
+   */
+  @Test
+  void pluginJarsSupplyTheirPrecompiledViewsAndAssets() throws IOException {
+    Path views = tmp.resolve("repo/views.jar");
+    Files.createDirectories(views.getParent());
+    try (java.util.zip.ZipOutputStream out = new java.util.zip.ZipOutputStream(Files.newOutputStream(views))) {
+      out.putNextEntry(new java.util.zip.ZipEntry("gsp/views.properties"));
+      out.write(("#Precompiled views for p\n/WEB-INF/grails-app/views/login/auth.gsp=gsp_p_loginauth_gsp\n"
+          + "/WEB-INF/grails-app/views/layouts/_fields/embedded.gsp=gsp_p_layouts__fieldsembedded_gsp\n").getBytes(java.nio.charset.StandardCharsets.ISO_8859_1));
+      out.closeEntry();
+      out.putNextEntry(new java.util.zip.ZipEntry("gsp_p_loginauth_gsp.class"));
+      out.closeEntry();
+    }
+    Path assets = tmp.resolve("repo/assets.jar");
+    try (java.util.zip.ZipOutputStream out = new java.util.zip.ZipOutputStream(Files.newOutputStream(assets))) {
+      for (String name : List.of("META-INF/assets/", "META-INF/assets/p/", "META-INF/assets/p/plugged.js", "META-INF/assets/plugged.scss", "META-INF/assets.list")) {
+        out.putNextEntry(new java.util.zip.ZipEntry(name));
+        out.closeEntry();
+      }
+    }
+    Path dir = tmp.resolve("app");
+    Files.createDirectories(dir.resolve("grails-app/controllers"));
+    SourceSetRecord main = sourceSet("main", List.of(dir.resolve("grails-app/controllers")), List.of(views), List.of(), List.of());
+    main.runtimeOnly.add(assets.toString());
+    try (Workspace workspace = new Workspace(new ProjectModel(tmp, List.of(module(":app", dir, "4.0.33", List.of(), main)), false), tmp.resolve("analysis.jar"))) {
+      CompileContext app = workspace.contexts().get(0);
+      assertEquals(java.util.Set.of("views/login/auth.gsp", "views/layouts/_fields/embedded.gsp", "assets/p/plugged.js", "assets/plugged.scss"),
+          workspace.lookup(app, p -> null).pluginFiles());
+    }
+  }
 }

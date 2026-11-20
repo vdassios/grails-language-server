@@ -104,6 +104,10 @@ final class GspViews {
     Conventions files = conventions.apply(request.lookup, request.path);
     String controller = viewController(viewDir(request.path));
     for (GspScanner.Tag tag : page.tags) {
+      if (tag.attribute("plugin") != null || tag.attribute("contextPath") != null) {
+        // the file is looked up in a plugin or below another path: not modelled, so no hint
+        continue;
+      }
       for (GspScanner.Attribute attribute : tag.attributes) {
         Conventions.Reference reference = reference(tag, attribute, attribute.value, controller);
         String missing = reference == null || reference.kind == Conventions.Kind.CONTROLLER || reference.kind == Conventions.Kind.ACTION ? null : files.missing(reference);
