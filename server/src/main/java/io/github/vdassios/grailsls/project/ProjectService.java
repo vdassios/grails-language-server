@@ -31,6 +31,8 @@ public final class ProjectService {
   private final Consumer<StatusParams> status;
   private final Function<ProjectModel, String> onModel;
   private Future<?> running;
+  /** Whether the cache has been pruned: once, before the first resolution. */
+  private boolean pruned;
   private volatile ProjectModel model;
 
   /**
@@ -128,6 +130,10 @@ public final class ProjectService {
 
   private void resolve(boolean force) {
     status.accept(new StatusParams(StatusParams.RESOLVING, "reading the Gradle build in " + workspaceRoot));
+    if (!pruned) {
+      pruned = true;
+      bridge.prune(); // on this thread: never while this server reads or writes its own entries
+    }
     try {
       ProjectModel resolved = bridge.resolve(workspaceRoot, force);
       String unsupported = unsupportedGroovy(resolved);

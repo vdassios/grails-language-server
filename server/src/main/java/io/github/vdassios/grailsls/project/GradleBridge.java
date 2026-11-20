@@ -11,9 +11,11 @@ import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.nio.file.attribute.FileTime;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -42,6 +44,9 @@ public final class GradleBridge {
   private static final String WRAPPER = WINDOWS ? "gradlew.bat" : "gradlew";
   /** Directories not searched for build files (build output, caches, VCS and tool dirs), unless one holds a build script: a module may be named so. */
   private static final Set<String> SKIP_DIRS = Set.of("build", "out", "bin", "target", ".gradle", ".git", ".idea", "node_modules");
+
+  /** How long a cache entry may go unused before {@link #prune} deletes it. */
+  static final Duration UNUSED = Duration.ofDays(30);
 
   private final Gson gson = new Gson();
   private final Path cacheDir;
@@ -86,6 +91,7 @@ public final class GradleBridge {
     if (!force) {
       CachedModel cached = readCache(cacheFile);
       if (cached != null && key.equals(cached.key) && jarsExist(cached.modules)) {
+        touch(dir);
         return new ProjectModel(buildRoot, cached.modules, true);
       }
     }
@@ -95,6 +101,27 @@ public final class GradleBridge {
     fresh.modules = modules;
     writeAtomically(cacheFile, gson.toJson(fresh));
     return new ProjectModel(buildRoot, modules, false);
+  }
+
+  /**
+   * Deletes what no server has used for {@link #UNUSED}: the model directories of builds not resolved or read from the
+   * cache in that time, and analysis jars of server versions not started in it ({@code AnalysisJar} marks its own on
+   * each use). An entry still in use elsewhere is newer, so concurrent servers keep theirs.
+   */
+  public void prune() {
+    FileTime cutoff = FileTime.from(Instant.now().minus(UNUSED));
+    try (Stream<Path> entries = Files.list(cacheDir)) {
+      for (Path entry : (Iterable<Path>) entries::iterator) {
+        String name = entry.getFileName().toString();
+        boolean modelDir = name.matches("[0-9a-f]{16}") && Files.isDirectory(entry);
+        boolean analysisJar = name.startsWith("analysis-") && name.endsWith(".jar");
+        if ((modelDir || analysisJar) && Files.getLastModifiedTime(entry).compareTo(cutoff) < 0) {
+          deleteQuietly(entry);
+        }
+      }
+    } catch (IOException | UncheckedIOException e) {
+      // no cache yet, or it cannot be listed: nothing to prune
+    }
   }
 
   /**
@@ -460,7 +487,16 @@ public final class GradleBridge {
         Files.deleteIfExists(p);
       }
     } catch (IOException | UncheckedIOException e) {
-      // left behind
+      // left behind; the model directory's prune removes it
+    }
+  }
+
+  /** Marks a model directory as used now, for {@link #prune}. */
+  private static void touch(Path dir) {
+    try {
+      Files.setLastModifiedTime(dir, FileTime.from(Instant.now()));
+    } catch (IOException e) {
+      // only delays the prune
     }
   }
 

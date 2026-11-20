@@ -118,6 +118,46 @@ class GradleBridgeTest {
     assertEquals(":", second.modules.get(0).path);
   }
 
+  private static void age(Path path, Duration age) throws Exception {
+    Files.setLastModifiedTime(path, java.nio.file.attribute.FileTime.from(java.time.Instant.now().minus(age)));
+  }
+
+  /** Entries unused for 30 days go; a model read from the cache counts as used, and so does an analysis jar. */
+  @Test
+  void prunesWhatNoServerUsedFor30Days() throws Exception {
+    Path cache = tmp.resolve("cache");
+    Path root = project(FakeWrapper.WRITES_MODEL);
+    GradleBridge bridge = bridge(Duration.ofSeconds(30));
+    bridge.resolve(root, false);
+    Path used = cacheFile(root).getParent();
+    age(used, Duration.ofDays(40));
+    assertTrue(bridge.resolve(root, false).fromCache);
+    Path oldModel = Files.createDirectories(cache.resolve("0123456789abcdef/out"));
+    Files.writeString(oldModel.resolveSibling("model.json"), "{}");
+    age(oldModel.getParent(), Duration.ofDays(31));
+    Path recentModel = Files.createDirectories(cache.resolve("fedcba9876543210"));
+    age(recentModel, Duration.ofDays(29));
+    Path oldJar = Files.writeString(cache.resolve("analysis-0000000000000000.jar"), "");
+    age(oldJar, Duration.ofDays(31));
+    Path usedJar = Files.writeString(cache.resolve("analysis-1111111111111111.jar"), "");
+    age(usedJar, Duration.ofDays(31));
+    Path sources = Files.createDirectories(cache.resolve("sources"));
+    age(sources, Duration.ofDays(31));
+    Path current = io.github.vdassios.grailsls.compile.AnalysisJar.extract(cache);
+    age(current, Duration.ofDays(31));
+    io.github.vdassios.grailsls.compile.AnalysisJar.extract(cache);
+
+    bridge.prune();
+
+    assertTrue(Files.isDirectory(used), "touched by the cache hit");
+    assertFalse(Files.exists(oldModel.getParent()));
+    assertTrue(Files.isDirectory(recentModel));
+    assertFalse(Files.exists(oldJar));
+    assertFalse(Files.exists(usedJar));
+    assertTrue(Files.isRegularFile(current));
+    assertTrue(Files.isDirectory(sources), "library sources are not the prune's");
+  }
+
   @Test
   void aRunLeavesNoOutputDirectoryBehind() throws Exception {
     Path root = project(FakeWrapper.WRITES_MODEL);
