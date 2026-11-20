@@ -128,7 +128,7 @@ abstract class GspTranslationTest {
       "%{-- one\ntwo --}%\n<%-- three\nfour --%>\n<p>\n  ${x.y}\n</p>\n",
       "<p>${(a)} ${a.b?} <%= c %> ${ d }</p>\n<g:if test=\"${e}\">f</g:if><g:else>${g}</g:else>\n",
       "<g:set var=\"t\" value=\"${\"x ${y}\"}\"/>\n<g:link title=\"a ${b} c\" params=\"[d: e]\">${t}</g:link>\n",
-      "<g:each in=\"${[1, 2]}\" var=\"n\">\\${n}</g:each>\n");
+      "<g:render template=\"row\" model=\"[ a: b ]\"/>\n<g:each in=\"[1, 2]\" var=\"n\">\\${n}</g:each>\n");
 
   @Test
   void theGeneratedTextIsGrailsOwn() throws ReflectiveOperationException {
@@ -190,6 +190,19 @@ abstract class GspTranslationTest {
     assertTrue(generatedAt(gstrings, at(attributes, "b}", 0, 0)).startsWith("b}"), gstrings.groovy);
     assertTrue(generatedAt(gstrings, at(attributes, "t}", 0, 0)).startsWith("t)"), gstrings.groovy);
     assertNull(gstrings.toGroovy(at(attributes, "<g:link", 0, 1)[0], at(attributes, "<g:link", 0, 1)[1]), "a tag is no code");
+  }
+
+  /** A {@code [...]} attribute value is code: Grails writes it out as it is. */
+  @Test
+  void listValuesMap() {
+    String page = PAGES.get(7);
+    GspTranslation translation = translate(page);
+    assertTrue(generatedAt(translation, at(page, "a: b", 0, 0)).startsWith("a: b ]"), translation.groovy);
+    assertTrue(generatedAt(translation, at(page, "1, 2", 0, 0)).startsWith("1, 2])"), translation.groovy);
+    roundTrip(translation, at(page, "b ]", 0, 0));
+    roundTrip(translation, at(page, "2]", 0, 0));
+    String params = PAGES.get(6);
+    assertTrue(generatedAt(translate(params), at(params, "d: e", 0, 0)).startsWith("d: e]"), translate(params).groovy);
   }
 
   /** Up to Grails 7 {@code \${} is an expression, the {@code \} text. */

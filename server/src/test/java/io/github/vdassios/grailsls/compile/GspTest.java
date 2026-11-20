@@ -371,6 +371,20 @@ abstract class GspTest {
     assertEquals(List.of("2:12 " + io.github.vdassios.grailsls.api.Diagnostic.ERROR), severities(result), result.diagnostics.toString());
   }
 
+  /** Grails writes a GSP tag's attribute value that is {@code [...]} out as Groovy: it is code. */
+  @Test
+  void aListAttributeValueIsCode() throws Exception {
+    String declared = "<%@ page import=\"fixture." + app().namespace + "." + domainType() + "\" %>\n<% def b = new " + domainType() + "() %>\n";
+    String page = declared + "<g:link action=\"index\" params=\"[id: b.validate()]\">x</g:link>\n";
+    assertEquals(List.of(), hints(compile(page(), page)));
+    String hover = query(page, "validate", 2, (a, path, line, column) -> a.hover(path, line, column));
+    assertTrue(hover != null && hover.contains("validate"), hover);
+    List<String> items = labels(completion(declared + "<g:link action=\"index\" params=\"[id: b.va]\">x</g:link>\n", "[id: b.va"));
+    assertTrue(items.contains("validate"), items.toString());
+    CompileResult error = compile(page(), "<p>\n<g:link action=\"index\" params=\"[a: new NoSuchType()]\">x</g:link>\n</p>\n");
+    assertEquals(List.of("2:36 " + io.github.vdassios.grailsls.api.Diagnostic.ERROR), severities(error), error.diagnostics.toString());
+  }
+
   @Test
   void aPageTheGspCompilerRejectsHasOneError() throws Exception {
     CompileResult result = compile(page(), "<p>\n<g:if test=\"${true}\">\n<p>x</p>\n");

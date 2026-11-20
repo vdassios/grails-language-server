@@ -90,7 +90,7 @@ class GspScannerTest {
 
   @Test
   void commentsDirectivesDeclarationsAndEmptyBodiesHoldNoCode() {
-    assertEquals(List.of(), code("<%-- ${a} --%> %{-- ${b} --}% <%@ page import=\"x.Y\" %> <%! int c %> <%!int d%> ${} ${ } <% %> %{ }%"));
+    assertEquals(List.of(), code("<%-- ${a} --%> %{-- ${b} --}% <%@ page import=\"x.Y\" %> <%! int c %> <%!int d%> ${} ${ } <% %> %{ }% <g:x a=\"[ ]\"/>"));
   }
 
   @Test
@@ -104,11 +104,38 @@ class GspScannerTest {
     assertEquals(-1, GspScanner.unclosedExpression("\\${a", true), "escaped: text");
   }
 
-  /** Grails 8 takes {@code \${} for text; up to Grails 7 the {@code \} is text and the expression code. */
+  /** Grails's parser writes an attribute value that is {@code [...]} as a whole out as Groovy: the code between the brackets. */
+  @Test
+  void aListValueOfAGspTagIsCode() {
+    String text = "<g:render template=\"row\" model=\"[ book: book ]\"/>\n<g:link params='[id: b.id]' title=\"[x] y\">z</g:link>";
+    assertEquals(List.of("book: book", "id: b.id"), code(text));
+    int[] model = GspScanner.code(text, false).get(0);
+    assertEquals(text.indexOf("[ book"), model[2], "opens at the [");
+    assertEquals(List.of("1, 2", "a: ${b}"), code("<g:each in=\"[1, 2]\"><g:x m=\"[a: ${b}]\"/></g:each>"), "the whole list, any ${ } in it too");
+    assertEquals(List.of("a"), code("<g:x m=\" [1]\" n=\"[1] \" o=\"${a}\"/>"), "only a value that starts and ends with a bracket");
+    assertEquals(List.of(), code("<a data-x=\"[1]\">x</a> <meta content=\"[2]\">"), "an HTML tag's value is text");
+  }
+
+  /** Inside a GSP tag Grails's scanner looks for {@code ${} only: scriptlets there are text. */
+  @Test
+  void insideAGspTagOnlyExpressionsAreCode() {
+    assertEquals(List.of("c", "d"), code("<g:if test=\"<% a %> %{ b }% ${c}\">${d}</g:if>"));
+    assertEquals(List.of("a", "b"), code("<p title=\"<% a %> %{ b }%\">"), "in an HTML tag they are code");
+    assertEquals(List.of(), code("</g:if x=\"${a}\">"), "an end tag holds none");
+  }
+
+  /** A namespace as Grails takes one: a letter, then letters, digits or {@code _}; any other tag is HTML. */
+  @Test
+  void aTagNamespaceIsAWord() {
+    assertEquals(List.of("g_2:x"), tags("<g_2:x/><my-ns:x/><2g:x/><a.b:x/>"));
+    assertEquals(List.of("a", "c"), code("<my-ns:x a=\"<% a %>\" b=\"[b]\" c=\"${c}\"/>"), "HTML: scriptlets are code, a list is text");
+  }
+
+  /** Grails 8 takes {@code \${} outside a GSP tag for text; up to Grails 7 the {@code \} is text and the expression code. */
   @Test
   void anEscapedExpressionIsTextOnGrails8Only() {
-    String text = "<p>\\${a}</p>";
-    assertEquals(List.of("a"), code(text, false));
-    assertEquals(List.of(), code(text, true));
+    String text = "<p>\\${a}</p><g:if test=\"\\${b}\">\\${c}</g:if>";
+    assertEquals(List.of("a", "b", "c"), code(text, false));
+    assertEquals(List.of("b"), code(text, true), "inside a GSP tag it is still an expression");
   }
 }

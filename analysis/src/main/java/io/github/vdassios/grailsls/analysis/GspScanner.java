@@ -2,10 +2,12 @@ package io.github.vdassios.grailsls.analysis;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Pattern;
 
 /**
  * Finds the GSP tags of a page ({@code <ns:name attr="v">}, {@code </ns:name>}, {@code <ns:name/>}): their namespace,
- * name and attributes, by offset. Expressions ({@code ${ }}), scriptlets ({@code <% %>}, {@code %{ }%}) and comments
+ * name and attributes, by offset; a namespace is a letter, then letters, digits or {@code _}, as Grails's scanner takes
+ * one (any other tag is HTML). Expressions ({@code ${ }}), scriptlets ({@code <% %>}, {@code %{ }%}) and comments
  * ({@code <%-- --%>}, {@code %{-- --}%}) are skipped, also inside attribute values. A tag not closed by the end of
  * the text ends there (one being typed). Of plain HTML tags only {@code <meta>} is reported (namespace {@code ""}), for
  * the layout a page names.
@@ -71,7 +73,7 @@ final class GspScanner {
   }
 
   private final String text;
-  /** Whether {@code \${} is text, as on Grails 8 ({@link #code}). */
+  /** Whether {@code \${} outside a GSP tag is text, as on Grails 8 ({@link #code}). */
   private final boolean escapes;
   private final List<Tag> tags = new ArrayList<>();
 
@@ -88,18 +90,35 @@ final class GspScanner {
   }
 
   /**
-   * The Groovy code of a page, as {@code {start, end, open}} offsets in text order: the body of each expression
-   * ({@code ${ }}, in attribute values too) and scriptlet ({@code <% %>}, {@code <%= %>}, {@code %{ }%}), without the
-   * surrounding white space, which the GSP compiler drops, and where the construct opens ({@code open}, the offset of
-   * its {@code ${}, {@code <%} or {@code %{}). Comments, directives ({@code <%@ %>}) and declarations ({@code <%! %>},
-   * which Grails rejects) hold none; an empty body is left out. {@code escapes}: {@code \${} is text, not an expression
-   * (Grails 8; up to Grails 7 the {@code \} is text and the expression code).
+   * The Groovy code of a page, the code regions Grails's {@code GroovyPageScanner} and {@code GroovyPageParser} find,
+   * as {@code {start, end, open}} offsets in text order: the body of each expression ({@code ${ }}) and scriptlet
+   * ({@code <% %>}, {@code <%= %>}, {@code %{ }%}), without the surrounding white space, which the GSP compiler drops,
+   * and where the construct opens ({@code open}, the offset of its {@code ${}, {@code <%} or {@code %{}). Inside a GSP
+   * tag only {@code ${ }} is code, and an attribute value that is {@code [...]} as a whole, which Grails writes out as
+   * Groovy ({@code model="[book: book]"}): the code between the brackets, {@code open} at the {@code [}. Comments,
+   * directives ({@code <%@ %>}) and declarations ({@code <%! %>}, which Grails rejects) hold none; an empty body is
+   * left out. {@code escapes}: {@code \${} outside a GSP tag is text, not an expression (Grails 8; up to Grails 7 the
+   * {@code \} is text and the expression code).
    */
   static List<int[]> code(String text, boolean escapes) {
     GspScanner scanner = new GspScanner(text, escapes);
     List<int[]> regions = new ArrayList<>();
     int i = 0;
     while (i < text.length()) {
+      if (text.charAt(i) == '<' && !text.startsWith("<%", i)) {
+        int found = scanner.tags.size();
+        int after = scanner.tag(i);
+        Tag tag = scanner.tags.size() > found ? scanner.tags.get(found) : null;
+        if (tag != null && !tag.namespace.isEmpty()) {
+          if (!tag.closing) {
+            scanner.tagCode(tag, regions);
+          }
+          i = Math.max(after, i + 1);
+        } else {
+          i++; // HTML, <meta> too: Grails reads on inside it
+        }
+        continue;
+      }
       int skipped = scanner.skipGsp(i, escapes);
       if (skipped == i) {
         i++;
@@ -115,6 +134,33 @@ final class GspScanner {
       i = skipped;
     }
     return regions;
+  }
+
+  /**
+   * The code of a GSP start tag, as Grails's scanner reads it there: each {@code ${ }} (never escaped), and the inside
+   * of each attribute value Grails's parser writes out as it is ({@code populateMapWithAttributes}: the value between
+   * the quotes starts with {@code [} and ends with {@code ]}), with any {@code ${ }} in it.
+   */
+  private void tagCode(Tag tag, List<int[]> regions) {
+    int i = tag.nameEnd;
+    while (i < tag.end) {
+      Attribute list = null;
+      for (Attribute attribute : tag.attributes) {
+        if (attribute.valueStart == i && attribute.value.length() >= 2 && attribute.value.startsWith("[") && attribute.value.endsWith("]")) {
+          list = attribute;
+        }
+      }
+      if (list != null) {
+        add(regions, list.valueStart + 1, list.valueEnd - 1, list.valueStart);
+        i = list.valueEnd;
+      } else if (text.startsWith("${", i)) {
+        int skipped = expressionEnd(i + 2);
+        add(regions, i + 2, text.charAt(skipped - 1) == '}' ? skipped - 1 : skipped, i);
+        i = skipped;
+      } else {
+        i++;
+      }
+    }
   }
 
   /** Adds a region without its surrounding white space, unless that leaves it empty. */
@@ -258,7 +304,7 @@ final class GspScanner {
     String namespace;
     int nameStart;
     int nameEnd;
-    if (i > nsStart && i < text.length() && text.charAt(i) == ':') {
+    if (i > nsStart && i < text.length() && text.charAt(i) == ':' && NAMESPACE.matcher(text.substring(nsStart, i)).matches()) {
       namespace = text.substring(nsStart, i);
       nameStart = i + 1;
       nameEnd = nameEnd(nameStart);
@@ -327,6 +373,9 @@ final class GspScanner {
     attributes.add(new Attribute(name, start, valueStart, valueEnd, text.substring(valueStart, valueEnd)));
     return Math.min(i + 1, text.length());
   }
+
+  /** A namespace as Grails's scanner takes one ({@code isTagNameSpacePattern}); any other is HTML. */
+  private static final Pattern NAMESPACE = Pattern.compile("\\p{Alpha}\\w*");
 
   private int nameEnd(int from) {
     int i = from;
