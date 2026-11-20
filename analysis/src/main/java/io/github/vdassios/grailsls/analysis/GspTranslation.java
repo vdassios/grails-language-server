@@ -25,10 +25,11 @@ import io.github.vdassios.grailsls.api.Range;
  * map both ways; anything else maps to a page line only.
  *
  * <p>
- * One adapter per Grails major (plan C8): the class has the same name from Grails 3 to 8 ({@code org.grails:grails-gsp}
- * up to 6, {@code org.apache.grails.views:grails-gsp-core} from 7); Grails 3 and 4 construct it from
- * {@code (name, uri, filename, source)}, Grails 5 to 8 take a {@code grails.config.ConfigMap} as well (null: the
- * defaults). A class path without the parser has no translation.
+ * The parser class has the same name from Grails 3 to 8 ({@code org.grails:grails-gsp} up to 6,
+ * {@code org.apache.grails.views:grails-gsp-core} from 7), and is read reflectively: up to Grails 5 it is constructed
+ * from {@code (name, uri, filename, source)}, from Grails 6 with a {@code grails.config.ConfigMap} as well (null: the
+ * defaults). {@code generateGsp(Writer)} runs it in precompile mode, so expressions come out as written, never in the
+ * {@code evaluate(...)} wrapper of development mode. A class path without the parser has no translation.
  */
 final class GspTranslation {
   static final String PARSER = "org.grails.gsp.compiler.GroovyPageParser";
@@ -175,7 +176,7 @@ final class GspTranslation {
     }
   }
 
-  /** The parser for a page: Grails 5 to 8's constructor with a (null) {@code ConfigMap}, else Grails 3 and 4's. */
+  /** The parser for a page: Grails 6 to 8's constructor with a (null) {@code ConfigMap}, else that of Grails 3 to 5. */
   private static Object construct(Class<?> parser, ClassLoader loader, String name, String path, String text) throws ReflectiveOperationException {
     Class<?> configMap;
     try {
@@ -188,7 +189,7 @@ final class GspTranslation {
         Constructor<?> modern = parser.getConstructor(String.class, String.class, String.class, String.class, configMap);
         return modern.newInstance(name, path, path, text, null);
       } catch (NoSuchMethodException e) {
-        // Grails 3 or 4
+        // Grails 5: ConfigMap exists, the parser does not take it
       }
     }
     return parser.getConstructor(String.class, String.class, String.class, String.class).newInstance(name, path, path, text);

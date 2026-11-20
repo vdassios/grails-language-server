@@ -83,7 +83,7 @@ Every feature of the [Grails VS Code extension](https://github.com/Johan070119/G
 | GSP implicit objects | covered | `request`, `response`, `session`, `flash`, `application`, `params`, `out`, `pageScope`, ... |
 | Model variables from the rendering action | covered | Literal model maps; also template models, `g:set var`, `g:each var/status` |
 | GSP inspections: unresolved template or view, unknown tag, missing required attribute (`GspAndGroovyInspection`) | covered | Hints |
-| `UrlMappings.groovy` controller and action references (`references/urlMappings/`) | covered | View references in `UrlMappings` are not read |
+| `UrlMappings.groovy` controller, action and view references (`references/urlMappings/`) | covered | A view is absolute, or one of the `controller:` given beside it |
 | i18n: `g:message code` → `grails-app/i18n/*.properties` (`pluginModules/i18n/`) | not covered | |
 | Interceptor `match(controller:, action:)` | not covered | |
 | `application.yml` Grails keys | not covered | |

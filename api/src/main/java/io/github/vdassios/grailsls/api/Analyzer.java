@@ -9,8 +9,9 @@ import java.util.Map;
  *
  * <p>Calls for one document are not concurrent; calls for different documents may be.
  *
- * <p>A GSP page (a path ending in {@code .gsp}) is not compiled: its "compile" reads its tags and reports hints, and
- * completion, hover and definition answer about its tags and their attributes. It has no symbols or signature help.
+ * <p>A GSP page (a path ending in {@code .gsp}) is translated to Groovy by Grails's own page parser and compiled; its
+ * compile also reads its tags and reports hints. Completion, hover and definition answer about its tags and their
+ * attributes and, inside page code, about the code, as does signature help. It has no symbols.
  */
 public interface Analyzer extends AutoCloseable {
   /**
