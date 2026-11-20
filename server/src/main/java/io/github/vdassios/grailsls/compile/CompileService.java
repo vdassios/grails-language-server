@@ -72,6 +72,9 @@ public final class CompileService {
   public void setWorkspace(Workspace next) {
     Workspace old = workspace;
     workspace = next;
+    if (next != null) {
+      next.onDeclarationsCorrected(() -> compileOpenDocuments(next));
+    }
     pending.values().forEach(Pending::cancel);
     if (old != null) {
       old.close();

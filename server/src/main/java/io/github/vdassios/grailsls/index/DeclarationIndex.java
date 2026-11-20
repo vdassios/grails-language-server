@@ -20,8 +20,9 @@ import java.util.function.BiConsumer;
 
 /**
  * Maps type names to the Groovy files that declare them, per source root. Built by a scan of the roots, then kept
- * current file by file ({@link #update}) and by {@link #rescan}. The modules' build directories are never source,
- * wherever they lie.
+ * current file by file ({@link #update}) and by {@link #rescan}; the names of a file come from its text
+ * ({@link Declarations}) until a parse of it gives them ({@link #parsed}). The modules' build directories are never
+ * source, wherever they lie.
  */
 public final class DeclarationIndex {
   private final Map<Path, Root> roots = new ConcurrentHashMap<>();
@@ -87,6 +88,19 @@ public final class DeclarationIndex {
       return new Changes();
     }
     return sync(path);
+  }
+
+  /**
+   * Replaces the names read from {@code file} by {@code classes}, the binary names a parse of it found, so that a
+   * mistake of the text scan ({@link Declarations}) lasts only until the file is parsed. Ignored for a file not indexed
+   * (deleted since, or no source). Returns whether the names changed.
+   */
+  public boolean parsed(Path file, List<String> classes) {
+    boolean changed = false;
+    for (Root root : roots.values()) {
+      changed |= root.replace(file, classes);
+    }
+    return changed;
   }
 
   /** Brings every root in line with the disk: files created, deleted or modified since they were read (by modification time). */
@@ -235,13 +249,7 @@ public final class DeclarationIndex {
       changes.files.add(file);
       Entry old = byFile.remove(file);
       List<String> oldNames = old == null ? List.of() : old.names;
-      for (String name : oldNames) {
-        files.computeIfPresent(name, (n, declaring) -> {
-          List<Path> rest = new ArrayList<>(declaring);
-          rest.remove(file);
-          return rest.isEmpty() ? null : List.copyOf(rest);
-        });
-      }
+      unlink(file, oldNames);
       List<String> names = List.of();
       try {
         // the time first: a write after it is seen by the next rescan
@@ -251,15 +259,42 @@ public final class DeclarationIndex {
       } catch (IOException e) {
         // deleted or unreadable
       }
+      link(file, names);
+      if (!oldNames.equals(names)) {
+        changes.declarations = true;
+      }
+    }
+
+    /** {@link DeclarationIndex#parsed} for this root. */
+    synchronized boolean replace(Path file, List<String> classes) {
+      Entry entry = byFile.get(file);
+      List<String> names = List.copyOf(new LinkedHashSet<>(classes));
+      if (entry == null || Set.copyOf(entry.names).equals(Set.copyOf(names))) {
+        return false;
+      }
+      unlink(file, entry.names);
+      byFile.put(file, new Entry(entry.modified, names));
+      link(file, names);
+      return true;
+    }
+
+    private void unlink(Path file, List<String> names) {
+      for (String name : names) {
+        files.computeIfPresent(name, (n, declaring) -> {
+          List<Path> rest = new ArrayList<>(declaring);
+          rest.remove(file);
+          return rest.isEmpty() ? null : List.copyOf(rest);
+        });
+      }
+    }
+
+    private void link(Path file, List<String> names) {
       for (String name : names) {
         files.merge(name, List.of(file), (declaring, added) -> {
           List<Path> all = new ArrayList<>(declaring);
           all.add(file);
           return List.copyOf(all);
         });
-      }
-      if (!oldNames.equals(names)) {
-        changes.declarations = true;
       }
     }
   }

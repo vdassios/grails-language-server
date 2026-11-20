@@ -15,6 +15,7 @@ import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.EnumSet;
 import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -60,10 +61,13 @@ public final class Workspace implements AutoCloseable {
   private final Map<Path, AntlrLoader> antlr = new HashMap<>();
   /** Files parsed per call when filling the symbol index. */
   public static final int SYMBOL_BATCH = 50;
+  private static final Set<Symbol.Kind> CLASS_KINDS = EnumSet.of(Symbol.Kind.CLASS, Symbol.Kind.INTERFACE, Symbol.Kind.ENUM);
 
   private final DeclarationIndex index;
   private final Set<Path> buildDirs;
   private final SymbolIndex symbols = new SymbolIndex();
+  /** Told when a parse changed the type names of a file ({@link #onDeclarationsCorrected}). */
+  private volatile Runnable declarationsCorrected = () -> {};
   private final ClassSources classSources;
   /** Every module's {@code grails-app} directory that exists. */
   private final List<Path> grailsApps = new ArrayList<>();
@@ -260,7 +264,10 @@ public final class Workspace implements AutoCloseable {
     }
     List<String> batch = files.subList(from, Math.min(from + SYMBOL_BATCH, files.size())).stream().map(Path::toString).collect(Collectors.toList());
     return context.query(analyzer -> analyzer.declarations(batch)).thenCompose(found -> {
-      found.forEach((file, declared) -> symbols.put(Path.of(file), declared));
+      found.forEach((file, declared) -> {
+        symbols.put(Path.of(file), declared);
+        correct(Path.of(file), declared);
+      });
       return indexSymbols(context, files, from + SYMBOL_BATCH);
     }).exceptionally(error -> null); // closed: a newer workspace indexes again
   }
@@ -279,10 +286,27 @@ public final class Workspace implements AutoCloseable {
       List<Symbol> declared = found.get(file.toString());
       if (Files.isRegularFile(file) && declared != null) {
         symbols.put(file, declared);
+        correct(file, declared);
       } else {
         symbols.remove(file);
       }
     }).exceptionally(error -> null); // closed: a newer workspace indexes again
+  }
+
+  /**
+   * Makes the classes a parse of {@code file} found its type names in the declaration index. A parse that found no
+   * class at all changes nothing: the file did not parse, or holds no code, which the scan cannot misread either.
+   */
+  private void correct(Path file, List<Symbol> declared) {
+    List<Symbol> classes = declared.stream().filter(symbol -> CLASS_KINDS.contains(symbol.kind) && symbol.container == null).collect(Collectors.toList());
+    if (!classes.isEmpty() && index.parsed(file, classes.stream().filter(symbol -> symbol.named).map(symbol -> symbol.name).collect(Collectors.toList()))) {
+      declarationsCorrected.run();
+    }
+  }
+
+  /** Runs {@code listener} whenever a parse changed the type names of a file, so what resolves may have changed. */
+  public void onDeclarationsCorrected(Runnable listener) {
+    declarationsCorrected = listener;
   }
 
   public List<CompileContext> contexts() {

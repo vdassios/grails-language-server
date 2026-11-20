@@ -164,4 +164,25 @@ class DeclarationIndexTest {
     assertEquals(created, index.fileOf("q.C", List.of(root)));
     assertEquals(List.of(), index.rescan().files, "nothing changed since");
   }
+
+  /** A parse corrects what the text scan got wrong (a slashy string is read as code), until the file changes again. */
+  @Test
+  void aParseReplacesTheNamesTheScanFound() throws IOException {
+    Path root = tmp.resolve("src");
+    Path file = write("src/p/A.groovy", "package p\nclass A {\n  def glob = /\\/*/\n}\nclass Lost {}\n// */\n");
+    DeclarationIndex index = new DeclarationIndex(Set.of());
+    index.addRoots(List.of(root));
+    assertNull(index.fileOf("p.Lost", List.of(root)), "the scan reads /* in the slashy string as a comment");
+
+    assertTrue(index.parsed(file, List.of("p.A", "p.Lost")));
+    assertEquals(file, index.fileOf("p.Lost", List.of(root)));
+    assertEquals(false, index.parsed(file, List.of("p.Lost", "p.A")), "the same names in another order change nothing");
+    assertEquals(List.of(), index.rescan().files, "the file did not change: the parsed names stay");
+    assertEquals(false, index.parsed(tmp.resolve("src/p/Other.groovy"), List.of("p.Other")), "a file not indexed is ignored");
+    assertNull(index.fileOf("p.Other", List.of(root)));
+
+    Files.writeString(file, "package p\nclass A {}\n");
+    index.update(file);
+    assertNull(index.fileOf("p.Lost", List.of(root)), "an edit is scanned again");
+  }
 }

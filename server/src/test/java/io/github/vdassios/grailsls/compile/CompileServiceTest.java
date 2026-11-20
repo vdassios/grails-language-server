@@ -182,6 +182,27 @@ class CompileServiceTest {
     awaitFound("", List.of());
   }
 
+  /**
+   * The parse behind the symbol index corrects the type names the text scan got wrong (a slashy string read as a
+   * comment), and the open documents compile again; a file that does not parse keeps the names of the scan.
+   */
+  @Test
+  void aParseCorrectsTheDeclarationIndex() throws Exception {
+    Files.createDirectories(src.resolve("lib"));
+    Files.writeString(src.resolve("lib/Globs.groovy"), "package lib\nclass Globs {\n  def glob = /\\/*/\n}\nclass Lost {}\n// */\n");
+    Files.writeString(src.resolve("Broken.groovy"), "class Broken {\n  void x( }\n");
+    Workspace workspace = workspace();
+    service.setWorkspace(workspace);
+    assertNull(workspace.declarations().fileOf("lib.Lost", List.of(src)), "the scan misses Lost");
+    service.open(uri("Book.groovy"), "import lib.Lost\nclass Book { Lost lost }\n", 1);
+    assertEquals(List.of("0: unable to resolve class lib.Lost", "1: unable to resolve class lib.Lost"), messages(next()));
+
+    workspace.indexSymbols().get(60, TimeUnit.SECONDS);
+    assertEquals(src.resolve("lib/Globs.groovy"), workspace.declarations().fileOf("lib.Lost", List.of(src)));
+    assertEquals(src.resolve("Broken.groovy"), workspace.declarations().fileOf("Broken", List.of(src)));
+    assertEquals(List.of(), messages(next()), "the open document compiled again");
+  }
+
   @Test
   void closingClearsTheDiagnostics() throws Exception {
     service.open(uri("Broken.groovy"), "class Broken { void x( }\n", 1);
