@@ -654,12 +654,14 @@ class GroovyAnalyzerTest {
   @Test
   void hoverShowsTheSignatureAndTheDocumentationComment() {
     String path = tmp.resolve("A.groovy").toString();
-    compile(path, "class A {\n  /** Counts things. */\n  int count(String what) { 1 }\n  def run() { count('x') }\n}\n");
-    String hover = analyzer.hover(path, 3, 15);
+    compile(path, "class A {\n  /**\n   * Counts things.\n   * Each {@code what} once, see {@link #run}.\n   * @param what the thing\n   */\n"
+        + "  int count(String what) { 1 }\n  def run() { count('x') }\n}\n");
+    String hover = analyzer.hover(path, 7, 15);
     assertNotNull(hover);
     assertTrue(hover.startsWith("```groovy\npublic int count(String what)\n```"), hover);
-    // Groovy 3 and later attach the comment to the node; on 2.5 it is read from the document's text
-    assertTrue(hover.endsWith("---\n\nCounts things."), hover);
+    // Groovy 3 and later attach the comment to the node; on 2.5 it is read from the document's text. Either way a line
+    // with an inline tag stays, and the block tags go.
+    assertTrue(hover.endsWith("---\n\nCounts things.\nEach `what` once, see `run`."), hover);
   }
 
   /** The comment is read from the text each source was compiled from: a pulled-in file's, and the open document's own. */

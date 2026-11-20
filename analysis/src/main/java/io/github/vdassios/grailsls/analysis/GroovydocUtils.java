@@ -25,42 +25,13 @@ import org.codehaus.groovy.ast.AnnotatedNode;
 
 public class GroovydocUtils {
 	/**
-	 * Groovydoc is attached to AST nodes from Groovy 3 on ({@code AnnotatedNode.getGroovydoc()}). This
-	 * layer is compiled against Groovy 2.5 and runs on the project's Groovy, so it is read reflectively:
-	 * on Groovy 2.5 the result is always null.
+	 * The Groovydoc on a node as markdown ({@link Javadoc#markdown}), or null. Groovydoc is attached to AST nodes from
+	 * Groovy 3 on ({@code AnnotatedNode.getGroovydoc()}). This layer is compiled against Groovy 2.5 and runs on the
+	 * project's Groovy, so it is read reflectively: on Groovy 2.5 the result is always null.
 	 */
-	public static String groovydocToMarkdownDescription(AnnotatedNode node) {
+	public static String markdown(AnnotatedNode node) {
 		String content = groovydocContent(node);
-		if (content == null) {
-			return null;
-		}
-		String[] lines = content.split("\n");
-		StringBuilder markdownBuilder = new StringBuilder();
-		int n = lines.length;
-		if (n == 1) {
-			// strip end of groovydoc comment
-			int c = lines[0].indexOf("*/");
-			if (c != -1) {
-				lines[0] = lines[0].substring(0, c);
-			}
-		}
-		// strip start of groovydoc coment
-		String line = lines[0];
-		int lengthToRemove = Math.min(line.length(), 3);
-		line = line.substring(lengthToRemove);
-		appendLine(markdownBuilder, line);
-		for (int i = 1; i < n - 1; i++) {
-			line = lines[i];
-			int star = line.indexOf("*");
-			int at = line.indexOf("@");
-			if (at == -1) {
-				if (star > -1) // line starts with a *
-				{
-					appendLine(markdownBuilder, line.substring(star + 1));
-				}
-			}
-		}
-		return markdownBuilder.toString().trim();
+		return content == null ? null : Javadoc.markdown(content);
 	}
 
 	private static String groovydocContent(AnnotatedNode node) {
@@ -77,15 +48,6 @@ public class GroovydocUtils {
 		} catch (ReflectiveOperationException e) {
 			return null;
 		}
-	}
-
-	private static void appendLine(StringBuilder markdownBuilder, String line) {
-		line = reformatLine(line);
-		if (line.length() == 0) {
-			return;
-		}
-		markdownBuilder.append(line);
-		markdownBuilder.append("\n");
 	}
 
 	/** Markdown for the HTML of one line of a documentation comment. */

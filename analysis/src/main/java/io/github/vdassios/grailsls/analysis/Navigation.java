@@ -109,7 +109,7 @@ public final class Navigation {
    * on disk, and the compile's sources on Groovy 2.5).
    */
   static String documentation(ASTNode declaration, SourceLookup lookup) {
-    String documentation = declaration instanceof AnnotatedNode ? GroovydocUtils.groovydocToMarkdownDescription((AnnotatedNode) declaration) : null;
+    String documentation = declaration instanceof AnnotatedNode ? GroovydocUtils.markdown((AnnotatedNode) declaration) : null;
     if (documentation == null) {
       documentation = Gorm.documentation(declaration);
     }
