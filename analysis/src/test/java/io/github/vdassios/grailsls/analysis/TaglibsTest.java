@@ -383,4 +383,12 @@ class TaglibsTest {
     assertEquals(Set.of("fromTrait", "traitMethod"), names(grails8.tags, false).get("woven"));
     assertEquals(List.of(), shown);
   }
+
+  /** (suspected) {@code static final String namespace} in a class file. */
+  @Test
+  void aFinalNamespaceInAClassFile() throws Exception {
+    Path classes = compile("final-classes", Map.of("FinalTagLib.groovy", "package lib\nclass FinalTagLib {\n  static final String namespace = 'fixed'\n  Closure own = { attrs -> }\n}\n"));
+    Map<String, String> taglibs = Map.of("lib.FinalTagLib", jar(classes, "final.jar").toString());
+    assertEquals(Map.of("fixed", Set.of("own")), names(taglibs(grails7()).all(lookup(taglibs, Map.of(), List.of())), false));
+  }
 }

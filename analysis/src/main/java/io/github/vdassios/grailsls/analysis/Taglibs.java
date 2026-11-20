@@ -525,6 +525,10 @@ final class Taglibs {
 
       @Override
       public FieldVisitor visitField(int access, String name, String descriptor, String signature, Object value) {
+        // static final String namespace = 'x': a constant, which the static initializer does not set
+        if ((access & Opcodes.ACC_STATIC) != 0 && name.equals("namespace") && value instanceof String) {
+          type.namespace = (String) value;
+        }
         if ((access & Opcodes.ACC_STATIC) == 0 && CLOSURE.equals(descriptor) && isTagName(name)) {
           type.closures.add(name);
         }
