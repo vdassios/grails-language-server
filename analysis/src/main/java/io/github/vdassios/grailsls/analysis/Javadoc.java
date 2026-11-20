@@ -3,8 +3,6 @@ package io.github.vdassios.grailsls.analysis;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import net.prominic.groovyls.compiler.util.GroovydocUtils;
-
 /** Markdown for a documentation comment read from source text: its description, without the block tags. */
 final class Javadoc {
   private static final Pattern INLINE_TAG = Pattern.compile("\\{@(\\w+)\\s*([^}]*)\\}");

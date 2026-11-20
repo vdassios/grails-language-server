@@ -17,7 +17,7 @@
 // No warranty of merchantability or fitness of any kind.
 // Use this software at your own risk.
 ////////////////////////////////////////////////////////////////////////////////
-package net.prominic.groovyls.compiler.util;
+package io.github.vdassios.grailsls.analysis;
 
 import java.lang.reflect.Method;
 

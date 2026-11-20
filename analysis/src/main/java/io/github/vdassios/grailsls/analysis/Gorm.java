@@ -39,8 +39,6 @@ import org.codehaus.groovy.control.SourceUnit;
 
 import io.github.vdassios.grailsls.api.Diagnostic;
 import io.github.vdassios.grailsls.api.Range;
-import net.prominic.groovyls.compiler.ast.ASTNodeVisitor;
-import net.prominic.groovyls.compiler.util.GroovyASTUtils;
 
 /**
  * What GORM resolves at run time, read from the compiled classes: the persistent properties of a domain class, dynamic

@@ -21,10 +21,6 @@ import io.github.vdassios.grailsls.api.Location;
 import io.github.vdassios.grailsls.api.Range;
 import io.github.vdassios.grailsls.api.SourceLookup;
 import io.github.vdassios.grailsls.api.Symbol;
-import net.prominic.groovyls.compiler.ast.ASTNodeVisitor;
-import net.prominic.groovyls.compiler.util.GroovyASTUtils;
-import net.prominic.groovyls.compiler.util.GroovydocUtils;
-import net.prominic.groovyls.util.GroovyNodeToStringUtils;
 
 /**
  * Definition, hover and document symbols over a visited compile. Ported from groovy-language-server's

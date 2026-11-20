@@ -43,8 +43,6 @@ import io.github.vdassios.grailsls.api.Diagnostic;
 import io.github.vdassios.grailsls.api.Location;
 import io.github.vdassios.grailsls.api.Range;
 import io.github.vdassios.grailsls.api.SourceLookup;
-import net.prominic.groovyls.compiler.ast.ASTNodeVisitor;
-import net.prominic.groovyls.compiler.util.GroovyASTUtils;
 
 /**
  * Strings Grails resolves by convention (plan B3's table, B4 2.5): views, templates and layouts under

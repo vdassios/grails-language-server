@@ -17,7 +17,7 @@
 // No warranty of merchantability or fitness of any kind.
 // Use this software at your own risk.
 ////////////////////////////////////////////////////////////////////////////////
-package net.prominic.groovyls.compiler.util;
+package io.github.vdassios.grailsls.analysis;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -53,10 +53,6 @@ import org.codehaus.groovy.ast.expr.TupleExpression;
 import org.codehaus.groovy.ast.expr.VariableExpression;
 import org.codehaus.groovy.ast.stmt.ExpressionStatement;
 import org.codehaus.groovy.transform.stc.StaticTypesMarker;
-
-import io.github.vdassios.grailsls.analysis.Gorm;
-import io.github.vdassios.grailsls.analysis.Injections;
-import net.prominic.groovyls.compiler.ast.ASTNodeVisitor;
 
 public class GroovyASTUtils {
     /**

@@ -43,7 +43,6 @@ import org.codehaus.groovy.control.SourceUnit;
 
 import io.github.vdassios.grailsls.api.Location;
 import io.github.vdassios.grailsls.api.Range;
-import net.prominic.groovyls.compiler.util.GroovyASTUtils;
 
 /**
  * Names a GSP page uses without declaring them, made properties of its translation so that completion offers them and

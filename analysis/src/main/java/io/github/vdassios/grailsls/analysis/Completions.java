@@ -38,8 +38,6 @@ import io.github.vdassios.grailsls.api.CompletionList;
 import io.github.vdassios.grailsls.api.Range;
 import io.github.vdassios.grailsls.api.SourceLookup;
 import io.github.vdassios.grailsls.api.TextEdit;
-import net.prominic.groovyls.compiler.ast.ASTNodeVisitor;
-import net.prominic.groovyls.compiler.util.GroovyASTUtils;
 
 /**
  * Completion over a visited compile. Ported from groovy-language-server's {@code CompletionProvider}, returning

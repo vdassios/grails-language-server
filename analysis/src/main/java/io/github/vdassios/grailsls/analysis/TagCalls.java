@@ -13,9 +13,6 @@ import org.codehaus.groovy.ast.expr.MethodCallExpression;
 import org.codehaus.groovy.ast.expr.TupleExpression;
 import org.codehaus.groovy.ast.expr.VariableExpression;
 
-import net.prominic.groovyls.compiler.ast.ASTNodeVisitor;
-import net.prominic.groovyls.compiler.util.GroovyASTUtils;
-
 /**
  * Tags called as methods: {@code g.link(controller: 'book')} and {@code ns.tag(...)} in Groovy and in page code, where
  * the receiver is a name no code declares that is a namespace of the taglib index ({@link Taglibs}); and in page code

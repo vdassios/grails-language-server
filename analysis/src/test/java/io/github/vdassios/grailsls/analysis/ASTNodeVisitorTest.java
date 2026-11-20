@@ -1,4 +1,4 @@
-package net.prominic.groovyls.compiler.ast;
+package io.github.vdassios.grailsls.analysis;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -28,11 +28,19 @@ import org.codehaus.groovy.control.CompilationUnit;
 import org.codehaus.groovy.control.CompilerConfiguration;
 import org.codehaus.groovy.control.Phases;
 import org.codehaus.groovy.control.SourceUnit;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
-import net.prominic.groovyls.compiler.control.io.StringReaderSourceWithURI;
-
 class ASTNodeVisitorTest {
+  /**
+   * These tests parse without a {@link GroovyAnalyzer}, which sets Groovy 3 and 4's parser cache threshold before the
+   * parser loads; it is read once, so a parse here first would leave it unset for the tests that run after this one.
+   */
+  @BeforeAll
+  static void keepTheParserCache() {
+    ParserCache.keep();
+  }
+
   /**
    * Groovy 2.5.14 (Grails 4) hashes an {@code ASTNode} by its position alone, so the nodes AST transformations add
    * without one all collide; a lookup keyed by that hash took up to 136 s to build for one Grails controller. The test

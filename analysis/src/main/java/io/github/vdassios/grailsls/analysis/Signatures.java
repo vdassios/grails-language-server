@@ -16,9 +16,6 @@ import org.codehaus.groovy.ast.expr.TupleExpression;
 import io.github.vdassios.grailsls.api.Range;
 import io.github.vdassios.grailsls.api.SignatureHelp;
 import io.github.vdassios.grailsls.api.SourceLookup;
-import net.prominic.groovyls.compiler.ast.ASTNodeVisitor;
-import net.prominic.groovyls.compiler.util.GroovyASTUtils;
-import net.prominic.groovyls.util.GroovyNodeToStringUtils;
 
 /**
  * Signature help over a visited compile. Ported from groovy-language-server's {@code SignatureHelpProvider}, returning

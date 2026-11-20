@@ -65,9 +65,6 @@ import io.github.vdassios.grailsls.api.Range;
 import io.github.vdassios.grailsls.api.SignatureHelp;
 import io.github.vdassios.grailsls.api.SourceLookup;
 import io.github.vdassios.grailsls.api.Symbol;
-import net.prominic.groovyls.compiler.ast.ASTNodeVisitor;
-import net.prominic.groovyls.compiler.control.io.StringReaderSourceWithURI;
-import net.prominic.groovyls.compiler.util.GroovyASTUtils;
 
 /**
  * Compiles one document per {@link CompilationUnit}, in the module loader that loaded this class: the project's own

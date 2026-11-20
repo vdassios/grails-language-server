@@ -17,7 +17,7 @@
 // No warranty of merchantability or fitness of any kind.
 // Use this software at your own risk.
 ////////////////////////////////////////////////////////////////////////////////
-package net.prominic.groovyls.compiler.ast;
+package io.github.vdassios.grailsls.analysis;
 
 import java.net.URI;
 import java.util.ArrayList;
@@ -92,7 +92,6 @@ import org.codehaus.groovy.classgen.BytecodeExpression;
 import org.codehaus.groovy.control.CompilationUnit;
 import org.codehaus.groovy.control.SourceUnit;
 
-import io.github.vdassios.grailsls.analysis.NodeRanges;
 import io.github.vdassios.grailsls.api.Range;
 
 public class ASTNodeVisitor extends ClassCodeVisitorSupport {
