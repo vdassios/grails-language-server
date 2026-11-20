@@ -20,7 +20,6 @@ import org.codehaus.groovy.ast.ModuleNode;
 import org.codehaus.groovy.ast.Parameter;
 import org.codehaus.groovy.ast.PropertyNode;
 import org.codehaus.groovy.ast.Variable;
-import org.codehaus.groovy.ast.expr.ArgumentListExpression;
 import org.codehaus.groovy.ast.expr.CastExpression;
 import org.codehaus.groovy.ast.expr.ClosureExpression;
 import org.codehaus.groovy.ast.expr.ConstantExpression;
@@ -37,7 +36,6 @@ import org.codehaus.groovy.ast.expr.VariableExpression;
 import org.codehaus.groovy.ast.stmt.BlockStatement;
 import org.codehaus.groovy.ast.stmt.ExpressionStatement;
 import org.codehaus.groovy.ast.stmt.ForStatement;
-import org.codehaus.groovy.ast.stmt.ReturnStatement;
 import org.codehaus.groovy.ast.stmt.Statement;
 import org.codehaus.groovy.control.SourceUnit;
 
@@ -139,7 +137,7 @@ final class PageVariables {
             if ("var".equals(key)) {
               name = constant(entry.getValueExpression());
             } else if ("value".equals(key)) {
-              value = unwrap(entry.getValueExpression());
+              value = entry.getValueExpression();
             }
           }
           if (name != null && value != null) {
@@ -159,9 +157,9 @@ final class PageVariables {
       public void visitForLoop(ForStatement loop) {
         Parameter variable = loop.getVariable();
         if (variable != null && variable != ForStatement.FOR_LOOP_DUMMY && variable.isDynamicTyped()) {
-          variable.putNodeMetaData(GroovyASTUtils.ELEMENT_OF, unwrap(loop.getCollectionExpression()));
+          variable.putNodeMetaData(GroovyASTUtils.ELEMENT_OF, loop.getCollectionExpression());
           if (changesIt(loop)) {
-            linkIt(loop.getLoopBlock(), unwrap(loop.getCollectionExpression()));
+            linkIt(loop.getLoopBlock(), loop.getCollectionExpression());
           }
         }
         super.visitForLoop(loop);
@@ -211,30 +209,6 @@ final class PageVariables {
         super.visitForLoop(loop);
       }
     });
-  }
-
-  /**
-   * The page's own expression in Grails's wrapper: in development mode an expression is translated to
-   * {@code evaluate('text', line, it) { return expression }}.
-   */
-  private static Expression unwrap(Expression expression) {
-    if (expression instanceof MethodCallExpression && ((MethodCallExpression) expression).isImplicitThis() && "evaluate".equals(((MethodCallExpression) expression).getMethodAsString())) {
-      Expression arguments = ((MethodCallExpression) expression).getArguments();
-      List<Expression> list = arguments instanceof ArgumentListExpression ? ((ArgumentListExpression) arguments).getExpressions() : List.of();
-      Expression last = list.isEmpty() ? null : list.get(list.size() - 1);
-      if (last instanceof ClosureExpression) {
-        Statement code = ((ClosureExpression) last).getCode();
-        List<Statement> statements = code instanceof BlockStatement ? ((BlockStatement) code).getStatements() : List.of(code);
-        Statement only = statements.size() == 1 ? statements.get(0) : null;
-        if (only instanceof ReturnStatement) {
-          return ((ReturnStatement) only).getExpression();
-        }
-        if (only instanceof ExpressionStatement) {
-          return ((ExpressionStatement) only).getExpression();
-        }
-      }
-    }
-    return expression;
   }
 
   private static String constant(Expression expression) {
