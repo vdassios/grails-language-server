@@ -130,6 +130,11 @@ public final class ProjectService {
     status.accept(new StatusParams(StatusParams.RESOLVING, "reading the Gradle build in " + workspaceRoot));
     try {
       ProjectModel resolved = bridge.resolve(workspaceRoot, force);
+      String unsupported = unsupportedGroovy(resolved);
+      if (unsupported != null) {
+        status.accept(new StatusParams(StatusParams.FAILED, unsupported));
+        return;
+      }
       model = resolved;
       status.accept(new StatusParams(StatusParams.INDEXING, summary(resolved)));
       String detail = onModel.apply(resolved);
@@ -141,6 +146,24 @@ public final class ProjectService {
     } catch (RuntimeException e) {
       status.accept(new StatusParams(StatusParams.FAILED, e.toString()));
     }
+  }
+
+  /**
+   * Why the model cannot be served, or null: a module on Groovy older than 2.5 (Grails 3), whose compiler the analysis
+   * layer is not built for. A version that does not parse is let through.
+   */
+  static String unsupportedGroovy(ProjectModel model) {
+    for (ModuleRecord module : model.modules) {
+      String[] parts = module.groovyVersion == null ? new String[0] : module.groovyVersion.split("[^0-9]+");
+      if (parts.length >= 2 && !parts[0].isEmpty()) {
+        int major = Integer.parseInt(parts[0]);
+        int minor = Integer.parseInt(parts[1]);
+        if (major < 2 || major == 2 && minor < 5) {
+          return "Groovy " + module.groovyVersion + " (module " + module.path + ") is not supported: the server needs Groovy 2.5 or later (Grails 4 or later)";
+        }
+      }
+    }
+    return null;
   }
 
   static String summary(ProjectModel model) {

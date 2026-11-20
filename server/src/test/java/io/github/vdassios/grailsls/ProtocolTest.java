@@ -206,9 +206,26 @@ class ProtocolTest {
     assertTrue(failed.message.startsWith("Gradle failed: boom (log: "), failed.message);
   }
 
+  /** Grails 3 (Groovy 2.4) stops here: the analysis layer needs Groovy 2.5 or later. */
+  @Test
+  void refusesGroovyOlderThan25() throws Exception {
+    Path root = groovyProject(System.getProperty("gls.testGroovy"), "2.4.21");
+    start(root, trustedOptions());
+
+    assertEquals(StatusParams.RESOLVING, next().state);
+    assertEquals(new StatusParams(StatusParams.FAILED, "Groovy 2.4.21 (module :) is not supported: the server needs Groovy 2.5 or later (Grails 4 or later)"), next());
+    server.getTextDocumentService().didOpen(new DidOpenTextDocumentParams(new TextDocumentItem(root.resolve("src/A.groovy").toUri().toString(), "groovy", 1, "class A {\n")));
+    assertNull(diagnostics.poll(1, TimeUnit.SECONDS), "nothing compiles");
+  }
+
 
   /** A project of one module whose main source set is {@code src} on the test's Groovy. */
   private Path groovyProject() throws Exception {
+    return groovyProject(System.getProperty("gls.testGroovy"), "2.5.23");
+  }
+
+  /** A project of one module whose main source set is {@code src} on the Groovy jar given, reported as {@code version}. */
+  private Path groovyProject(String groovyJar, String version) throws Exception {
     Path root = tmp.resolve("project");
     JsonObject main = new JsonObject();
     main.addProperty("name", "main");
@@ -216,13 +233,13 @@ class ProtocolTest {
     roots.add(root.resolve("src").toString());
     main.add("sourceRoots", roots);
     JsonArray classpath = new JsonArray();
-    classpath.add(System.getProperty("gls.testGroovy"));
+    classpath.add(groovyJar);
     main.add("compileClasspath", classpath);
     JsonObject module = new JsonObject();
     module.addProperty("path", ":");
     module.addProperty("name", "project");
     module.addProperty("projectDir", root.toString());
-    module.addProperty("groovyVersion", "2.5.23");
+    module.addProperty("groovyVersion", version);
     JsonArray sourceSets = new JsonArray();
     sourceSets.add(main);
     module.add("sourceSets", sourceSets);
