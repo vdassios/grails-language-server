@@ -78,8 +78,8 @@ public final class ProjectService {
         done.complete(new SourcesReport(0, 0, 0, "cancelled"));
       } catch (BridgeException e) {
         done.complete(new SourcesReport(0, 0, 0, e.getMessage()));
-      } catch (RuntimeException e) {
-        done.complete(new SourcesReport(0, 0, 0, e.toString()));
+      } catch (Throwable e) {
+        done.complete(new SourcesReport(0, 0, 0, e.toString())); // an Error too: the request must complete
       }
     });
     return done;
@@ -145,7 +145,8 @@ public final class ProjectService {
       status.accept(new StatusParams(StatusParams.FAILED, e.getMessage()));
     } catch (Unsupported e) {
       status.accept(new StatusParams(StatusParams.FAILED, e.getMessage()));
-    } catch (RuntimeException e) {
+    } catch (Throwable e) {
+      // an Error too (a class that fails to link, a stack overflow): the state must not stay at indexing
       status.accept(new StatusParams(StatusParams.FAILED, e.toString()));
     }
   }
