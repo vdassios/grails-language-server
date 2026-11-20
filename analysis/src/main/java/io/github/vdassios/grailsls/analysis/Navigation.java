@@ -3,7 +3,11 @@ package io.github.vdassios.grailsls.analysis;
 import java.io.File;
 import java.net.URI;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Set;
+import java.util.regex.Pattern;
 
 import org.codehaus.groovy.ast.ASTNode;
 import org.codehaus.groovy.ast.AnnotatedNode;
@@ -27,6 +31,9 @@ import net.prominic.groovyls.util.GroovyNodeToStringUtils;
  * {@code DefinitionProvider}, {@code HoverProvider} and {@code DocumentSymbolProvider}, returning {@code api} types.
  */
 public final class Navigation {
+  /** A binary name with an anonymous class in it: {@code Outer$1}. */
+  private static final Pattern ANONYMOUS = Pattern.compile("\\$\\d");
+
   private Navigation() {}
 
   public static Location definition(ASTNodeVisitor ast, URI document, SourceLookup lookup, Conventions conventions, String text, int line, int column) {
@@ -100,6 +107,8 @@ public final class Navigation {
 
   public static List<Symbol> symbols(ASTNodeVisitor ast, URI document) {
     List<Symbol> symbols = new ArrayList<>();
+    Set<ClassNode> declared = Collections.newSetFromMap(new IdentityHashMap<>());
+    declared.addAll(ast.getClassNodes(document));
     for (ASTNode node : ast.getNodes(document)) {
       if (!(node instanceof ClassNode || node instanceof MethodNode || node instanceof FieldNode || node instanceof PropertyNode)) {
         continue;
@@ -109,7 +118,10 @@ public final class Navigation {
         continue;
       }
       if (node instanceof ClassNode) {
-        symbols.add(new Symbol(((ClassNode) node).getName(), kind(node), null, range));
+        ClassNode type = (ClassNode) node;
+        if (declared.contains(type)) { // not a type it extends or implements
+          symbols.add(new Symbol(type.getName(), kind(node), null, range, !type.isScript() && !ANONYMOUS.matcher(type.getName()).find()));
+        }
         continue;
       }
       ClassNode owner = (ClassNode) GroovyASTUtils.getEnclosingNodeOfType(node, ClassNode.class, ast);

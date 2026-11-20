@@ -164,6 +164,12 @@ public class ASTNodeVisitor extends ClassCodeVisitorSupport {
 		return result;
 	}
 
+	/** The classes visited in a document: those it declares, not the types it refers to. */
+	public List<ClassNode> getClassNodes(URI uri) {
+		List<ClassNode> nodes = classNodesByURI.get(uri);
+		return nodes == null ? Collections.emptyList() : nodes;
+	}
+
 	public List<ASTNode> getNodes() {
 		List<ASTNode> result = new ArrayList<>();
 		for (List<ASTNode> nodes : nodesByURI.values()) {

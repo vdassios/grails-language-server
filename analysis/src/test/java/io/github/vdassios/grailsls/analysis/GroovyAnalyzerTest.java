@@ -18,6 +18,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import org.codehaus.groovy.ast.ClassCodeVisitorSupport;
@@ -961,6 +962,22 @@ class GroovyAnalyzerTest {
     assertEquals(4, found.get(a).get(2).range.startLine);
     assertEquals(List.of(), found.get(broken));
     assertEquals(List.of(), found.get(missing));
+  }
+
+  /**
+   * Only the classes a file declares are class symbols, not the types it extends or implements; a script's class and
+   * an anonymous class are not declared by name.
+   */
+  @Test
+  void classSymbolsAreTheClassesAFileDeclares() throws IOException {
+    String script = write("src/p/Run.groovy", "package p\nprintln 'hi'\ndef helper() {}\n");
+    String types = write("src/p/C.groovy", "package p\nclass C {\n  def r = new Runnable() { void run() {} }\n}\n"
+        + "enum E { X { void f() {} } }\nclass D extends C implements Runnable, Serializable { void run() {} }\n");
+    Map<String, List<Symbol>> found = analyzer.declarations(List.of(script, types));
+    Function<String, List<String>> classes = path -> found.get(path).stream().filter(s -> s.container == null)
+        .map(s -> s.name + (s.named ? "" : " (unnamed)")).sorted().collect(Collectors.toList());
+    assertEquals(List.of("p.Run (unnamed)"), classes.apply(script));
+    assertEquals(List.of("p.C", "p.C$1 (unnamed)", "p.D", "p.E", "p.E$1 (unnamed)"), classes.apply(types));
   }
 
   @Test
