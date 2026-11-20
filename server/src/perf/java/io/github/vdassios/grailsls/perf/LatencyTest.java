@@ -21,7 +21,6 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
@@ -51,7 +50,6 @@ import io.github.vdassios.grailsls.project.ProjectModel;
  * just typed, which does not parse), the compile of that text and the completion, which compiles a copy with a
  * placeholder. The editor waits for both. A query that throws is counted, not timed.
  */
-@Tag("perf")
 @Timeout(value = 2, unit = TimeUnit.HOURS)
 class LatencyTest {
   /** A member access in code: receiver, dot, member. */

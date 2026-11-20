@@ -65,7 +65,7 @@ test {
   systemProperty "gls.fixtures", rootProject.file("fixtures").absolutePath
   inputs.dir(rootProject.file("fixtures")).withPropertyName("fixtures")
   inputs.property("jdks", [System.getenv("GLS_TEST_JDK11"), System.getenv("GLS_TEST_JDK17")].toString())
-  useJUnitPlatform { excludeTags "perf", "jdk17" }
+  useJUnitPlatform { excludeTags "jdk17" }
 }
 // Tests tagged jdk17 compile the Grails 7 fixture in-process (its classes need Java 17), or need a JDK newer than Groovy
 // 2.5.14 reads: they run on GLS_TEST_JDK17 (the fixture tests are skipped without it).
@@ -85,14 +85,26 @@ def testJdk17 = tasks.register("testJdk17", Test) {
 }
 tasks.named("check") { dependsOn testJdk17 }
 
-// Latency against the performance budget (LatencyTest): slow, and machine-dependent, so never part of `build`.
+// Latency against the performance budget (LatencyTest, in src/perf): slow, and machine-dependent, so never run by
+// `build`, which only compiles it. It uses the test helpers (Fixtures).
 // GLS_PERF_PROJECT=<built project> measures that project instead of the grails4 fixture.
+sourceSets {
+  perf {
+    compileClasspath += sourceSets.main.output + sourceSets.test.output
+    runtimeClasspath += sourceSets.main.output + sourceSets.test.output
+  }
+}
+configurations {
+  perfImplementation.extendsFrom testImplementation
+  perfRuntimeOnly.extendsFrom testRuntimeOnly
+}
+tasks.named("check") { dependsOn tasks.named("perfClasses") }
 tasks.register("perfTest", Test) {
   description = "Measures query latency on the grails4 fixture or GLS_PERF_PROJECT."
   group = "verification"
-  testClassesDirs = sourceSets.test.output.classesDirs
-  classpath = sourceSets.test.runtimeClasspath
-  useJUnitPlatform { includeTags "perf" }
+  testClassesDirs = sourceSets.perf.output.classesDirs
+  classpath = sourceSets.perf.runtimeClasspath
+  useJUnitPlatform()
   systemProperty "gls.fixtures", rootProject.file("fixtures").absolutePath
   testLogging { showStandardStreams = true }
   outputs.upToDateWhen { false }
