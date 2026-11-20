@@ -17,9 +17,12 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Properties;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 import com.google.gson.Gson;
@@ -243,9 +246,58 @@ public final class GradleBridge {
       throw e;
     }
     if (process.exitValue() != 0) {
-      throw new BridgeException("Gradle failed: " + failureReason(log) + " (log: " + log + ")");
+      throw new BridgeException(failure(buildRoot, log));
     }
     return out;
+  }
+
+  /** Output of a Gradle or a build that does not run on the JDK it was given (measured: too new, then too old). */
+  private static final List<String> JDK_MISMATCH = List.of("Unsupported class file major version", "requires at least JVM runtime version");
+
+  /**
+   * Gradle's reason, with the wrapper's Gradle version and the JDK it ran on, and a pointer to the JDK when the log
+   * shows a mismatch: the usual cause of a build that works on the command line but not in the server.
+   */
+  private String failure(Path buildRoot, Path log) {
+    String gradle = wrapperVersion(buildRoot);
+    String jdk = jdkVersion(javaHome);
+    String message = "Gradle" + (gradle == null ? "" : " " + gradle) + " failed on JDK " + jdk + ": " + failureReason(log) + " (log: " + log + ")";
+    String output;
+    try {
+      output = Files.readString(log);
+    } catch (IOException | UncheckedIOException e) {
+      output = "";
+    }
+    for (String signature : JDK_MISMATCH) {
+      if (output.contains(signature)) {
+        return message + ". The build does not run on JDK " + jdk + ": start the server on the JDK the project builds with (see docs/editors.md)";
+      }
+    }
+    return message;
+  }
+
+  /** The Gradle version in {@code gradle/wrapper/gradle-wrapper.properties}' {@code distributionUrl}, or null. */
+  static String wrapperVersion(Path buildRoot) {
+    Properties properties = new Properties();
+    try (Reader reader = Files.newBufferedReader(buildRoot.resolve("gradle/wrapper/gradle-wrapper.properties"))) {
+      properties.load(reader);
+    } catch (IOException e) {
+      return null;
+    }
+    Matcher version = Pattern.compile("gradle-([^/]+?)-(?:bin|all)\\.zip$").matcher(properties.getProperty("distributionUrl", ""));
+    return version.find() ? version.group(1) : null;
+  }
+
+  /** {@code JAVA_VERSION} from the JDK's {@code release} file, else its path. */
+  static String jdkVersion(Path javaHome) {
+    Properties release = new Properties();
+    try (Reader reader = Files.newBufferedReader(javaHome.resolve("release"))) {
+      release.load(reader);
+    } catch (IOException e) {
+      return javaHome.toString();
+    }
+    String version = release.getProperty("JAVA_VERSION");
+    return version == null ? javaHome.toString() : version.replace("\"", "");
   }
 
   private List<ModuleRecord> readRecords(Path out) throws BridgeException {

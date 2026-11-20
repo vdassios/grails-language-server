@@ -64,9 +64,29 @@ class GradleBridgeTest {
     GradleBridge bridge = bridge(Duration.ofSeconds(30));
 
     BridgeException e = assertThrows(BridgeException.class, () -> bridge.resolve(root, false));
-    assertTrue(e.getMessage().startsWith("Gradle failed: Could not resolve all files. > boom (log: "), e.getMessage());
+    assertTrue(e.getMessage().startsWith("Gradle failed on JDK " + System.getProperty("java.version") + ": Could not resolve all files. > boom (log: "), e.getMessage());
+    assertFalse(e.getMessage().contains("docs/editors.md"), "no JDK mismatch in the output");
     assertThrows(BridgeException.class, () -> bridge.resolve(root, false));
     assertEquals(2, FakeWrapper.runs(root));
+  }
+
+  /** The outputs measured: Gradle 6.9 compiling a build script on JDK 21, and a Grails 7 build on JDK 11. */
+  @Test
+  void pointsAtTheJdkWhenTheOutputShowsAMismatch() throws Exception {
+    List<String> outputs = List.of(
+        "* What went wrong:\\nCould not compile build file 'build.gradle'.\\n> startup failed:\\n  General error during semantic analysis: Unsupported class file major version 65\\n",
+        "* What went wrong:\\nA problem occurred configuring root project 'app'.\\n> Could not resolve all artifacts for configuration 'classpath'.\\n"
+            + "      > Dependency requires at least JVM runtime version 17. This build uses a Java 11 JVM.\\n");
+    for (String output : outputs) {
+      Path root = project("printf \"" + output + "\"\nexit 1\n");
+      Files.createDirectories(root.resolve("gradle/wrapper"));
+      Files.writeString(root.resolve("gradle/wrapper/gradle-wrapper.properties"), "distributionUrl=https\\://services.gradle.org/distributions/gradle-8.14.3-all.zip\n");
+      BridgeException e = assertThrows(BridgeException.class, () -> bridge(Duration.ofSeconds(30)).resolve(root, false));
+      String jdk = System.getProperty("java.version");
+      assertTrue(e.getMessage().startsWith("Gradle 8.14.3 failed on JDK " + jdk + ": "), e.getMessage());
+      assertTrue(e.getMessage().endsWith(". The build does not run on JDK " + jdk + ": start the server on the JDK the project builds with (see docs/editors.md)"),
+          e.getMessage());
+    }
   }
 
   @Test
