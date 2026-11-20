@@ -384,6 +384,48 @@ class TaglibsTest {
     assertEquals(List.of(), shown);
   }
 
+  /**
+   * A jar taglib's docs come from its sources jar, which {@code grails/downloadSources} may fetch after the tag was
+   * first looked up: a lookup that found no source is not remembered, so the docs appear without a reload.
+   */
+  @Test
+  void jarTagDocsAppearOnceTheSourcesAreDownloaded() throws Exception {
+    String text = "package lib\nclass DocTagLib {\n  static namespace = 'doc'\n  /**\n   * Says hello.\n   * @attr name who to greet\n   */\n  Closure hello = { attrs -> }\n}\n";
+    Path classes = compile("doc-classes", Map.of("DocTagLib.groovy", text));
+    Map<String, String> taglibs = Map.of("lib.DocTagLib", jar(classes, "doc.jar").toString());
+    Path source = tmp.resolve("sources/lib/DocTagLib.groovy");
+    SourceLookup lookup = new SourceLookup() {
+      @Override
+      public String fileOf(String className) {
+        return null;
+      }
+
+      @Override
+      public String openText(String path) {
+        return null;
+      }
+
+      @Override
+      public Map<String, String> taglibClasses() {
+        return taglibs;
+      }
+
+      @Override
+      public String classSource(String className) {
+        return className.equals("lib.DocTagLib") && Files.isRegularFile(source) ? source.toString() : null;
+      }
+    };
+    Taglibs.Tag hello = taglibs(grails7()).all(lookup).get("doc").get("hello");
+    assertEquals(null, hello.docs().description, "no sources yet");
+    assertEquals(null, hello.docs().location);
+
+    Files.createDirectories(source.getParent());
+    Files.writeString(source, text);
+    assertEquals("Says hello.", hello.docs().description);
+    assertEquals(source.toString(), hello.docs().location.path);
+    assertEquals("name", hello.docs().attributes.get(0).name);
+  }
+
   /** (suspected) {@code static final String namespace} in a class file. */
   @Test
   void aFinalNamespaceInAClassFile() throws Exception {

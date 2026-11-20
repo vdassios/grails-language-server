@@ -118,14 +118,20 @@ final class Taglibs {
       this.docs = docs;
     }
 
-    /** Read on first use: for jar taglibs this extracts and reads the source file. */
+    /**
+     * Read on first use: for jar taglibs this extracts and reads the source file. A jar taglib with no source on disk
+     * is looked up again next time, as {@code grails/downloadSources} may fetch it meanwhile.
+     */
     Docs docs() {
       Docs read = docs;
       if (read == null) {
         read = reader.apply(this);
-        docs = read == null ? Docs.NONE : read;
+        if (read == null) {
+          return Docs.NONE;
+        }
+        docs = read;
       }
-      return docs;
+      return read;
     }
 
     String simpleOwner() {
@@ -604,15 +610,18 @@ final class Taglibs {
     };
   }
 
+  /** The docs of a jar taglib's tag from its source file; null when no source is on disk (yet). */
   private static Docs jarDocs(Tag tag, SourceLookup lookup) {
     String topLevel = tag.owner.contains("$") ? tag.owner.substring(0, tag.owner.indexOf('$')) : tag.owner;
     String file = lookup.classSource(topLevel);
     if (file == null) {
-      return Docs.NONE;
+      return null;
     }
     try {
       return docs(tag, file, Files.readString(Path.of(file)));
-    } catch (IOException | RuntimeException e) {
+    } catch (IOException e) {
+      return null;
+    } catch (RuntimeException e) {
       return Docs.NONE;
     }
   }
