@@ -17,6 +17,7 @@ import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 import java.util.stream.Collectors;
 
 import org.codehaus.groovy.ast.ClassCodeVisitorSupport;
@@ -806,6 +807,65 @@ class GroovyAnalyzerTest {
 
     CompletionList imports = complete(path, "package app\nimport oth\nclass A {}\n", 1, 10);
     assertTrue(labels(imports).containsAll(List.of("other", "other.Gadget")), labels(imports).toString());
+  }
+
+  /** The import edit of each class whose name starts with {@code Gad} at a position, by qualified name. */
+  private Map<String, String> importEdits(String path, String text, int line, int column) {
+    Map<String, String> edits = new TreeMap<>();
+    for (Completion item : complete(path, text, line, column).items) {
+      if (item.label.startsWith("Gad")) {
+        edits.put(item.detail == null || item.detail.isEmpty() ? item.label : item.detail + "." + item.label, item.additionalEdits.toString());
+      }
+    }
+    return edits;
+  }
+
+  /** No import for a class the file sees already: its own package, a star import, a Groovy default import, the default package. */
+  @Test
+  void aClassTheFileSeesAlreadyComesWithoutAnImport() {
+    for (String name : List.of("app.Gadget", "other.Gadgets", "java.util.GadgetList", "groovy.lang.GadgetMeta", "GadgetTop", "far.Gadgetry")) {
+      types.add(new Symbol(name, Symbol.Kind.CLASS, null, new Range(0, 0, 0, 10)));
+    }
+    String path = tmp.resolve("src/app/A.groovy").toString();
+    Map<String, String> expected = new TreeMap<>();
+    for (String name : List.of("app.Gadget", "other.Gadgets", "java.util.GadgetList", "groovy.lang.GadgetMeta", "GadgetTop")) {
+      expected.put(name, "[]");
+    }
+    expected.put("far.Gadgetry", "[3:1-3:1 import far.Gadgetry\n]");
+    assertEquals(expected, importEdits(path, "package app\nimport other.*\n\nclass A {\n  def run() {\n    Gad\n  }\n}\n", 5, 7));
+  }
+
+  /**
+   * The import goes on the line after the last import, else after the package line, else below a shebang and a header
+   * comment, never above them; a doc comment right above the class stays with it. Groovy 2.5 may give an import node
+   * the next import's position: every Groovy runs this.
+   */
+  @Test
+  void anImportGoesBelowTheImportsThePackageOrTheFilesHeader() {
+    types.add(new Symbol("far.Gadget", Symbol.Kind.CLASS, null, new Range(0, 0, 0, 10)));
+    String path = tmp.resolve("src/A.groovy").toString();
+    String body = "class A {\n  def run() {\n    Gad\n  }\n}\n";
+    Map<String, String> found = new TreeMap<>();
+    Map<String, String> expected = new TreeMap<>();
+    String[][] cases = {
+      { "imports", "package app\nimport java.io.File\nimport java.net.URL\n\n", "4:1" },
+      { "one import", "package app\n\nimport java.io.File\n", "4:1" },
+      { "static and star imports", "package app\nimport java.io.File\nimport static java.util.Collections.emptyList\nimport java.nio.file.*\n\n", "5:1" },
+      { "package", "package app\n\n", "2:1" },
+      { "nothing", "", "1:1" },
+      { "shebang", "#!/usr/bin/env groovy\n", "2:1" },
+      { "licence", "/*\n * Licensed under the Apache License.\n */\n\n", "4:1" },
+      { "line comments", "// Copyright someone\n// SPDX-License-Identifier: MIT\n", "3:1" },
+      { "shebang and licence", "#!/usr/bin/env groovy\n/* Licensed under the Apache License. */\n\n", "3:1" },
+      { "doc comment", "/** An A. */\n", "1:1" },
+      { "licence and doc comment", "/* Licensed under the Apache License. */\n\n/**\n * An A.\n */\n", "3:1" },
+    };
+    for (String[] c : cases) {
+      int line = (int) c[1].chars().filter(ch -> ch == '\n').count() + 2;
+      found.put(c[0], importEdits(path, c[1] + body, line, 7).get("far.Gadget"));
+      expected.put(c[0], "[" + c[2] + "-" + c[2] + " import far.Gadget\n]");
+    }
+    assertEquals(expected, found);
   }
 
   /**

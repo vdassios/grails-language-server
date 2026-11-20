@@ -1,5 +1,7 @@
 package io.github.vdassios.grailsls.analysis;
 
+import java.io.IOException;
+import java.io.Reader;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -8,7 +10,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 
 import org.codehaus.groovy.ast.ASTNode;
 import org.codehaus.groovy.ast.ClassHelper;
@@ -29,6 +30,7 @@ import org.codehaus.groovy.ast.expr.PropertyExpression;
 import org.codehaus.groovy.ast.expr.VariableExpression;
 import org.codehaus.groovy.ast.stmt.BlockStatement;
 import org.codehaus.groovy.ast.stmt.Statement;
+import org.codehaus.groovy.control.SourceUnit;
 
 import io.github.vdassios.grailsls.api.Completion;
 import io.github.vdassios.grailsls.api.CompletionDetail;
@@ -449,8 +451,7 @@ public final class Completions {
   /** Classes of the compile, then of the classpath, whose simple name starts with the prefix; with an import when needed. */
   private void types(ASTNode offsetNode, String prefix, Set<String> names) {
     ModuleNode module = (ModuleNode) GroovyASTUtils.getEnclosingNodeOfType(offsetNode, ModuleNode.class, ast);
-    String packageName = module == null ? null : module.getPackageName();
-    List<String> imports = imports(module);
+    Seen seen = new Seen(module);
     Range importAt = importPosition(module);
     for (ClassNode type : ast.getClassNodes()) {
       if (!roomFor(names)) {
@@ -458,7 +459,7 @@ public final class Completions {
       }
       String simpleName = type.getNameWithoutPackage();
       if (simpleName.startsWith(prefix) && simpleName.indexOf('$') < 0 && names.add(type.getName())) {
-        items.add(new Completion(simpleName, kind(type), type.getPackageName(), null, null, importEdits(type.getName(), type.getPackageName(), packageName, imports, importAt),
+        items.add(new Completion(simpleName, kind(type), type.getPackageName(), null, null, importEdits(type.getName(), type.getPackageName(), seen, importAt),
             remember(type)));
       }
     }
@@ -470,7 +471,7 @@ public final class Completions {
         return;
       }
       if (type.simpleName.startsWith(prefix) && names.add(type.name)) {
-        items.add(new Completion(type.simpleName, type.kind, type.packageName, null, null, importEdits(type.name, type.packageName, packageName, imports, importAt), -1));
+        items.add(new Completion(type.simpleName, type.kind, type.packageName, null, null, importEdits(type.name, type.packageName, seen, importAt), -1));
       }
     }
   }
@@ -482,27 +483,122 @@ public final class Completions {
     return !incomplete;
   }
 
-  private static List<TextEdit> importEdits(String className, String classPackage, String packageName, List<String> imports, Range importAt) {
-    if (classPackage == null || classPackage.equals(packageName) || imports.contains(className)) {
-      return List.of();
+  private static List<TextEdit> importEdits(String className, String classPackage, Seen seen, Range importAt) {
+    return seen.sees(className, classPackage) ? List.of() : List.of(new TextEdit(importAt, "import " + className + "\n"));
+  }
+
+  /** The classes a file names without an import of its own: its package's, star-imported, Groovy's default imports. */
+  private static final class Seen {
+    /** Packages Groovy imports into every file ({@code ResolveVisitor.DEFAULT_IMPORTS}), and the two classes. */
+    private static final Set<String> DEFAULT_PACKAGES = Set.of("java.lang", "java.util", "java.io", "java.net", "groovy.lang", "groovy.util");
+    private static final Set<String> DEFAULT_CLASSES = Set.of("java.math.BigInteger", "java.math.BigDecimal");
+
+    private final Set<String> packages = new HashSet<>(DEFAULT_PACKAGES);
+    private final Set<String> classes = new HashSet<>(DEFAULT_CLASSES);
+
+    Seen(ModuleNode module) {
+      if (module == null) {
+        return;
+      }
+      packages.add(module.getPackageName() == null ? "" : withoutDot(module.getPackageName()));
+      for (ImportNode imported : module.getImports()) {
+        classes.add(imported.getClassName());
+      }
+      for (ImportNode imported : module.getStarImports()) {
+        packages.add(withoutDot(imported.getPackageName()));
+      }
     }
-    return List.of(new TextEdit(importAt, "import " + className + "\n"));
+
+    /** Whether the file names a class of this package without adding an import; a class of the default package needs none. */
+    boolean sees(String className, String classPackage) {
+      return classPackage == null || classPackage.isEmpty() || packages.contains(classPackage) || classes.contains(className);
+    }
+
+    /** {@link ModuleNode#getPackageName()} and a star import's package end with a dot. */
+    private static String withoutDot(String name) {
+      return name.endsWith(".") ? name.substring(0, name.length() - 1) : name;
+    }
   }
 
-  private static List<String> imports(ModuleNode module) {
-    return module == null ? List.of() : module.getImports().stream().map(ImportNode::getClassName).collect(Collectors.toList());
-  }
-
-  /** The start of the line after the last import, else after the package line, else the top of the file. */
+  /**
+   * The start of the line after the last import (of any kind), else after the package line, else below the file's
+   * header: a shebang line and the comments at the top, except a doc comment right above the first declaration.
+   */
   private static Range importPosition(ModuleNode module) {
-    ASTNode after = null;
+    int last = -1;
     if (module != null) {
-      List<ImportNode> imports = module.getImports();
-      after = imports.isEmpty() ? module.getPackage() : imports.get(imports.size() - 1);
+      List<ASTNode> nodes = new ArrayList<>(module.getImports());
+      nodes.addAll(module.getStarImports());
+      nodes.addAll(module.getStaticImports().values());
+      nodes.addAll(module.getStaticStarImports().values());
+      if (module.getPackage() != null) {
+        nodes.add(module.getPackage());
+      }
+      for (ASTNode node : nodes) {
+        Range range = NodeRanges.of(node);
+        last = range == null ? last : Math.max(last, range.endLine);
+      }
     }
-    Range range = after == null ? null : NodeRanges.of(after);
-    int line = range == null ? 0 : range.endLine + 1;
+    int line = last >= 0 ? last + 1 : headerEnd(text(module));
     return new Range(line, 0, line, 0);
+  }
+
+  /** The text the module was compiled from, or null when it cannot be read. */
+  private static String text(ModuleNode module) {
+    SourceUnit unit = module == null ? null : module.getContext();
+    if (unit == null || unit.getSource() == null) {
+      return null;
+    }
+    try (Reader reader = unit.getSource().getReader()) {
+      StringBuilder text = new StringBuilder();
+      char[] buffer = new char[8192];
+      for (int read; (read = reader.read(buffer)) >= 0;) {
+        text.append(buffer, 0, read);
+      }
+      return text.toString();
+    } catch (IOException e) {
+      return null;
+    }
+  }
+
+  /**
+   * The line below a file's header, where an import goes when the file has neither a package nor imports: below a
+   * shebang and the comments at the top, but above a doc comment right above the first declaration.
+   */
+  private static int headerEnd(String text) {
+    if (text == null) {
+      return 0;
+    }
+    String[] lines = text.split("\n", -1);
+    int start = lines.length > 0 && lines[0].startsWith("#!") ? 1 : 0;
+    // the line after the last comment so far; where the last comment starts when it is a doc comment right above
+    int end = start;
+    int doc = -1;
+    int commentStart = -1;
+    for (int i = start; i < lines.length; i++) {
+      String line = lines[i].trim();
+      if (commentStart >= 0) {
+        if (line.contains("*/")) {
+          end = i + 1;
+          commentStart = -1;
+        }
+      } else if (line.isEmpty()) {
+        doc = -1;
+      } else if (line.startsWith("//")) {
+        end = i + 1;
+        doc = -1;
+      } else if (line.startsWith("/*")) {
+        doc = line.startsWith("/**") && !line.startsWith("/**/") ? i : -1;
+        if (line.indexOf("*/", 2) >= 0) {
+          end = i + 1;
+        } else {
+          commentStart = i;
+        }
+      } else {
+        return doc >= 0 ? doc : end;
+      }
+    }
+    return end;
   }
 
   private static Completion.Kind kind(ClassNode type) {
