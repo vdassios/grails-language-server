@@ -45,7 +45,7 @@ import io.github.vdassios.grailsls.api.SignatureHelp;
 import io.github.vdassios.grailsls.api.SourceLookup;
 import io.github.vdassios.grailsls.api.Symbol;
 
-/** Runs on Groovy 2.5 ({@code test}) and Groovy 4 ({@code testGroovy4}). */
+/** Runs on Groovy 2.5 ({@code test}), 3, 4 and 5 ({@code testGroovy3}, {@code testGroovy4}, {@code testGroovy5}). */
 class GroovyAnalyzerTest {
   @TempDir
   Path tmp;

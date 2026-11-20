@@ -15,15 +15,23 @@ dependencies {
   implementation "io.github.classgraph:classgraph:4.8.179"
 }
 
-// The same tests on Groovy 4 (Grails 7): the jar compiled against 2.5 must also run there.
-configurations { groovy4 }
-dependencies { groovy4 "org.apache.groovy:groovy:4.0.33" }
-
-def testGroovy4 = tasks.register("testGroovy4", Test) {
-  description = "Runs the tests on Groovy 4 instead of 2.5."
-  group = "verification"
-  testClassesDirs = sourceSets.test.output.classesDirs
-  classpath = sourceSets.test.runtimeClasspath.filter { !it.name.startsWith("groovy-2.") } + configurations.groovy4
-  useJUnitPlatform()
+// The same tests on Groovy 3 (Grails 5, 6), 4 (Grails 7) and 5 (Grails 8): the jar compiled against 2.5 must also
+// run there. Versions as in the docs/editors.md table.
+def groovyRuntimes = [
+  groovy3: "org.codehaus.groovy:groovy:3.0.23",
+  groovy4: "org.apache.groovy:groovy:4.0.33",
+  groovy5: "org.apache.groovy:groovy:5.1.3",
+]
+groovyRuntimes.each { name, coordinates ->
+  def configuration = configurations.create(name)
+  dependencies.add(name, coordinates)
+  def major = name - "groovy"
+  def task = tasks.register("testGroovy${major}", Test) {
+    description = "Runs the tests on Groovy ${major} instead of 2.5."
+    group = "verification"
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath.filter { !it.name.startsWith("groovy-2.") } + configuration
+    useJUnitPlatform()
+  }
+  tasks.named("check") { dependsOn task }
 }
-tasks.named("check") { dependsOn testGroovy4 }
