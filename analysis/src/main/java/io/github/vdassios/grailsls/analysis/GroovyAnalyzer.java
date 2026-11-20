@@ -895,6 +895,34 @@ public final class GroovyAnalyzer implements Analyzer {
 
   /** The classes a file declares, from a parse only (as {@link #declarations}); empty when it does not parse. */
   static List<ClassNode> parsedClasses(String path, String text) {
+    SourceUnit source = parsed(path, text);
+    return source == null ? List.of() : source.getAST().getClasses();
+  }
+
+  private static Map<String, List<Symbol>> parse(List<String> paths) {
+    ASTNodeVisitor ast = new ASTNodeVisitor();
+    Map<String, List<Symbol>> result = new LinkedHashMap<>();
+    for (String path : paths) {
+      SourceUnit source = parsed(path, null);
+      List<Symbol> symbols = List.of(); // does not parse, or no file
+      if (source != null) {
+        try {
+          ast.visitSourceUnit(source);
+          symbols = Navigation.symbols(ast, source.getSource().getURI());
+        } catch (GroovyBugError | RuntimeException | LinkageError e) {
+          // as if it did not parse
+        }
+      }
+      result.put(path, symbols);
+    }
+    return result;
+  }
+
+  /**
+   * A file parsed only, outside any compilation unit (no class is resolved, no transformation runs), from {@code text}
+   * or, when that is null, from disk; null when it does not parse.
+   */
+  private static SourceUnit parsed(String path, String text) {
     CompilerConfiguration config = new CompilerConfiguration();
     config.setSourceEncoding("UTF-8");
     GroovyClassLoader loader = new GroovyClassLoader(GroovyAnalyzer.class.getClassLoader(), config, false);
@@ -903,33 +931,10 @@ public final class GroovyAnalyzer implements Analyzer {
       source.parse();
       source.completePhase();
       source.convert();
-      return source.getAST().getClasses();
+      return source;
     } catch (GroovyBugError | RuntimeException | LinkageError e) {
-      return List.of();
+      return null;
     }
-  }
-
-  private static Map<String, List<Symbol>> parse(List<String> paths) {
-    CompilerConfiguration config = new CompilerConfiguration();
-    config.setSourceEncoding("UTF-8");
-    // a parse only, outside any compilation unit: no class is resolved, no transformation runs
-    GroovyClassLoader loader = new GroovyClassLoader(GroovyAnalyzer.class.getClassLoader(), config, false);
-    ASTNodeVisitor ast = new ASTNodeVisitor();
-    Map<String, List<Symbol>> result = new LinkedHashMap<>();
-    for (String path : paths) {
-      File file = new File(path);
-      SourceUnit source = new SourceUnit(file, config, loader, new ErrorCollector(config));
-      try {
-        source.parse();
-        source.completePhase();
-        source.convert();
-        ast.visitSourceUnit(source);
-        result.put(path, Navigation.symbols(ast, source.getSource().getURI()));
-      } catch (GroovyBugError | RuntimeException | LinkageError e) {
-        result.put(path, List.of()); // does not parse, or no file
-      }
-    }
-    return result;
   }
 
   /** The top-level classes of the request's lookup, for completion; the compile's own classes come first anyway. */
