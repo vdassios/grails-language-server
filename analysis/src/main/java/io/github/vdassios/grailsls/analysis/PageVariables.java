@@ -40,7 +40,6 @@ import org.codehaus.groovy.ast.stmt.Statement;
 import org.codehaus.groovy.control.SourceUnit;
 
 import io.github.vdassios.grailsls.api.Location;
-import io.github.vdassios.grailsls.api.Range;
 
 /**
  * Names a GSP page uses without declaring them, made properties of its translation so that completion offers them and
@@ -95,11 +94,13 @@ final class PageVariables {
         types.put(name, null);
       }
     }
+    Lines lines = null;
     for (GspScanner.Tag tag : GspScanner.scan(text)) {
       GspScanner.Attribute var = tag.closing || !"g".equals(tag.namespace) || !"set".equals(tag.name) ? null : tag.attribute("var");
       if (var != null && var.valueStart >= 0 && declarable(var.value, taken) && !types.containsKey(var.value)) {
+        lines = lines == null ? new Lines(text) : lines;
         types.put(var.value, null);
-        definitions.put(var.value, new Location(path, range(text, var.valueStart, var.valueEnd)));
+        definitions.put(var.value, new Location(path, lines.range(var.valueStart, var.valueEnd)));
       }
     }
     if (types.isEmpty()) {
@@ -379,23 +380,5 @@ final class PageVariables {
       return false;
     }
     return name.chars().allMatch(Character::isJavaIdentifierPart);
-  }
-
-  private static Range range(String text, int start, int end) {
-    int[] from = position(text, start);
-    int[] to = position(text, end);
-    return new Range(from[0], from[1], to[0], to[1]);
-  }
-
-  private static int[] position(String text, int offset) {
-    int line = 0;
-    int lineStart = 0;
-    for (int i = 0; i < offset && i < text.length(); i++) {
-      if (text.charAt(i) == '\n') {
-        line++;
-        lineStart = i + 1;
-      }
-    }
-    return new int[] { line, offset - lineStart };
   }
 }

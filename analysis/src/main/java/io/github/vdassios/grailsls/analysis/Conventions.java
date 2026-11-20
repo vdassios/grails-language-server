@@ -624,8 +624,9 @@ public final class Conventions {
 
   /** A {@code <g:render template="..." model="[...]"/>} in a page. */
   static final class PageRender {
-    /** The rendering page's text. */
+    /** The rendering page's text, and its lines. */
     final String pageText;
+    private final Lines pageLines;
     /** The {@code template} attribute's value, and which of the page's {@code g:render} tags with that value this is (from 0). */
     final String template;
     final int index;
@@ -633,8 +634,9 @@ public final class Conventions {
     final int modelStart;
     final String model;
 
-    PageRender(String pageText, String template, int index, int modelStart, String model) {
+    PageRender(String pageText, Lines pageLines, String template, int index, int modelStart, String model) {
       this.pageText = pageText;
+      this.pageLines = pageLines;
       this.template = template;
       this.index = index;
       this.modelStart = modelStart;
@@ -643,13 +645,7 @@ public final class Conventions {
 
     /** The page's 0-based line and column of a 1-based position in the parsed model. */
     int[] position(int line, int column) {
-      int offset = 0;
-      for (int i = 1; i < line; i++) {
-        offset = model.indexOf('\n', offset) + 1;
-      }
-      int at = modelStart + offset + column - 1;
-      int lineStart = pageText.lastIndexOf('\n', at - 1) + 1;
-      return new int[] { (int) pageText.substring(0, lineStart).chars().filter(c -> c == '\n').count(), at - lineStart };
+      return pageLines.position(modelStart + new Lines(model).offset(line - 1, column - 1));
     }
   }
 
@@ -722,6 +718,7 @@ public final class Conventions {
           continue;
         }
         Map<String, Integer> seen = new LinkedHashMap<>();
+        Lines lines = null;
         for (GspScanner.Tag tag : GspScanner.scan(text)) {
           GspScanner.Attribute name = tag.closing || !"g".equals(tag.namespace) || !"render".equals(tag.name) ? null : tag.attribute("template");
           if (name == null || name.value == null) {
@@ -734,7 +731,8 @@ public final class Conventions {
           }
           MapExpression map = modelMap(model.value);
           if (map != null) {
-            PageRender render = new PageRender(text, name.value, index, model.valueStart, expressionOf(model.value));
+            lines = lines == null ? new Lines(text) : lines;
+            PageRender render = new PageRender(text, lines, name.value, index, model.valueStart, expressionOf(model.value));
             for (MapEntryExpression entry : map.getMapEntryExpressions()) {
               found.add(new ModelEntry(entry, null, null, file.toString(), render));
             }

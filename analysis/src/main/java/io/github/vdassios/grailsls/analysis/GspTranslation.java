@@ -94,7 +94,7 @@ final class GspTranslation {
       int init = groovy.lastIndexOf(INIT);
       int line = -1;
       if (init >= 0 && !declarations.isEmpty()) {
-        line = (int) groovy.substring(0, init).chars().filter(c -> c == '\n').count();
+        line = new Lines(groovy).line(init);
         groovy = groovy.substring(0, init) + declarations + groovy.substring(init);
       }
       return new GspTranslation(text, groovy, pieces, null, -1, line, definitions);
@@ -106,7 +106,7 @@ final class GspTranslation {
       // the parser gives the line where the token before the ${ starts, often lines above it
       int unclosed = message.endsWith("Unclosed GSP expression") ? GspScanner.unclosedExpression(text, escapes) : -1;
       if (unclosed >= 0) {
-        int at = (int) text.substring(0, unclosed).chars().filter(c -> c == '\n').count();
+        int at = new Lines(text).line(unclosed);
         message = message.replaceFirst(":" + (line + 1) + "] ", ":" + (at + 1) + "] ");
         line = at;
       }
@@ -456,74 +456,5 @@ final class GspTranslation {
     }
 
     private static final String[][] ENTITIES = { { "&semi;", ";" }, { "&amp;", "&" }, { "&lt;", "<" }, { "&gt;", ">" } };
-  }
-
-  /** Line starts of a text, for offset and position conversion. */
-  private static final class Lines {
-    private final String text;
-    private final int[] starts;
-
-    Lines(String text) {
-      this.text = text;
-      List<Integer> found = new ArrayList<>();
-      found.add(0);
-      for (int i = 0; i < text.length(); i++) {
-        if (text.charAt(i) == '\n') {
-          found.add(i + 1);
-        }
-      }
-      this.starts = found.stream().mapToInt(Integer::intValue).toArray();
-    }
-
-    int count() {
-      return starts.length;
-    }
-
-    int offset(int line, int column) {
-      if (line < 0) {
-        return 0;
-      }
-      if (line >= starts.length) {
-        return text.length();
-      }
-      return Math.min(starts[line] + Math.max(column, 0), lineEnd(line));
-    }
-
-    private int lineEnd(int line) {
-      return line + 1 < starts.length ? starts[line + 1] - 1 : text.length();
-    }
-
-    int line(int offset) {
-      int low = 0;
-      int high = starts.length - 1;
-      while (low < high) {
-        int middle = (low + high + 1) >>> 1;
-        if (starts[middle] <= offset) {
-          low = middle;
-        } else {
-          high = middle - 1;
-        }
-      }
-      return low;
-    }
-
-    int[] position(int offset) {
-      int line = line(offset);
-      return new int[] { line, offset - starts[line] };
-    }
-
-    /** A line from its first non-blank character to its end (its start when blank). */
-    Range lineRange(int line) {
-      int start = starts[line];
-      int end = lineEnd(line);
-      while (end > start && Character.isWhitespace(text.charAt(end - 1))) {
-        end--;
-      }
-      int first = start;
-      while (first < end && Character.isWhitespace(text.charAt(first))) {
-        first++;
-      }
-      return new Range(line, first - start, line, end - start);
-    }
   }
 }

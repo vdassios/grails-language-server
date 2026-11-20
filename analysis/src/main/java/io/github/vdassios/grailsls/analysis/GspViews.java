@@ -50,46 +50,13 @@ final class GspViews {
     final String text;
     final SourceLookup lookup;
     final List<GspScanner.Tag> tags;
-    final int[] lineStarts;
+    final Lines lines;
 
     Page(String text, SourceLookup lookup) {
       this.text = text;
       this.lookup = lookup;
       this.tags = GspScanner.scan(text);
-      List<Integer> starts = new ArrayList<>();
-      starts.add(0);
-      for (int i = 0; i < text.length(); i++) {
-        if (text.charAt(i) == '\n') {
-          starts.add(i + 1);
-        }
-      }
-      this.lineStarts = starts.stream().mapToInt(Integer::intValue).toArray();
-    }
-
-    int offset(int line, int column) {
-      if (line >= lineStarts.length) {
-        return text.length();
-      }
-      int end = line + 1 < lineStarts.length ? lineStarts[line + 1] - 1 : text.length();
-      return Math.min(lineStarts[line] + column, end);
-    }
-
-    Range range(int start, int end) {
-      return new Range(line(start), start - lineStarts[line(start)], line(end), end - lineStarts[line(end)]);
-    }
-
-    private int line(int offset) {
-      int low = 0;
-      int high = lineStarts.length - 1;
-      while (low < high) {
-        int middle = (low + high + 1) >>> 1;
-        if (lineStarts[middle] <= offset) {
-          low = middle;
-        } else {
-          high = middle - 1;
-        }
-      }
-      return low;
+      this.lines = new Lines(text);
     }
   }
 
@@ -112,7 +79,7 @@ final class GspViews {
         Conventions.Reference reference = reference(tag, attribute, attribute.value, controller);
         String missing = reference == null || reference.kind == Conventions.Kind.CONTROLLER || reference.kind == Conventions.Kind.ACTION ? null : files.missing(reference);
         if (missing != null) {
-          hints.add(hint(request.path, page.range(attribute.valueStart, attribute.valueEnd), missing));
+          hints.add(hint(request.path, page.lines.range(attribute.valueStart, attribute.valueEnd), missing));
         }
       }
     }
@@ -125,13 +92,13 @@ final class GspViews {
       if (known == null) {
         // a namespace whose taglib inherits from a class that cannot be read may declare it after all
         if (index.complete(tag.namespace)) {
-          hints.add(hint(request.path, page.range(tag.namespaceStart(), tag.nameEnd), "Unknown tag <" + tag.namespace + ":" + tag.name + ">: no taglib of namespace '" + tag.namespace + "' declares it"));
+          hints.add(hint(request.path, page.lines.range(tag.namespaceStart(), tag.nameEnd), "Unknown tag <" + tag.namespace + ":" + tag.name + ">: no taglib of namespace '" + tag.namespace + "' declares it"));
         }
         continue;
       }
       for (Taglibs.Attribute attribute : known.docs().attributes) {
         if (attribute.required && tag.attribute(attribute.name) == null) {
-          hints.add(hint(request.path, page.range(tag.namespaceStart(), tag.nameEnd), "<" + tag.namespace + ":" + tag.name + "> needs the attribute '" + attribute.name + "'"));
+          hints.add(hint(request.path, page.lines.range(tag.namespaceStart(), tag.nameEnd), "<" + tag.namespace + ":" + tag.name + "> needs the attribute '" + attribute.name + "'"));
         }
       }
     }
@@ -229,7 +196,7 @@ final class GspViews {
     if (page == null) {
       return null;
     }
-    int offset = page.offset(line, column);
+    int offset = page.lines.offset(line, column);
     GspScanner.Tag tag = GspScanner.at(page.tags, offset);
     GspScanner.Attribute attribute = tag == null ? null : valueAt(tag, offset);
     if (attribute != null) {
@@ -245,7 +212,7 @@ final class GspViews {
     if (page == null) {
       return null;
     }
-    int offset = page.offset(line, column);
+    int offset = page.lines.offset(line, column);
     GspScanner.Tag tag = GspScanner.at(page.tags, offset);
     Taglibs.Tag known = tagNamed(page, tag, offset);
     if (known != null) {
@@ -294,7 +261,7 @@ final class GspViews {
 
   CompletionList completion(CompileRequest request, int line, int column) {
     Page page = new Page(request.text, request.lookup);
-    int offset = page.offset(line, column);
+    int offset = page.lines.offset(line, column);
     GspScanner.Tag tag = GspScanner.at(page.tags, offset);
     completions.remove(request.path);
     if (tag == null || tag.closing && offset > tag.nameEnd) {
@@ -304,13 +271,13 @@ final class GspViews {
     List<Completion> items = new ArrayList<>();
     List<CompletionDetail> details = new ArrayList<>();
     if (offset >= tag.namespaceStart() && offset < tag.nameStart) {
-      Range replace = page.range(tag.namespaceStart(), tag.nameStart - 1);
+      Range replace = page.lines.range(tag.namespaceStart(), tag.nameStart - 1);
       for (String namespace : all.keySet()) {
         items.add(new Completion(namespace, Completion.Kind.PACKAGE, "namespace", null, replace, List.of(), -1));
       }
     } else if (offset >= tag.nameStart && offset <= tag.nameEnd) {
       Map<String, Taglibs.Tag> namespace = all.get(tag.namespace);
-      Range replace = page.range(tag.nameStart, tag.nameEnd);
+      Range replace = page.lines.range(tag.nameStart, tag.nameEnd);
       for (Taglibs.Tag known : namespace == null ? List.<Taglibs.Tag>of() : namespace.values()) {
         items.add(new Completion(known.name, Completion.Kind.METHOD, known.simpleOwner() == null ? "GSP tag" : known.simpleOwner(), null, replace, List.of(), details.size()));
         details.add(new CompletionDetail(known.owner == null ? "GSP tag" : known.owner, markdown(known)));
@@ -320,7 +287,7 @@ final class GspViews {
       String typed = page.text.substring(attribute.valueStart, offset);
       Conventions.Reference reference = reference(tag, attribute, typed, viewController(viewDir(request.path)));
       if (reference != null) {
-        items.addAll(conventions.apply(request.lookup, request.path).candidates(reference, null, typed, page.range(attribute.valueStart, offset)));
+        items.addAll(conventions.apply(request.lookup, request.path).candidates(reference, null, typed, page.lines.range(attribute.valueStart, offset)));
       }
     } else if (!tag.closing) {
       Map<String, Taglibs.Tag> namespace = all.get(tag.namespace);
@@ -340,7 +307,7 @@ final class GspViews {
             given.add(attribute.name);
           }
         }
-        Range replace = page.range(start, end);
+        Range replace = page.lines.range(start, end);
         for (Taglibs.Attribute attribute : known.docs().attributes) {
           if (!given.contains(attribute.name)) {
             // required attributes first

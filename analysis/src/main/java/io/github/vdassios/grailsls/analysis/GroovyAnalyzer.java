@@ -786,7 +786,7 @@ public final class GroovyAnalyzer implements Analyzer {
     Kept kept = units.get(request.path);
     GspTranslation translation = translations.get(request.path);
     if (!insert.isEmpty() || kept == null || translation == null || !translation.text.equals(request.text)) {
-      int offset = offset(request.text, line, column);
+      int offset = new Lines(request.text).offset(line, column);
       String text = request.text.substring(0, offset) + insert + request.text.substring(offset);
       translation = translate(request.path, text, request.lookup, request.cancelled);
       if (translation == null || translation.groovy == null || translation.toGroovy(line, column) == null) {
@@ -858,29 +858,14 @@ public final class GroovyAnalyzer implements Analyzer {
 
   /** Compiles the document with text inserted at a position, for one query; null when cancelled. Not kept. */
   private Kept compileCopy(CompileRequest request, int line, int column, String insert) {
-    int offset = offset(request.text, line, column);
+    int offset = new Lines(request.text).offset(line, column);
     String text = request.text.substring(0, offset) + insert + request.text.substring(offset);
     Kept copy = run(new CompileRequest(request.path, text, request.lookup, request.cancelled), new ArrayList<>());
     return copy.cancelled ? null : copy;
   }
 
-  /** The offset of a position in a text; a column past the end of its line is the end of the line. */
-  private static int offset(String text, int line, int column) {
-    int start = 0;
-    for (int i = 0; i < line; i++) {
-      int next = text.indexOf('\n', start);
-      if (next < 0) {
-        return text.length();
-      }
-      start = next + 1;
-    }
-    int end = text.indexOf('\n', start);
-    return Math.min(start + column, end < 0 ? text.length() : end);
-  }
-
   private static String lineBefore(String text, int line, int column) {
-    int offset = offset(text, line, column);
-    return text.substring(text.lastIndexOf('\n', offset - 1) + 1, offset);
+    return new Lines(text).before(line, column);
   }
 
   @Override

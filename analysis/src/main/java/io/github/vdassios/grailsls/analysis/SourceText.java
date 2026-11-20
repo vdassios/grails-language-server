@@ -244,13 +244,7 @@ final class SourceText {
   }
 
   private Range range(int offset, int length) {
-    int line = 0;
-    int lineStart = 0;
-    for (int i = text.indexOf('\n'); i >= 0 && i < offset; i = text.indexOf('\n', i + 1)) {
-      line++;
-      lineStart = i + 1;
-    }
-    return new Range(line, offset - lineStart, line, offset - lineStart + length);
+    return new Lines(text).range(offset, offset + length);
   }
 
   /** Blanks comments and string and character literals, keeping line ends; notes the documentation comments. */
