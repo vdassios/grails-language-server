@@ -5,7 +5,9 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
@@ -30,7 +32,11 @@ public final class ProjectService {
   private final boolean trusted;
   private final Consumer<StatusParams> status;
   private final Function<ProjectModel, String> onModel;
+  private final Consumer<String> notice;
   private Future<?> running;
+  /** The model the stale notice was shown for: once per model. */
+  private volatile ProjectModel staleShown;
+  private final AtomicBoolean staleCheckQueued = new AtomicBoolean();
   /** Whether the cache has been pruned: once, before the first resolution. */
   private boolean pruned;
   private volatile ProjectModel model;
@@ -38,13 +44,16 @@ public final class ProjectService {
   /**
    * @param onModel takes each resolved model (indexes it, sets up compiling) and returns detail for the ready message,
    *                e.g. ", 2 Java files not built", or an empty string; throws {@link Unsupported} to report it failed
+   * @param notice  shows a message to the user ({@link #buildFilesChanged})
    */
-  public ProjectService(GradleBridge bridge, Path workspaceRoot, boolean trusted, Consumer<StatusParams> status, Function<ProjectModel, String> onModel) {
+  public ProjectService(GradleBridge bridge, Path workspaceRoot, boolean trusted, Consumer<StatusParams> status, Function<ProjectModel, String> onModel,
+      Consumer<String> notice) {
     this.bridge = bridge;
     this.workspaceRoot = workspaceRoot;
     this.trusted = trusted;
     this.status = status;
     this.onModel = onModel;
+    this.notice = notice;
   }
 
   /** The last model resolved, or null. */
@@ -60,6 +69,32 @@ public final class ProjectService {
   /** Cancels a running resolution and resolves again, ignoring the cache ({@code grails/reloadProject}). */
   public CompletableFuture<Void> reload() {
     return submit(true);
+  }
+
+  /**
+   * A build file changed: computes the cache key again, after any resolution still running, and when it no longer
+   * matches the model's tells the user once per model that the model is stale and {@code grails/reloadProject} reads it
+   * again. Never runs Gradle itself: a build script is project code, and a half-edited one would fail.
+   */
+  public void buildFilesChanged() {
+    if (model == null || !staleCheckQueued.compareAndSet(false, true)) {
+      return;
+    }
+    try {
+      executor.submit(() -> {
+        staleCheckQueued.set(false);
+        ProjectModel current = model;
+        if (current == null || current.key == null || staleShown == current) {
+          return;
+        }
+        if (!bridge.cacheKey(current.buildRoot).equals(current.key)) {
+          staleShown = current;
+          notice.accept("The build files changed since the project model was read: run grails/reloadProject (:GrailsReloadProject in grails.nvim) to read it again");
+        }
+      });
+    } catch (RejectedExecutionException e) {
+      staleCheckQueued.set(false); // stopped
+    }
   }
 
   /**

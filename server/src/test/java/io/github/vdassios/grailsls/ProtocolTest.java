@@ -21,11 +21,17 @@ import java.util.logging.Logger;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 
+import org.eclipse.lsp4j.ClientCapabilities;
 import org.eclipse.lsp4j.CompletionItem;
 import org.eclipse.lsp4j.CompletionParams;
 import org.eclipse.lsp4j.DidChangeTextDocumentParams;
+import org.eclipse.lsp4j.DidChangeWatchedFilesCapabilities;
+import org.eclipse.lsp4j.DidChangeWatchedFilesParams;
+import org.eclipse.lsp4j.DidChangeWatchedFilesRegistrationOptions;
 import org.eclipse.lsp4j.DidCloseTextDocumentParams;
 import org.eclipse.lsp4j.DidOpenTextDocumentParams;
+import org.eclipse.lsp4j.FileChangeType;
+import org.eclipse.lsp4j.FileEvent;
 import org.eclipse.lsp4j.Hover;
 import org.eclipse.lsp4j.HoverParams;
 import org.eclipse.lsp4j.InitializeParams;
@@ -34,6 +40,8 @@ import org.eclipse.lsp4j.MessageActionItem;
 import org.eclipse.lsp4j.MessageParams;
 import org.eclipse.lsp4j.Position;
 import org.eclipse.lsp4j.PublishDiagnosticsParams;
+import org.eclipse.lsp4j.Registration;
+import org.eclipse.lsp4j.RegistrationParams;
 import org.eclipse.lsp4j.ServerInfo;
 import org.eclipse.lsp4j.ShowMessageRequestParams;
 import org.eclipse.lsp4j.SignatureHelp;
@@ -43,6 +51,7 @@ import org.eclipse.lsp4j.TextDocumentContentChangeEvent;
 import org.eclipse.lsp4j.TextDocumentIdentifier;
 import org.eclipse.lsp4j.TextDocumentItem;
 import org.eclipse.lsp4j.VersionedTextDocumentIdentifier;
+import org.eclipse.lsp4j.WorkspaceClientCapabilities;
 import org.eclipse.lsp4j.WorkspaceFolder;
 import org.eclipse.lsp4j.WorkspaceSymbolParams;
 import org.eclipse.lsp4j.jsonrpc.Launcher;
@@ -76,7 +85,15 @@ class ProtocolTest {
 
     @JsonRequest("grails/downloadSources")
     CompletableFuture<JsonObject> downloadSources();
+
+    @JsonRequest("grails/reindex")
+    CompletableFuture<Object> reindex();
   }
+
+  /** Whether the client offers to watch files for the server (Neovim does on macOS, not on Linux). */
+  private boolean clientWatchesFiles;
+  private final BlockingQueue<List<String>> registeredGlobs = new LinkedBlockingQueue<>();
+  private final BlockingQueue<String> shown = new LinkedBlockingQueue<>();
 
   private void start(Path root, JsonObject options) throws Exception {
     start(root, options, proxy -> {});
@@ -105,6 +122,13 @@ class ProtocolTest {
     InitializeParams params = new InitializeParams();
     params.setWorkspaceFolders(List.of(new WorkspaceFolder(rootUri, "project")));
     params.setInitializationOptions(options);
+    if (clientWatchesFiles) {
+      WorkspaceClientCapabilities workspace = new WorkspaceClientCapabilities();
+      workspace.setDidChangeWatchedFiles(new DidChangeWatchedFilesCapabilities(true));
+      ClientCapabilities capabilities = new ClientCapabilities();
+      capabilities.setWorkspace(workspace);
+      params.setCapabilities(capabilities);
+    }
     server.initialize(params).get(10, TimeUnit.SECONDS);
     beforeInitialized.accept(server);
     server.initialized(new InitializedParams());
@@ -302,6 +326,113 @@ class ProtocolTest {
     return root;
   }
 
+
+  /** The messages of the next diagnostics published for {@code uri} within {@code seconds}, or null. */
+  private List<String> nextDiagnostics(String uri, int seconds) throws InterruptedException {
+    long end = System.nanoTime() + TimeUnit.SECONDS.toNanos(seconds);
+    while (System.nanoTime() < end) {
+      PublishDiagnosticsParams published = diagnostics.poll(100, TimeUnit.MILLISECONDS);
+      if (published != null && published.getUri().equals(uri)) {
+        return published.getDiagnostics().stream().map(d -> d.getMessage()).collect(java.util.stream.Collectors.toList());
+      }
+    }
+    return null;
+  }
+
+  /** Diagnostics for {@code uri} until they are {@code expected}; fails after {@code seconds}. */
+  private void awaitDiagnostics(String uri, List<String> expected, int seconds) throws InterruptedException {
+    long end = System.nanoTime() + TimeUnit.SECONDS.toNanos(seconds);
+    List<String> last = null;
+    while (System.nanoTime() < end && !expected.equals(last)) {
+      List<String> next = nextDiagnostics(uri, 1);
+      last = next == null ? last : next;
+    }
+    assertEquals(expected, last);
+  }
+
+  private void startReady(Path root) throws Exception {
+    start(root, trustedOptions());
+    assertEquals(StatusParams.RESOLVING, next().state);
+    assertEquals(StatusParams.INDEXING, next().state);
+    assertEquals(StatusParams.READY, next().state);
+  }
+
+  /**
+   * A client that does not watch files (Neovim on Linux): the server watches the source roots itself, so a class
+   * created in a terminal resolves without a reload, and the open document compiles again on its own. On macOS the
+   * JDK's watch service polls every 10 s.
+   */
+  @Test
+  void withoutAClientWatcherAClassCreatedOnDiskResolvesWithoutAReload() throws Exception {
+    Path root = groovyProject();
+    startReady(root);
+    String uri = root.resolve("src/A.groovy").toUri().toString();
+    server.getTextDocumentService().didOpen(new DidOpenTextDocumentParams(new TextDocumentItem(uri, "groovy", 1, "class A {\n  lib.Shelf shelf\n}\n")));
+    assertEquals(List.of("unable to resolve class lib.Shelf"), nextDiagnostics(uri, 30));
+
+    Files.createDirectories(root.resolve("src/lib"));
+    Path shelf = Files.writeString(root.resolve("src/lib/Shelf.groovy"), "package lib\nclass Shelf {}\n");
+    awaitDiagnostics(uri, List.of(), 60);
+    Files.delete(shelf);
+    Files.delete(root.resolve("src/lib"));
+    awaitDiagnostics(uri, List.of("unable to resolve class lib.Shelf"), 60);
+    assertEquals(1, FakeWrapper.runs(root));
+  }
+
+  /**
+   * {@code grails/reindex} reads the disk again without Gradle: changes no event reported (the client watches files,
+   * but was told nothing) are applied, symbols included, by the time it answers.
+   */
+  @Test
+  void reindexAppliesChangesNoEventReportedWithoutGradle() throws Exception {
+    clientWatchesFiles = true;
+    Path root = groovyProject();
+    startReady(root);
+    assertEquals(List.of("**/*.groovy", "**/*.java", "**/*.gsp", "**/*.gradle", "**/*.gradle.kts", "**/gradle.properties", "**/gradle-wrapper.properties",
+        "**/*.versions.toml", "**/*.lockfile"), registeredGlobs.poll(10, TimeUnit.SECONDS), "sources, pages and build files");
+    String uri = root.resolve("src/A.groovy").toUri().toString();
+    server.getTextDocumentService().didOpen(new DidOpenTextDocumentParams(new TextDocumentItem(uri, "groovy", 1, "class A {\n  Shelf shelf\n}\n")));
+    assertEquals(List.of("unable to resolve class Shelf"), nextDiagnostics(uri, 30));
+
+    Files.writeString(root.resolve("src/Shelf.groovy"), "class Shelf {\n  int shelfSize() { 1 }\n}\n");
+    assertNull(nextDiagnostics(uri, 2), "no watcher of the server's own: nothing happens yet");
+    server.reindex().get(30, TimeUnit.SECONDS);
+    assertEquals(List.of("Method shelfSize"), server.getWorkspaceService().symbol(new WorkspaceSymbolParams("shelfSize")).get(10, TimeUnit.SECONDS).stream()
+        .map(found -> found.getKind() + " " + found.getName()).collect(java.util.stream.Collectors.toList()), "symbols are current when it answers");
+    awaitDiagnostics(uri, List.of(), 30);
+    assertEquals(1, FakeWrapper.runs(root), "Gradle ran once, to resolve");
+  }
+
+  /**
+   * Client events: a rename delivered as create-then-delete keeps the class, and a changed build file is followed by
+   * one message that the model is stale, not by a Gradle run.
+   */
+  @Test
+  void clientEventsFollowARenameAndABuildFileChange() throws Exception {
+    clientWatchesFiles = true;
+    Path root = groovyProject();
+    Path old = Files.writeString(root.resolve("src/Shelf.groovy"), "class Shelf {}\n");
+    startReady(root);
+    String uri = root.resolve("src/A.groovy").toUri().toString();
+    server.getTextDocumentService().didOpen(new DidOpenTextDocumentParams(new TextDocumentItem(uri, "groovy", 1, "class A {\n  Shelf shelf\n}\n")));
+    assertEquals(List.of(), nextDiagnostics(uri, 30));
+
+    Files.createDirectories(root.resolve("src/moved"));
+    Path moved = Files.move(old, root.resolve("src/moved/Shelf.groovy"));
+    server.getWorkspaceService().didChangeWatchedFiles(new DidChangeWatchedFilesParams(List.of(new FileEvent(moved.toUri().toString(), FileChangeType.Created))));
+    server.getWorkspaceService().didChangeWatchedFiles(new DidChangeWatchedFilesParams(List.of(new FileEvent(old.toUri().toString(), FileChangeType.Deleted))));
+    server.getTextDocumentService().didChange(new DidChangeTextDocumentParams(new VersionedTextDocumentIdentifier(uri, 2),
+        List.of(new TextDocumentContentChangeEvent("class A {\n  Shelf shelf\n  int n\n}\n"))));
+    awaitDiagnostics(uri, List.of(), 30);
+
+    Files.writeString(root.resolve("settings.gradle"), "rootProject.name = 'renamed'\n");
+    server.getWorkspaceService().didChangeWatchedFiles(new DidChangeWatchedFilesParams(List.of(new FileEvent(root.resolve("settings.gradle").toUri().toString(),
+        FileChangeType.Changed))));
+    String notice = shown.poll(10, TimeUnit.SECONDS);
+    assertTrue(notice != null && notice.contains("grails/reloadProject"), String.valueOf(notice));
+    assertEquals(1, FakeWrapper.runs(root), "never Gradle on its own");
+  }
+
   /**
    * A workspace opened through a symlink: Gradle reports the project's real paths, the editor the paths it opened.
    * On macOS {@code /tmp} against {@code /private/tmp} is enough. Diagnostics go to the editor's URI.
@@ -491,7 +622,19 @@ class ProtocolTest {
     }
 
     @Override
-    public void showMessage(MessageParams messageParams) {}
+    public void showMessage(MessageParams messageParams) {
+      shown.add(messageParams.getMessage());
+    }
+
+    @Override
+    public CompletableFuture<Void> registerCapability(RegistrationParams params) {
+      for (Registration registration : params.getRegistrations()) {
+        DidChangeWatchedFilesRegistrationOptions options = new com.google.gson.Gson().fromJson(String.valueOf(registration.getRegisterOptions()),
+            DidChangeWatchedFilesRegistrationOptions.class);
+        registeredGlobs.add(options.getWatchers().stream().map(w -> w.getGlobPattern()).collect(java.util.stream.Collectors.toList()));
+      }
+      return CompletableFuture.completedFuture(null);
+    }
 
     @Override
     public CompletableFuture<MessageActionItem> showMessageRequest(ShowMessageRequestParams requestParams) {

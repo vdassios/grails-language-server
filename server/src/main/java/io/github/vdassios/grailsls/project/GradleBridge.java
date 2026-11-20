@@ -92,7 +92,7 @@ public final class GradleBridge {
       CachedModel cached = readCache(cacheFile);
       if (cached != null && key.equals(cached.key) && jarsExist(cached.modules)) {
         touch(dir);
-        return new ProjectModel(buildRoot, cached.modules, true);
+        return new ProjectModel(buildRoot, cached.modules, true, key);
       }
     }
     List<ModuleRecord> modules = runGradle(buildRoot, dir);
@@ -100,7 +100,7 @@ public final class GradleBridge {
     fresh.key = key;
     fresh.modules = modules;
     writeAtomically(cacheFile, gson.toJson(fresh));
-    return new ProjectModel(buildRoot, modules, false);
+    return new ProjectModel(buildRoot, modules, false, key);
   }
 
   /**
@@ -158,13 +158,12 @@ public final class GradleBridge {
   }
 
   /**
-   * Gradle scripts, properties, version catalogs, dependency lock files ({@code gradle.lockfile}, the
-   * {@code gradle/dependency-locks/} of Gradle 5 and 6: all named {@code *.lockfile}), the wrapper properties and
-   * everything under {@code buildSrc/src}.
+   * The files that make up the cache key: Gradle scripts, properties, version catalogs, dependency lock files
+   * ({@code gradle.lockfile}, the {@code gradle/dependency-locks/} of Gradle 5 and 6: all named {@code *.lockfile}),
+   * the wrapper properties and everything under {@code buildSrc/src}.
    */
-  static List<Path> buildFiles(Path buildRoot) {
+  public static List<Path> buildFiles(Path buildRoot) {
     List<Path> files = new ArrayList<>();
-    Path buildSrc = buildRoot.resolve("buildSrc").resolve("src");
     try {
       Files.walkFileTree(buildRoot, new SimpleFileVisitor<>() {
         @Override
@@ -176,9 +175,7 @@ public final class GradleBridge {
 
         @Override
         public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
-          String name = file.getFileName().toString();
-          if (name.endsWith(".gradle") || name.endsWith(".gradle.kts") || name.equals("gradle.properties") || name.equals("gradle-wrapper.properties")
-              || name.endsWith(".versions.toml") || name.endsWith(".lockfile") || file.startsWith(buildSrc)) {
+          if (isBuildFile(buildRoot, file)) {
             files.add(file);
           }
           return FileVisitResult.CONTINUE;
@@ -194,6 +191,13 @@ public final class GradleBridge {
     }
     files.sort(Comparator.naturalOrder());
     return files;
+  }
+
+  /** Whether {@code file} is one of the {@link #buildFiles} kind, by its name and place (it need not exist). */
+  public static boolean isBuildFile(Path buildRoot, Path file) {
+    String name = file.getFileName() == null ? "" : file.getFileName().toString();
+    return name.endsWith(".gradle") || name.endsWith(".gradle.kts") || name.equals("gradle.properties") || name.equals("gradle-wrapper.properties")
+        || name.endsWith(".versions.toml") || name.endsWith(".lockfile") || file.startsWith(buildRoot.resolve("buildSrc").resolve("src"));
   }
 
   /**

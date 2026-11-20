@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -42,10 +43,10 @@ public final class CompileContext implements AutoCloseable {
   /** Roots the declaration index answers from, own roots first. */
   public final List<Path> searchRoots;
   private final List<Path> classpath;
+  /** Read by the loader as it changes ({@link #javaClassesRead}). */
   private final Map<String, Path> javaClasses;
   private final Map<String, List<Path>> resources;
-  /** {@code .java} files of this source set whose classes are not in its class output (not built yet). */
-  public final int javaFilesNotBuilt;
+  private volatile int javaFilesNotBuilt;
   /** Gradle task that builds this source set's classes, e.g. {@code :app:testClasses}. */
   public final String classesTask;
   /** ANTLR's runtime, shared with the other contexts of the same Groovy jar; null when not shared. Owned by the workspace. */
@@ -66,7 +67,7 @@ public final class CompileContext implements AutoCloseable {
     this.ownRoots = List.copyOf(ownRoots);
     this.searchRoots = List.copyOf(searchRoots);
     this.classpath = List.copyOf(classpath);
-    this.javaClasses = Map.copyOf(javaClasses);
+    this.javaClasses = new ConcurrentHashMap<>(javaClasses);
     this.resources = Map.copyOf(resources);
     this.javaFilesNotBuilt = javaFilesNotBuilt;
     this.classesTask = classesTask;
@@ -82,6 +83,25 @@ public final class CompileContext implements AutoCloseable {
   /** Number of classes served from the class output: those of Java sources and of extension modules. */
   public int javaClasses() {
     return javaClasses.size();
+  }
+
+  /** {@code .java} files of this source set whose classes are not in its class output (not built yet). */
+  public int javaFilesNotBuilt() {
+    return javaFilesNotBuilt;
+  }
+
+  /**
+   * The class output read again: classes built since are served from now on, and classes gone are no longer served
+   * unless already loaded (a loader defines each class once). Returns whether the set of classes changed.
+   */
+  boolean javaClassesRead(Map<String, Path> classFiles, int notBuilt) {
+    javaFilesNotBuilt = notBuilt;
+    if (javaClasses.equals(classFiles)) {
+      return false;
+    }
+    javaClasses.keySet().retainAll(classFiles.keySet());
+    javaClasses.putAll(classFiles);
+    return true;
   }
 
   /** Runs the compile on this context's thread. */

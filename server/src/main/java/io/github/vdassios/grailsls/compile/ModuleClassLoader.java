@@ -24,7 +24,7 @@ final class ModuleClassLoader extends URLClassLoader {
     registerAsParallelCapable();
   }
 
-  /** Resource name ({@code a/b/C.class}, {@code a/b/C$1.class}) to class file. */
+  /** Resource name ({@code a/b/C.class}, {@code a/b/C$1.class}) to class file; the context's, which a rescan updates. */
   private final Map<String, Path> javaClasses;
   /** Resource name ({@link #EXTENSION_DESCRIPTORS}) to the project's files of that name. */
   private final Map<String, List<Path>> resources;
@@ -41,7 +41,7 @@ final class ModuleClassLoader extends URLClassLoader {
 
   ModuleClassLoader(String name, List<URL> urls, Map<String, Path> javaClasses, Map<String, List<Path>> resources, AntlrLoader antlr) {
     super(name, urls.toArray(new URL[0]), BoundaryLoader.INSTANCE);
-    this.javaClasses = Map.copyOf(javaClasses);
+    this.javaClasses = javaClasses;
     this.resources = Map.copyOf(resources);
     this.antlr = antlr;
   }

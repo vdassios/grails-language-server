@@ -25,6 +25,8 @@ The server does nothing until the client sends `initializationOptions.trusted = 
 
 ## Editor setup
 
+**Changes outside the editor.** The server follows files changed outside the editor (a checkout, a generator): through the client's file watcher when the client offers one (VS Code, Neovim on macOS), otherwise with a watcher of its own (Neovim on Linux, where it uses inotify: one watch per source directory). If it logs that a directory cannot be watched, raise `fs.inotify.max_user_watches`; until then it reads the source roots again on every save. The request `grails/reindex` makes it read them again at any time, without Gradle. After a build file changes, the server says the project model is stale; `grails/reloadProject` reads it again.
+
 Each setup below starts `java` from `PATH`; give the full path of the project's JDK's `java` if `PATH` points at another. Replace `/path/to/grails-language-server-all.jar`. Each was checked by opening a Grails 4 controller and asking for hover on `render`, except Zed.
 
 ### Neovim (0.11 or later)

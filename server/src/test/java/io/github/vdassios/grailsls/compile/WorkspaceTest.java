@@ -117,8 +117,8 @@ class WorkspaceTest {
     try (Workspace workspace = workspace()) {
       CompileContext appMain = workspace.contexts().get(0);
       assertEquals(3, appMain.javaClasses(), "Built, Built$Inner, Built$1; not BuiltOther or GroovyClass");
-      assertEquals(1, appMain.javaFilesNotBuilt);
-      assertEquals(1, workspace.contexts().get(1).javaFilesNotBuilt);
+      assertEquals(1, appMain.javaFilesNotBuilt());
+      assertEquals(1, workspace.contexts().get(1).javaFilesNotBuilt());
       assertEquals(", 2 Java files not built (run Gradle :app:classes :app:testClasses)", workspace.summary(), "each source set needs its own task");
       assertEquals(3, workspace.contexts().get(1).javaClasses(), "a test source set sees main's Java classes");
     }
@@ -132,7 +132,50 @@ class WorkspaceTest {
     touch("app/src/main/groovy/a/Unbuilt.java", "package a;\npublic class Unbuilt {}\n");
     try (Workspace workspace = workspace()) {
       assertEquals(4, workspace.contexts().get(0).javaClasses(), "Built, Built$Inner, Built$1, Later");
-      assertEquals(2, workspace.contexts().get(0).javaFilesNotBuilt, "Fresh, Unbuilt");
+      assertEquals(2, workspace.contexts().get(0).javaFilesNotBuilt(), "Fresh, Unbuilt");
+    }
+  }
+
+  /** A Java class built after start is served after a rescan (no Gradle run), and one whose class output went is not. */
+  @Test
+  void aRescanReadsTheJavaClassOutputAgain() throws Exception {
+    touch("app/src/main/java/a/Later.java", "package a;\npublic class Later {}\n");
+    try (Workspace workspace = workspace()) {
+      workspace.index();
+      CompileContext appMain = workspace.contexts().get(0);
+      assertEquals(3, appMain.javaClasses());
+      assertEquals(2, appMain.javaFilesNotBuilt(), "Fresh, Later");
+      assertEquals(false, workspace.rescan().get(10, java.util.concurrent.TimeUnit.SECONDS), "nothing changed");
+
+      touch("app/build/classes/java/main/a/Later.class", "");
+      assertEquals(true, workspace.rescan().get(10, java.util.concurrent.TimeUnit.SECONDS));
+      assertEquals(4, appMain.javaClasses(), "Built, Built$Inner, Built$1, Later");
+      assertEquals(1, appMain.javaFilesNotBuilt());
+      assertEquals(4, workspace.contexts().get(1).javaClasses(), "the test source set sees main's new class too");
+
+      Files.delete(tmp.resolve("app/src/main/java/a/Later.java"));
+      assertEquals(true, workspace.rescan().get(10, java.util.concurrent.TimeUnit.SECONDS));
+      assertEquals(3, appMain.javaClasses(), "a deleted source's class is no longer served");
+    }
+  }
+
+  /** Pages that come or go change the view hints of open documents; editing one does not. */
+  @Test
+  void pagesThatComeOrGoAreReported() throws Exception {
+    Path page = touch("app/grails-app/views/book/show.gsp", "<p/>");
+    try (Workspace workspace = workspace()) {
+      workspace.index();
+      assertEquals(false, workspace.refresh(page), "edited");
+      Path created = touch("app/grails-app/views/book/edit.gsp", "<p/>");
+      assertEquals(true, workspace.refresh(created));
+      Files.delete(created);
+      assertEquals(true, workspace.refresh(created));
+      Path dir = tmp.resolve("app/grails-app/views/book");
+      Files.delete(page);
+      Files.delete(dir);
+      assertEquals(true, workspace.refresh(dir), "a deleted directory takes its pages");
+      touch("app/grails-app/views/author/index.gsp", "<p/>");
+      assertEquals(true, workspace.rescan().get(10, java.util.concurrent.TimeUnit.SECONDS), "a rescan finds pages no event reported");
     }
   }
 

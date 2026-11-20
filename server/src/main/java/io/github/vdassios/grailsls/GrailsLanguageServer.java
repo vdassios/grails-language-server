@@ -1,12 +1,15 @@
 package io.github.vdassios.grailsls;
 
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.PrintStream;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -76,8 +79,10 @@ import io.github.vdassios.grailsls.compile.AnalysisJar;
 import io.github.vdassios.grailsls.compile.CompileService;
 import io.github.vdassios.grailsls.compile.Documents;
 import io.github.vdassios.grailsls.compile.Workspace;
+import io.github.vdassios.grailsls.index.SourceWatcher;
 import io.github.vdassios.grailsls.index.SymbolIndex;
 import io.github.vdassios.grailsls.project.GradleBridge;
+import io.github.vdassios.grailsls.project.ProjectModel;
 import io.github.vdassios.grailsls.project.ProjectService;
 import io.github.vdassios.grailsls.project.SourcesReport;
 
@@ -133,7 +138,16 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
   private GrailsLanguageClient client;
   private volatile ProjectService project;
   private volatile CompileService compiles;
+  /** Whether the client watches files for the server ({@code workspace/didChangeWatchedFiles} registration). */
   private boolean watchFiles;
+  /** Follows the disk when the client does not; one per workspace. Guarded by {@code this}. */
+  private SourceWatcher watcher;
+  /** Whether events can be missed (the watcher could not watch every directory): each save then rescans. */
+  private volatile boolean rescanOnSave;
+
+  /** What the client is asked to watch: sources, pages and the build files of the model's cache key. */
+  static final List<String> WATCHED_GLOBS = List.of("**/*.groovy", "**/*.java", "**/*.gsp", "**/*.gradle", "**/*.gradle.kts", "**/gradle.properties",
+      "**/gradle-wrapper.properties", "**/*.versions.toml", "**/*.lockfile");
 
   @Override
   public void connect(LanguageClient client) {
@@ -164,11 +178,14 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
       workspace.index();
       marks.mark(StartupMarks.DECLARATIONS_INDEXED);
       compiles.setWorkspace(workspace);
+      if (!watchFiles) {
+        watch(model, workspace);
+      }
       // the symbol index parses on the compile threads: started after the open documents' compiles, whose
       // diagnostics would otherwise wait for its batches and compete with it for the CPU
       compiles.afterPendingCompiles().thenCompose(compiled -> workspace.indexSymbols()).thenRun(() -> marks.mark(StartupMarks.SYMBOLS_INDEXED));
       return workspace.summary();
-    });
+    }, notice -> client.showMessage(new MessageParams(MessageType.Warning, notice)));
     watchFiles = params.getCapabilities() != null && params.getCapabilities().getWorkspace() != null
         && params.getCapabilities().getWorkspace().getDidChangeWatchedFiles() != null
         && Boolean.TRUE.equals(params.getCapabilities().getWorkspace().getDidChangeWatchedFiles().getDynamicRegistration());
@@ -212,11 +229,67 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
   @Override
   public void initialized(InitializedParams params) {
     if (watchFiles) {
-      // keeps the declaration index current when files change outside the editor (checkout, generators)
-      DidChangeWatchedFilesRegistrationOptions options = new DidChangeWatchedFilesRegistrationOptions(List.of(new FileSystemWatcher("**/*.groovy")));
-      client.registerCapability(new RegistrationParams(List.of(new Registration("groovy-files", "workspace/didChangeWatchedFiles", options))));
+      // keeps the indexes current when files change outside the editor (checkout, generators); otherwise SourceWatcher does
+      List<FileSystemWatcher> watchers = new ArrayList<>();
+      WATCHED_GLOBS.forEach(glob -> watchers.add(new FileSystemWatcher(glob)));
+      DidChangeWatchedFilesRegistrationOptions options = new DidChangeWatchedFilesRegistrationOptions(watchers);
+      client.registerCapability(new RegistrationParams(List.of(new Registration("grails-files", "workspace/didChangeWatchedFiles", options))));
     }
     project.start();
+  }
+
+  /** Replaces the watcher with one over the new workspace's source trees and the model's build-file directories. */
+  private synchronized void watch(ProjectModel model, Workspace workspace) {
+    if (watcher != null) {
+      watcher.close();
+      watcher = null;
+    }
+    if (stopped.get()) {
+      return;
+    }
+    Set<Path> buildFileDirs = new LinkedHashSet<>();
+    buildFileDirs.add(model.buildRoot);
+    model.modules.forEach(module -> buildFileDirs.add(Path.of(module.projectDir)));
+    GradleBridge.buildFiles(model.buildRoot).forEach(file -> buildFileDirs.add(file.getParent()));
+    SourceWatcher.Events events = new SourceWatcher.Events() {
+      @Override
+      public void changed(Path path) {
+        fileChanged(model.buildRoot, path);
+      }
+
+      @Override
+      public void rescan() {
+        compiles.rescan();
+      }
+    };
+    try {
+      watcher = SourceWatcher.start(workspace.sourceTrees(), new ArrayList<>(buildFileDirs), workspace.buildDirs(), events,
+          message -> client.logMessage(new MessageParams(MessageType.Warning, message)));
+      rescanOnSave = watcher.failed();
+    } catch (IOException e) {
+      rescanOnSave = true;
+      client.logMessage(new MessageParams(MessageType.Warning, "cannot watch files (" + e + "): changes made outside the editor are read on save and on grails/reindex"));
+    }
+  }
+
+  /** A watched file or directory changed: a build file may make the model stale, anything else goes to the indexes. */
+  private void fileChanged(Path buildRoot, Path path) {
+    if (buildRoot != null && GradleBridge.isBuildFile(buildRoot, path)) {
+      project.buildFilesChanged();
+    } else {
+      compiles.fileChanged(path);
+    }
+  }
+
+  /**
+   * {@code grails/reindex}: reads the source roots again, without Gradle, so the indexes match the disk after changes
+   * no event reported. Completes with null once they do; at once when no project is resolved. Also checks whether the
+   * build files still match the model ({@link ProjectService#buildFilesChanged}).
+   */
+  @JsonRequest("grails/reindex")
+  public CompletableFuture<Object> reindex() {
+    project.buildFilesChanged();
+    return compiles.rescan().thenApply(done -> null);
   }
 
   /** {@code grails/reloadProject}: re-resolves the project, ignoring the cache. Completes when it is done. */
@@ -256,6 +329,12 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
 
   private void stop() {
     if (stopped.compareAndSet(false, true)) {
+      synchronized (this) {
+        if (watcher != null) {
+          watcher.close();
+          watcher = null;
+        }
+      }
       ProjectService currentProject = project;
       if (currentProject != null) {
         currentProject.stop();
@@ -309,6 +388,9 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
       Path path = Documents.path(params.getTextDocument().getUri());
       if (path != null) {
         compiles.fileChanged(path);
+        if (rescanOnSave) {
+          compiles.rescan(); // the watcher misses some directories: what changed there is read now
+        }
       }
     }
 
@@ -484,10 +566,11 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
 
     @Override
     public void didChangeWatchedFiles(DidChangeWatchedFilesParams params) {
+      ProjectModel model = project.model();
       for (FileEvent event : params.getChanges()) {
         Path path = Documents.path(event.getUri());
         if (path != null) {
-          compiles.fileChanged(path);
+          fileChanged(model == null ? null : model.buildRoot, path);
         }
       }
     }

@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.Deque;
 import java.util.Enumeration;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -29,6 +30,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
@@ -60,10 +62,15 @@ public final class Workspace implements AutoCloseable {
   public static final int SYMBOL_BATCH = 50;
 
   private final DeclarationIndex index;
+  private final Set<Path> buildDirs;
   private final SymbolIndex symbols = new SymbolIndex();
   private final ClassSources classSources;
   /** Every module's {@code grails-app} directory that exists. */
   private final List<Path> grailsApps = new ArrayList<>();
+  /** The GSP files below {@link #grailsApps}, kept current like the indexes: a page that comes or goes changes the view hints. */
+  private final Set<Path> pages = ConcurrentHashMap.newKeySet();
+  /** Per context, how to read the class files it serves from build output again. */
+  private final Map<CompileContext, ClassOutput> classOutputs = new HashMap<>();
   /** What each jar of the contexts' class paths holds, read once. */
   private final Map<Path, JarContents> jars = new ConcurrentHashMap<>();
   /** Per context, {@link SourceLookup#pluginFiles()}. */
@@ -94,7 +101,7 @@ public final class Workspace implements AutoCloseable {
   public Workspace(ProjectModel model, Path analysisJar, BiConsumer<Boolean, String> reporter) {
     this.analysisJar = analysisJar;
     classSources = new ClassSources(analysisJar.resolveSibling("sources"));
-    Set<Path> buildDirs = model.modules.stream().map(ModuleRecord::buildDir).collect(Collectors.toSet());
+    buildDirs = model.modules.stream().map(ModuleRecord::buildDir).collect(Collectors.toSet());
     index = new DeclarationIndex(buildDirs);
     for (ModuleRecord module : model.modules) {
       Path grailsApp = Path.of(module.projectDir, "grails-app");
@@ -109,7 +116,7 @@ public final class Workspace implements AutoCloseable {
       }
       for (SourceSetRecord sourceSet : module.sourceSets) {
         if (!ownRoots(sourceSet, buildDirs).isEmpty()) {
-          CompileContext context = context(model, module, sourceSet, buildDirs, analysisJar, antlr, reporter);
+          CompileContext context = context(model, module, sourceSet, buildDirs, analysisJar, antlr, classOutputs, reporter);
           contexts.add(context);
           probes.putIfAbsent(module.groovyVersion, context);
           if (sourceSet.name.equals("main")) {
@@ -142,11 +149,88 @@ public final class Workspace implements AutoCloseable {
     return paths.stream().map(Path::of).collect(Collectors.toList());
   }
 
-  /** Scans every source root into the declaration index. */
+  /** Scans every source root into the declaration index, and the {@code grails-app} directories for pages. */
   public void index() {
     for (CompileContext context : contexts) {
       index.addRoots(context.searchRoots);
     }
+    for (Path app : grailsApps) {
+      syncPages(app);
+    }
+  }
+
+  /**
+   * Follows a change at {@code path} reported by a watcher or a save: a Groovy file, a page, or a directory created or
+   * deleted. Updates the declaration index and the pages at once and the symbol index in the background. Java sources
+   * are left to {@link #rescan}: their classes come from build output, which no event reports.
+   *
+   * @return whether what resolves changed (a type name or a page came or went), so open documents should compile again
+   */
+  public boolean refresh(Path path) {
+    DeclarationIndex.Changes changes = index.update(path);
+    changes.files.forEach(this::reindexSymbols);
+    boolean pagesChanged = !path.toString().endsWith(".groovy") && syncPages(path);
+    return changes.declarations || pagesChanged;
+  }
+
+  /**
+   * Brings everything read from the source roots in line with the disk, without Gradle: the declaration index (files
+   * created, deleted or modified since they were read), the symbol index of those files, the pages, and the class
+   * files of each context's Java sources (a class built since start is served from then on; one already loaded stays
+   * as it was). Completes once all of it is applied, with whether what resolves changed.
+   */
+  public CompletableFuture<Boolean> rescan() {
+    DeclarationIndex.Changes changes = index.rescan();
+    boolean changed = changes.declarations;
+    for (Path app : grailsApps) {
+      changed |= syncPages(app);
+    }
+    for (CompileContext context : contexts) {
+      Map<String, Path> classFiles = new HashMap<>();
+      int notBuilt = classOutputs.get(context).read(classFiles);
+      changed |= context.javaClassesRead(classFiles, notBuilt);
+    }
+    boolean result = changed;
+    return CompletableFuture.allOf(changes.files.stream().map(this::reindexSymbols).toArray(CompletableFuture<?>[]::new)).thenApply(done -> result);
+  }
+
+  /** Makes {@link #pages} below {@code path} (a page, or a directory that exists or went) match the disk; true if it changed. */
+  private synchronized boolean syncPages(Path path) {
+    boolean changed = false;
+    for (Path app : grailsApps) {
+      Path base = path.startsWith(app) ? path : app.startsWith(path) ? app : null;
+      if (base == null) {
+        continue;
+      }
+      Set<Path> onDisk = new HashSet<>();
+      if (Files.exists(base)) {
+        try (Stream<Path> files = Files.walk(base)) {
+          files.filter(file -> file.toString().endsWith(".gsp") && Files.isRegularFile(file)).forEach(onDisk::add);
+        } catch (IOException | UncheckedIOException e) {
+          continue; // went while walking: the next event or rescan reads it
+        }
+      }
+      Set<Path> known = pages.stream().filter(page -> page.startsWith(base)).collect(Collectors.toSet());
+      if (!onDisk.equals(known)) {
+        pages.removeAll(known);
+        pages.addAll(onDisk);
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  /** The directories whose changes matter: every context's source roots and every {@code grails-app}. */
+  public List<Path> sourceTrees() {
+    Set<Path> trees = new LinkedHashSet<>();
+    contexts.forEach(context -> trees.addAll(context.ownRoots));
+    trees.addAll(grailsApps);
+    return new ArrayList<>(trees);
+  }
+
+  /** The modules' build directories: never source, wherever they lie. */
+  public Set<Path> buildDirs() {
+    return buildDirs;
   }
 
   public DeclarationIndex declarations() {
@@ -181,20 +265,24 @@ public final class Workspace implements AutoCloseable {
     }).exceptionally(error -> null); // closed: a newer workspace indexes again
   }
 
-  /** Re-reads the symbols of a file that was saved, created or deleted, in the background. */
-  public void reindexSymbols(Path file) {
+  /** Re-reads the symbols of a file that was saved, created or deleted, in the background; completes when they are in. */
+  public CompletableFuture<Void> reindexSymbols(Path file) {
     CompileContext context = contextOf(file);
     if (context == null || !file.toString().endsWith(".groovy")) {
-      return;
+      return CompletableFuture.completedFuture(null);
     }
-    context.query(analyzer -> analyzer.declarations(List.of(file.toString()))).thenAccept(found -> {
+    if (!Files.isRegularFile(file)) {
+      symbols.remove(file);
+      return CompletableFuture.completedFuture(null);
+    }
+    return context.query(analyzer -> analyzer.declarations(List.of(file.toString()))).thenAccept(found -> {
       List<Symbol> declared = found.get(file.toString());
       if (Files.isRegularFile(file) && declared != null) {
         symbols.put(file, declared);
       } else {
         symbols.remove(file);
       }
-    });
+    }).exceptionally(error -> null); // closed: a newer workspace indexes again
   }
 
   public List<CompileContext> contexts() {
@@ -474,11 +562,11 @@ public final class Workspace implements AutoCloseable {
 
   /** Status detail: empty, or what limits the results (Java sources not compiled yet, and the tasks that build them). */
   public String summary() {
-    int notBuilt = contexts.stream().mapToInt(c -> c.javaFilesNotBuilt).sum();
+    int notBuilt = contexts.stream().mapToInt(CompileContext::javaFilesNotBuilt).sum();
     if (notBuilt == 0) {
       return "";
     }
-    String tasks = contexts.stream().filter(c -> c.javaFilesNotBuilt > 0).map(c -> c.classesTask).collect(Collectors.joining(" "));
+    String tasks = contexts.stream().filter(c -> c.javaFilesNotBuilt() > 0).map(c -> c.classesTask).collect(Collectors.joining(" "));
     return ", " + notBuilt + " Java " + (notBuilt == 1 ? "file" : "files") + " not built (run Gradle " + tasks + ")";
   }
 
@@ -495,7 +583,7 @@ public final class Workspace implements AutoCloseable {
   }
 
   private static CompileContext context(ProjectModel model, ModuleRecord module, SourceSetRecord sourceSet, Set<Path> buildDirs,
-      Path analysisJar, Map<Path, AntlrLoader> antlr, BiConsumer<Boolean, String> reporter) {
+      Path analysisJar, Map<Path, AntlrLoader> antlr, Map<CompileContext, ClassOutput> classOutputs, BiConsumer<Boolean, String> reporter) {
     SourceSetRecord main = sourceSet.name.equals("main") ? null : module.sourceSet("main");
     List<ModuleRecord> siblings = siblings(model, module);
 
@@ -541,25 +629,22 @@ public final class Workspace implements AutoCloseable {
       }
     }
 
-    Map<String, Path> classFiles = new HashMap<>();
-    int notBuilt = javaClasses(sourceSet, buildDirs, classFiles);
+    List<SourceSetRecord> extensionSets = new ArrayList<>();
     if (main != null) {
-      javaClasses(main, buildDirs, classFiles); // main's are counted by main's own context
-    }
-    for (SourceSetRecord other : others) {
-      javaClasses(other, buildDirs, classFiles);
-    }
-    // Gradle puts main's output (classes and resources) on the other source sets' classpath and siblings' jars on
-    // every one, so their extension modules apply: statically compiled code calls their methods
-    Map<String, List<Path>> descriptors = new HashMap<>();
-    if (main != null) {
-      extensionModules(main, descriptors, classFiles);
+      extensionSets.add(main);
     }
     for (ModuleRecord sibling : siblings) {
       SourceSetRecord siblingMain = sibling.sourceSet("main");
       if (siblingMain != null) {
-        extensionModules(siblingMain, descriptors, classFiles);
+        extensionSets.add(siblingMain);
       }
+    }
+    ClassOutput output = new ClassOutput(sourceSet, main, others, extensionSets, buildDirs);
+    Map<String, Path> classFiles = new HashMap<>();
+    int notBuilt = output.read(classFiles);
+    Map<String, List<Path>> descriptors = new HashMap<>();
+    for (SourceSetRecord extensions : extensionSets) {
+      extensionModules(extensions, descriptors, new HashMap<>());
     }
     String name = module.path + " " + sourceSet.name;
     Path groovyJar = AntlrLoader.groovyJar(classpath);
@@ -567,8 +652,47 @@ public final class Workspace implements AutoCloseable {
       antlr.put(groovyJar, AntlrLoader.of(groovyJar)); // null kept too: the jar is read once
     }
     AntlrLoader shared = groovyJar == null ? null : antlr.get(groovyJar);
-    return new CompileContext(name, own, new ArrayList<>(search), new ArrayList<>(classpath), classFiles, descriptors, notBuilt,
+    CompileContext context = new CompileContext(name, own, new ArrayList<>(search), new ArrayList<>(classpath), classFiles, descriptors, notBuilt,
         classesTask(module.path, sourceSet.name), shared, reporter);
+    classOutputs.put(context, output);
+    return context;
+  }
+
+  /**
+   * The class files a context serves from build output: those of its own Java sources, then of main's and of the other
+   * source sets on its classpath, then of the extension classes it sees. Gradle puts main's output (classes and
+   * resources) on the other source sets' classpath and siblings' jars on every one, so their extension modules apply:
+   * statically compiled code calls their methods. Read when the context is made and again on each {@link #rescan}.
+   */
+  private static final class ClassOutput {
+    private final SourceSetRecord sourceSet;
+    private final SourceSetRecord main;
+    private final List<SourceSetRecord> others;
+    private final List<SourceSetRecord> extensionSets;
+    private final Set<Path> buildDirs;
+
+    ClassOutput(SourceSetRecord sourceSet, SourceSetRecord main, List<SourceSetRecord> others, List<SourceSetRecord> extensionSets, Set<Path> buildDirs) {
+      this.sourceSet = sourceSet;
+      this.main = main;
+      this.others = others;
+      this.extensionSets = extensionSets;
+      this.buildDirs = buildDirs;
+    }
+
+    /** Adds the class files to {@code classFiles}; returns how many of the source set's own Java files are not built. */
+    int read(Map<String, Path> classFiles) {
+      int notBuilt = javaClasses(sourceSet, buildDirs, classFiles);
+      if (main != null) {
+        javaClasses(main, buildDirs, classFiles); // main's are counted by main's own context
+      }
+      for (SourceSetRecord other : others) {
+        javaClasses(other, buildDirs, classFiles);
+      }
+      for (SourceSetRecord extensions : extensionSets) {
+        extensionModules(extensions, new HashMap<>(), classFiles);
+      }
+      return notBuilt;
+    }
   }
 
   /**

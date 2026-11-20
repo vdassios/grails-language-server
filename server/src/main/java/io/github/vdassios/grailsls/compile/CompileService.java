@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -44,6 +45,13 @@ public final class CompileService {
     thread.setDaemon(true);
     return thread;
   });
+  /** Runs rescans one at a time, off the threads that deliver events and requests. */
+  private final ExecutorService rescans = Executors.newSingleThreadExecutor(r -> {
+    Thread thread = new Thread(r, "grails-rescan");
+    thread.setDaemon(true);
+    return thread;
+  });
+  private final AtomicBoolean rescanScheduled = new AtomicBoolean();
   private final Map<Path, Pending> pending = new ConcurrentHashMap<>();
   private volatile Workspace workspace;
 
@@ -158,17 +166,61 @@ public final class CompileService {
     return CompletableFuture.allOf(pending.values().stream().map(task -> task.done).toArray(CompletableFuture<?>[]::new));
   }
 
-  /** A file was saved, created, changed on disk or deleted: re-read its declarations. */
+  /**
+   * A file or directory was saved, created, changed on disk or deleted: the indexes follow it, and when what resolves
+   * changed the open documents compile again. A Java source leads to a {@link #rescan} after the debounce delay, so
+   * that a checkout touching many reads the class output once.
+   */
   public void fileChanged(Path path) {
     Workspace current = workspace;
-    if (current != null) {
-      current.declarations().update(path);
-      current.reindexSymbols(path);
+    if (current == null) {
+      return;
+    }
+    if (path.toString().endsWith(".java")) {
+      if (rescanScheduled.compareAndSet(false, true)) {
+        timer.schedule(() -> {
+          rescanScheduled.set(false);
+          rescan();
+        }, debounceMillis, TimeUnit.MILLISECONDS);
+      }
+    } else if (current.refresh(path)) {
+      compileOpenDocuments(current);
+    }
+  }
+
+  /**
+   * Brings the workspace in line with the disk without Gradle ({@link Workspace#rescan}) and compiles the open documents
+   * again if what resolves changed. Completes when the indexes are current; at once without a workspace.
+   */
+  public CompletableFuture<Void> rescan() {
+    Workspace current = workspace;
+    if (current == null) {
+      return CompletableFuture.completedFuture(null);
+    }
+    try {
+      return CompletableFuture.supplyAsync(current::rescan, rescans).thenCompose(changed -> changed).thenAccept(changed -> {
+        if (changed) {
+          compileOpenDocuments(current);
+        }
+      });
+    } catch (java.util.concurrent.RejectedExecutionException e) {
+      return CompletableFuture.completedFuture(null); // shut down
+    }
+  }
+
+  /** Compiles every open document again after the debounce delay, unless the workspace has been replaced since. */
+  private void compileOpenDocuments(Workspace changed) {
+    if (workspace != changed) {
+      return;
+    }
+    for (Document document : documents.all()) {
+      schedule(document.path, debounceMillis);
     }
   }
 
   public void shutdown() {
     timer.shutdownNow();
+    rescans.shutdownNow();
     Workspace current = workspace;
     workspace = null;
     if (current != null) {
