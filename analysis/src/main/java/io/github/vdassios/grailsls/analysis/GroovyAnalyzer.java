@@ -125,7 +125,7 @@ public final class GroovyAnalyzer implements Analyzer {
     this.reports = new Reports(reporter);
     this.caches = new TransformCaches(GroovyAnalyzer.class.getClassLoader(), reports);
     this.lateTransforms = new LateTransforms(parent);
-    this.taglibs = new Taglibs((path, text) -> parserCache.parsing(() -> parsedClasses(path, text)), reports);
+    this.taglibs = new Taglibs((path, text) -> parserCache.parsing(() -> parsedClasses(path, text)), reports, parent);
     this.gsp = new GspViews(taglibs, this::conventions);
     try {
       this.output = Files.createTempDirectory("grails-ls-output");
@@ -897,7 +897,7 @@ public final class GroovyAnalyzer implements Analyzer {
   }
 
   /** The classes a file declares, from a parse only (as {@link #declarations}); empty when it does not parse. */
-  private static List<ClassNode> parsedClasses(String path, String text) {
+  static List<ClassNode> parsedClasses(String path, String text) {
     CompilerConfiguration config = new CompilerConfiguration();
     config.setSourceEncoding("UTF-8");
     GroovyClassLoader loader = new GroovyClassLoader(GroovyAnalyzer.class.getClassLoader(), config, false);

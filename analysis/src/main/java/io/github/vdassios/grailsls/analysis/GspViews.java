@@ -99,7 +99,8 @@ final class GspViews {
     pages.put(request.path, page);
     completions.remove(request.path);
     List<Diagnostic> hints = new ArrayList<>();
-    Map<String, Map<String, Taglibs.Tag>> all = taglibs.all(request.lookup);
+    Taglibs.Index index = taglibs.index(request.lookup);
+    Map<String, Map<String, Taglibs.Tag>> all = index.tags;
     Conventions files = conventions.apply(request.lookup, request.path);
     String controller = viewController(viewDir(request.path));
     for (GspScanner.Tag tag : page.tags) {
@@ -118,7 +119,10 @@ final class GspViews {
       }
       Taglibs.Tag known = namespace.get(tag.name);
       if (known == null) {
-        hints.add(hint(request.path, page.range(tag.namespaceStart(), tag.nameEnd), "Unknown tag <" + tag.namespace + ":" + tag.name + ">: no taglib of namespace '" + tag.namespace + "' declares it"));
+        // a namespace whose taglib inherits from a class that cannot be read may declare it after all
+        if (index.complete(tag.namespace)) {
+          hints.add(hint(request.path, page.range(tag.namespaceStart(), tag.nameEnd), "Unknown tag <" + tag.namespace + ":" + tag.name + ">: no taglib of namespace '" + tag.namespace + "' declares it"));
+        }
         continue;
       }
       for (Taglibs.Attribute attribute : known.docs().attributes) {

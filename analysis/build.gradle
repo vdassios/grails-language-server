@@ -22,6 +22,20 @@ def groovyRuntimes = [
   groovy4: "org.apache.groovy:groovy:4.0.33",
   groovy5: "org.apache.groovy:groovy:5.1.3",
 ]
+// Grails 8's g: taglibs (FormTagLib, ValidationTagLib, ...), Java 21 class files declaring tags as methods: TaglibsTest
+// reads them as the server reads a Grails 8 project's jars. The jar alone, never on a class path.
+configurations {
+  grails8Taglibs { transitive = false }
+}
+dependencies {
+  grails8Taglibs "org.apache.grails:grails-gsp:8.0.0"
+}
+tasks.withType(Test).configureEach {
+  def taglibs = configurations.grails8Taglibs
+  inputs.files(taglibs).withPropertyName("grails8Taglibs").withNormalizer(ClasspathNormalizer)
+  jvmArgumentProviders.add({ ["-Dgrails8.taglibs=${taglibs.singleFile}".toString()] } as CommandLineArgumentProvider)
+}
+
 groovyRuntimes.each { name, coordinates ->
   def configuration = configurations.create(name)
   dependencies.add(name, coordinates)
