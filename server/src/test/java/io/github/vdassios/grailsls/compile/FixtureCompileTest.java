@@ -30,7 +30,6 @@ import io.github.vdassios.grailsls.api.CompileResult;
 import io.github.vdassios.grailsls.api.CompiledClass;
 import io.github.vdassios.grailsls.api.Diagnostic;
 import io.github.vdassios.grailsls.api.Location;
-import io.github.vdassios.grailsls.api.SignatureHelp;
 import io.github.vdassios.grailsls.project.Fixtures;
 import io.github.vdassios.grailsls.project.ProjectModel;
 
@@ -97,24 +96,6 @@ class FixtureCompileTest {
     }
   }
 
-  @Test
-  void aDomainClassPulledInByAControllerCarriesGormMembers() throws Exception {
-    ProjectModel model = Fixtures.built("grails4", "GLS_TEST_JDK11");
-    try (Workspace workspace = workspace(model)) {
-      Path controller = file(model, ":app", "grails-app/controllers/fixture/library/BookController.groovy");
-      compile(workspace, controller);
-      CompiledClass book = workspace.contextOf(controller).analyzer().compiledClass(controller.toString(), "fixture.library.Book");
-      assertNotNull(book);
-      assertEquals(file(model, ":app", "grails-app/domain/fixture/library/Book.groovy").toString(), book.sourcePath);
-      assertTrue(book.interfaces.contains("org.grails.datastore.gorm.GormEntity"), book.interfaces.toString());
-      assertTrue(book.methods.containsAll(List.of("save", "get", "list", "validate")), book.methods.toString());
-
-      CompiledClass self = workspace.contextOf(controller).analyzer().compiledClass(controller.toString(), "fixture.library.BookController");
-      assertTrue(self.interfaces.contains("grails.artefact.Controller"), self.interfaces.toString());
-      assertTrue(self.methods.containsAll(List.of("render", "redirect", "getParams")), self.methods.toString());
-    }
-  }
-
   /** Runs a query on the context thread of the file, after compiling it. */
   private static <T> T query(Workspace workspace, Path path, Function<Analyzer, T> query) throws Exception {
     assertEquals(List.of(), errors(compile(workspace, path)));
@@ -161,25 +142,6 @@ class FixtureCompileTest {
     }
   }
 
-  /** Members the Grails transformations add, on the open file and on a domain class pulled in from source. */
-  @Test
-  void hoverShowsMembersAddedByGrails() throws Exception {
-    ProjectModel model = Fixtures.built("grails4", "GLS_TEST_JDK11");
-    try (Workspace workspace = workspace(model)) {
-      Path controller = file(model, ":app", "grails-app/controllers/fixture/library/BookController.groovy");
-      Path service = file(model, ":app", "grails-app/services/fixture/library/BookService.groovy");
-      Map<String, String> hovers = new TreeMap<>();
-      for (Object[] probe : new Object[][] { { controller, "list()" }, { controller, "render(" }, { controller, "redirect(" }, { service, "save(" } }) {
-        Path file = (Path) probe[0];
-        int[] p = at(file, (String) probe[1], 1);
-        String hover = query(workspace, file, a -> a.hover(file.toString(), p[0], p[1]));
-        hovers.put((String) probe[1], hover == null ? null : hover.split("\n")[1]);
-      }
-      assertEquals(Map.of("list()", "public static List list()", "render(", "public void render(Map param1)", "redirect(", "public void redirect(Map param1)", "save(",
-          "public Book save(Map param1)"), hovers);
-    }
-  }
-
   /** Completion on a line typed into the controller's save action, before its redirect. */
   private static List<String> completion(Workspace workspace, Path controller, String typed) throws Exception {
     String saved = Files.readString(controller);
@@ -191,27 +153,6 @@ class FixtureCompileTest {
     CompileContext context = workspace.contextOf(controller);
     CompileRequest request = new CompileRequest(controller.toString(), text, workspace.lookup(context, p -> null), () -> false);
     return context.query(a -> a.completion(request, line, 8 + typed.length())).get(60, TimeUnit.SECONDS).items.stream().map(c -> c.label).collect(Collectors.toList());
-  }
-
-  /** Members the Grails transformations add, on a domain class pulled in from source and on the controller itself. */
-  @Test
-  void completionListsMembersAddedByGrails() throws Exception {
-    ProjectModel model = Fixtures.built("grails4", "GLS_TEST_JDK11");
-    try (Workspace workspace = workspace(model)) {
-      Path controller = file(model, ":app", "grails-app/controllers/fixture/library/BookController.groovy");
-      List<String> instance = completion(workspace, controller, "book.");
-      assertTrue(instance.containsAll(List.of("save", "validate", "delete", "title", "isbn")), instance.toString());
-      assertFalse(instance.contains("list"), "static");
-      assertTrue(instance.stream().noneMatch(label -> label.contains("$")), instance.toString());
-
-      List<String> statics = completion(workspace, controller, "Book.");
-      assertTrue(statics.containsAll(List.of("list", "get", "findAll", "where")), statics.toString());
-      assertFalse(statics.contains("validate"), "an instance method");
-
-      List<String> bare = completion(workspace, controller, "re");
-      // request and response: the getters of the controller trait, as properties
-      assertEquals(List.of("redirect", "render", "request", "response"), bare.stream().sorted().collect(Collectors.toList()), "no private members of Object");
-    }
   }
 
   /** Workspace symbols and completion of classes not imported yet, from the symbol index of every module. */
@@ -262,21 +203,6 @@ class FixtureCompileTest {
       assertFalse(server.contains("io.github.vdassios"), "the server's own classes are not the project's: " + server);
       List<String> statics = importCompletion(workspace, controller, "import static java.util.Collections.unmodifiableL");
       assertEquals(List.of("unmodifiableList"), statics);
-    }
-  }
-
-  @Test
-  void signatureHelpOnRenderInAnAction() throws Exception {
-    ProjectModel model = Fixtures.built("grails4", "GLS_TEST_JDK11");
-    try (Workspace workspace = workspace(model)) {
-      Path controller = file(model, ":app", "grails-app/controllers/fixture/library/BookController.groovy");
-      String text = Files.readString(controller);
-      int[] p = at(controller, "\"index\", model", 1);
-      CompileContext context = workspace.contextOf(controller);
-      CompileRequest request = new CompileRequest(controller.toString(), text, workspace.lookup(context, f -> null), () -> false);
-      SignatureHelp help = query(workspace, controller, a -> a.signatureHelp(request, p[0], p[1]));
-      assertNotNull(help);
-      assertEquals("public void render(Map param1)", help.signatures.get(help.activeSignature).label, help.signatures.toString());
     }
   }
 

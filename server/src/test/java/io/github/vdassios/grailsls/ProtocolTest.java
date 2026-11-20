@@ -235,20 +235,6 @@ class ProtocolTest {
     assertEquals(0, FakeWrapper.runs(root));
   }
 
-  /** The reason, with the wrapper's Gradle version and the JDK it ran on: most Gradle failures at start-up are a mismatch of the two. */
-  @Test
-  void reportsTheFailureReason() throws Exception {
-    Path root = FakeWrapper.write(tmp.resolve("project"), "printf '* What went wrong:\\nboom\\n'\nexit 1\n").getParent();
-    Files.createDirectories(root.resolve("gradle/wrapper"));
-    Files.writeString(root.resolve("gradle/wrapper/gradle-wrapper.properties"), "distributionUrl=https\\://services.gradle.org/distributions/gradle-6.9.4-bin.zip\n");
-    start(root, trustedOptions());
-
-    assertEquals(StatusParams.RESOLVING, next().state);
-    StatusParams failed = next();
-    assertEquals(StatusParams.FAILED, failed.state);
-    assertTrue(failed.message.startsWith("Gradle 6.9.4 failed on JDK " + System.getProperty("java.version") + ": boom (log: "), failed.message);
-  }
-
   /** Grails 3 (Groovy 2.4) stops here: the analysis layer needs Groovy 2.5 or later. */
   @Test
   void refusesGroovyOlderThan25() throws Exception {

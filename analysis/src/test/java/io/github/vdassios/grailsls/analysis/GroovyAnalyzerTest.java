@@ -794,14 +794,14 @@ class GroovyAnalyzerTest {
   @Test
   void membersComeFromTheWholeTypeHierarchyTraitsIncluded() throws IOException {
     index.put("Greets", write("src/Greets.groovy", "trait Greets {\n  String greet() { 'hi' }\n}\n"));
-    index.put("Base", write("src/Base.groovy", "class Base implements Greets {\n  String baseName\n  void fromBase() {}\n}\n"));
+    index.put("Base", write("src/Base.groovy", "class Base implements Greets {\n  String baseName\n  void fromBase() {}\n  private void grow() {}\n}\n"));
     String path = tmp.resolve("src/A.groovy").toString();
     List<String> labels = labels(complete(path, "class A extends Base {\n  void own() {}\n  def run(A a) {\n    a.\n  }\n}\n", 3, 6));
     assertTrue(labels.containsAll(List.of("own", "fromBase", "baseName", "greet", "hashCode")), labels.toString());
     assertTrue(labels.stream().noneMatch(label -> label.contains("$")), "no generated names: " + labels);
 
     List<String> bare = labels(complete(path, "class A extends Base {\n  void own() {}\n  def run() {\n    gr\n  }\n}\n", 3, 6));
-    assertEquals(List.of("greet"), bare, "a name in a method: the enclosing class and its supertypes");
+    assertEquals(List.of("greet"), bare, "a name in a method: the enclosing class and its supertypes, not their private members");
   }
 
   @Test
