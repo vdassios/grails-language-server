@@ -12,8 +12,13 @@ import org.junit.jupiter.api.Test;
 
 /** The page scanner: tags with their attributes, the code regions of a page, an expression not closed. */
 class GspScannerTest {
+  /** The tags, as Grails 4 to 7 find them ({@code \${} is an expression). */
   private static List<String> tags(String text) {
-    return GspScanner.scan(text).stream().map(tag -> (tag.closing ? "/" : "") + tag.namespace + ":" + tag.name + tag.attributes.stream()
+    return tags(text, false);
+  }
+
+  private static List<String> tags(String text, boolean escapes) {
+    return GspScanner.scan(text, escapes).tags.stream().map(tag -> (tag.closing ? "/" : "") + tag.namespace + ":" + tag.name + tag.attributes.stream()
         .map(a -> " " + a.name + (a.value == null ? "" : "=" + a.value)).collect(Collectors.joining())).collect(Collectors.toList());
   }
 
@@ -23,14 +28,14 @@ class GspScannerTest {
   }
 
   private static List<String> code(String text, boolean escapes) {
-    return GspScanner.code(text, escapes).stream().map(region -> text.substring(region[0], region[1])).collect(Collectors.toList());
+    return GspScanner.scan(text, escapes).code.stream().map(region -> text.substring(region[0], region[1])).collect(Collectors.toList());
   }
 
   @Test
   void tagsWithTheirAttributes() {
     String text = "<p><g:link action=\"show\" id='${b.id}' absolute>x</g:link><ns:x-y a.b=\"1\"/></p>";
     assertEquals(List.of("g:link action=show id=${b.id} absolute", "/g:link", "ns:x-y a.b=1"), tags(text));
-    GspScanner.Tag link = GspScanner.scan(text).get(0);
+    GspScanner.Tag link = GspScanner.scan(text, false).tags.get(0);
     assertEquals(text.indexOf("<g:link"), link.start);
     assertEquals(text.indexOf("link"), link.nameStart);
     assertEquals(text.indexOf("g:link"), link.namespaceStart());
@@ -47,23 +52,37 @@ class GspScannerTest {
   void codeAndCommentsHideTags() {
     assertEquals(List.of("g:if test=${a > b ? '<g:x>' : \"}\"}"), tags("<g:if test=\"${a > b ? '<g:x>' : \"}\"}\">"));
     assertEquals(List.of(), tags("${'<g:a>'} <% '<g:b>' %> %{ '<g:c>' }% <%-- <g:d> --%> %{-- <g:e> --}%"));
-    assertEquals(List.of("g:f"), tags("\\${<g:f>}"), "an escaped expression is text");
+    assertEquals(List.of(), tags("\\${<g:f>}"), "an escaped expression is code up to Grails 7");
+    assertEquals(List.of("g:f"), tags("\\${<g:f>}", true), "and text on Grails 8");
   }
 
   @Test
   void onlyMetaOfThePlainHtmlTags() {
     assertEquals(List.of(":meta name=layout content=main"), tags("<html><meta name=\"layout\" content=\"main\"><p>x</p></html>"));
+    assertEquals(List.of(":meta content=<g:x/>", "g:y"), tags("<meta content=\"<g:x/>\"><g:y/>"), "a tag in its attribute is text");
+  }
+
+  /** One scan gives the tags and the code. */
+  @Test
+  void theTagsAndTheCodeOfOneScan() {
+    String text = "<meta content=\"${a}\"><g:if test=\"${b}\">\\${c}</g:if>";
+    GspScanner.Scan grails7 = GspScanner.scan(text, false);
+    assertEquals(List.of(":meta content=${a}", "g:if test=${b}", "/g:if"), tags(text));
+    assertEquals(List.of("a", "b", "c"), grails7.code.stream().map(region -> text.substring(region[0], region[1])).collect(Collectors.toList()));
+    assertEquals(text, grails7.text);
+    assertFalse(grails7.escapes);
+    assertEquals(List.of("a", "b"), code(text, true));
   }
 
   @Test
   void aTagBeingTypedEndsAtTheNextTagOrTheText() {
     String text = "<g:link action=\"show\"\n<g:if test=\"${x}\">";
-    List<GspScanner.Tag> tags = GspScanner.scan(text);
+    List<GspScanner.Tag> tags = GspScanner.scan(text, false).tags;
     assertEquals(List.of("g:link action=show", "g:if test=${x}"), tags(text));
     assertEquals(text.indexOf("<g:if"), tags.get(0).end);
     assertEquals(text.length(), tags.get(1).end);
     String open = "<p><g:each in=\"${x}\" ";
-    GspScanner.Tag each = GspScanner.scan(open).get(0);
+    GspScanner.Tag each = GspScanner.scan(open, false).tags.get(0);
     assertEquals(open.length(), each.end);
     assertEquals("each", GspScanner.at(List.of(each), open.length()).name);
   }
@@ -71,7 +90,7 @@ class GspScannerTest {
   @Test
   void theTagAtAnOffset() {
     String text = "<p><g:a x=\"1\">body</g:a></p>";
-    List<GspScanner.Tag> tags = GspScanner.scan(text);
+    List<GspScanner.Tag> tags = GspScanner.scan(text, false).tags;
     assertNull(GspScanner.at(tags, text.indexOf("<g:a")), "on the <");
     assertEquals("a", GspScanner.at(tags, text.indexOf("x=")).name);
     assertEquals("a", GspScanner.at(tags, text.indexOf("body")).name, "right after the >");
@@ -83,7 +102,7 @@ class GspScannerTest {
   void codeRegionsOfEveryKindTrimmed() {
     String text = "<p title=\"a ${ x.y } b\">${z}</p>\n<% def a = 1 %>\n<%= a %>\n%{\n  a++\n}%\n<g:if test=\"${a}\">x</g:if>";
     assertEquals(List.of("x.y", "z", "def a = 1", "a", "a++", "a"), code(text));
-    int[] first = GspScanner.code(text, false).get(0);
+    int[] first = GspScanner.scan(text, false).code.get(0);
     assertEquals(text.indexOf("x.y"), first[0]);
     assertEquals(text.indexOf("x.y") + 3, first[1]);
   }
@@ -109,7 +128,7 @@ class GspScannerTest {
   void aListValueOfAGspTagIsCode() {
     String text = "<g:render template=\"row\" model=\"[ book: book ]\"/>\n<g:link params='[id: b.id]' title=\"[x] y\">z</g:link>";
     assertEquals(List.of("book: book", "id: b.id"), code(text));
-    int[] model = GspScanner.code(text, false).get(0);
+    int[] model = GspScanner.scan(text, false).code.get(0);
     assertEquals(text.indexOf("[ book"), model[2], "opens at the [");
     assertEquals(List.of("1, 2", "a: ${b}"), code("<g:each in=\"[1, 2]\"><g:x m=\"[a: ${b}]\"/></g:each>"), "the whole list, any ${ } in it too");
     assertEquals(List.of("a"), code("<g:x m=\" [1]\" n=\"[1] \" o=\"${a}\"/>"), "only a value that starts and ends with a bracket");

@@ -5,12 +5,12 @@ import java.util.List;
 import java.util.regex.Pattern;
 
 /**
- * Finds the GSP tags of a page ({@code <ns:name attr="v">}, {@code </ns:name>}, {@code <ns:name/>}): their namespace,
- * name and attributes, by offset; a namespace is a letter, then letters, digits or {@code _}, as Grails's scanner takes
- * one (any other tag is HTML). Expressions ({@code ${ }}), scriptlets ({@code <% %>}, {@code %{ }%}) and comments
- * ({@code <%-- --%>}, {@code %{-- --}%}) are skipped, also inside attribute values. A tag not closed by the end of
- * the text ends there (one being typed). Of plain HTML tags only {@code <meta>} is reported (namespace {@code ""}), for
- * the layout a page names.
+ * Reads a page once ({@link #scan}) for its code ({@link Scan#code}) and its GSP tags ({@code <ns:name attr="v">},
+ * {@code </ns:name>}, {@code <ns:name/>}): their namespace, name and attributes, by offset; a namespace is a letter,
+ * then letters, digits or {@code _}, as Grails's scanner takes one (any other tag is HTML). Expressions
+ * ({@code ${ }}), scriptlets ({@code <% %>}, {@code %{ }%}) and comments ({@code <%-- --%>}, {@code %{-- --}%}) hide
+ * tags, also inside attribute values. A tag not closed by the end of the text ends there (one being typed). Of plain
+ * HTML tags only {@code <meta>} is reported (namespace {@code ""}), for the layout a page names.
  */
 final class GspScanner {
   /** A GSP tag. Offsets are into the page's text; {@code end} is after its {@code >}, or the text's end. */
@@ -72,49 +72,68 @@ final class GspScanner {
     }
   }
 
+  /**
+   * A page's tags and code, from one scan. {@code escapes}: {@code \${} outside a GSP tag is text, not an expression
+   * (Grails 8; up to Grails 7 the {@code \} is text and the expression code), for the tags as for the code.
+   */
+  static final class Scan {
+    final String text;
+    final boolean escapes;
+    /** The GSP tags, and the {@code <meta>} tags, in text order. */
+    final List<Tag> tags;
+    /**
+     * The Groovy code, the code regions Grails's {@code GroovyPageScanner} and {@code GroovyPageParser} find, as
+     * {@code {start, end, open}} offsets in text order: the body of each expression ({@code ${ }}) and scriptlet
+     * ({@code <% %>}, {@code <%= %>}, {@code %{ }%}), without the surrounding white space, which the GSP compiler drops,
+     * and where the construct opens ({@code open}, the offset of its {@code ${}, {@code <%} or {@code %{}). Inside a GSP
+     * tag only {@code ${ }} is code (never escaped), and an attribute value that is {@code [...]} as a whole, which
+     * Grails writes out as Groovy ({@code model="[book: book]"}): the code between the brackets, {@code open} at the
+     * {@code [}. Comments, directives ({@code <%@ %>}) and declarations ({@code <%! %>}, which Grails rejects) hold none;
+     * an empty body is left out.
+     */
+    final List<int[]> code;
+
+    private Scan(String text, boolean escapes, List<Tag> tags, List<int[]> code) {
+      this.text = text;
+      this.escapes = escapes;
+      this.tags = tags;
+      this.code = code;
+    }
+  }
+
   private final String text;
-  /** Whether {@code \${} outside a GSP tag is text, as on Grails 8 ({@link #code}). */
-  private final boolean escapes;
+  /** Tags as {@link #tag} reads them. */
   private final List<Tag> tags = new ArrayList<>();
 
-  private GspScanner(String text, boolean escapes) {
+  private GspScanner(String text) {
     this.text = text;
-    this.escapes = escapes;
   }
 
-  /** The page's tags; {@code \${} outside a tag is taken for text, as Grails 8 takes it. */
-  static List<Tag> scan(String text) {
-    GspScanner scanner = new GspScanner(text, true);
-    scanner.run();
-    return scanner.tags;
-  }
-
-  /**
-   * The Groovy code of a page, the code regions Grails's {@code GroovyPageScanner} and {@code GroovyPageParser} find,
-   * as {@code {start, end, open}} offsets in text order: the body of each expression ({@code ${ }}) and scriptlet
-   * ({@code <% %>}, {@code <%= %>}, {@code %{ }%}), without the surrounding white space, which the GSP compiler drops,
-   * and where the construct opens ({@code open}, the offset of its {@code ${}, {@code <%} or {@code %{}). Inside a GSP
-   * tag only {@code ${ }} is code, and an attribute value that is {@code [...]} as a whole, which Grails writes out as
-   * Groovy ({@code model="[book: book]"}): the code between the brackets, {@code open} at the {@code [}. Comments,
-   * directives ({@code <%@ %>}) and declarations ({@code <%! %>}, which Grails rejects) hold none; an empty body is
-   * left out. {@code escapes}: {@code \${} outside a GSP tag is text, not an expression (Grails 8; up to Grails 7 the
-   * {@code \} is text and the expression code).
-   */
-  static List<int[]> code(String text, boolean escapes) {
-    GspScanner scanner = new GspScanner(text, escapes);
+  /** A page's tags and code; {@code escapes} as for {@link Scan}. */
+  static Scan scan(String text, boolean escapes) {
+    GspScanner scanner = new GspScanner(text);
+    List<Tag> tags = new ArrayList<>();
     List<int[]> regions = new ArrayList<>();
+    // the end of the last <meta>: Grails reads on inside it for code, but holds the tags in it for attribute text
+    int metaEnd = 0;
     int i = 0;
     while (i < text.length()) {
       if (text.charAt(i) == '<' && !text.startsWith("<%", i)) {
         int found = scanner.tags.size();
         int after = scanner.tag(i);
         Tag tag = scanner.tags.size() > found ? scanner.tags.get(found) : null;
+        if (tag != null && i >= metaEnd) {
+          tags.add(tag);
+        }
         if (tag != null && !tag.namespace.isEmpty()) {
           if (!tag.closing) {
             scanner.tagCode(tag, regions);
           }
           i = Math.max(after, i + 1);
         } else {
+          if (tag != null && i >= metaEnd) {
+            metaEnd = after;
+          }
           i++; // HTML, <meta> too: Grails reads on inside it
         }
         continue;
@@ -133,7 +152,7 @@ final class GspScanner {
       }
       i = skipped;
     }
-    return regions;
+    return new Scan(text, escapes, tags, regions);
   }
 
   /**
@@ -176,9 +195,9 @@ final class GspScanner {
     }
   }
 
-  /** The offset of the first {@code ${} that no {@code }} closes, else -1; {@code escapes} as for {@link #code}. */
+  /** The offset of the first {@code ${} that no {@code }} closes, else -1; {@code escapes} as for {@link Scan}. */
   static int unclosedExpression(String text, boolean escapes) {
-    GspScanner scanner = new GspScanner(text, escapes);
+    GspScanner scanner = new GspScanner(text);
     int i = 0;
     while (i < text.length()) {
       if (text.startsWith("${", i) && scanner.expressionClose(i + 2) < 0) {
@@ -198,22 +217,6 @@ final class GspScanner {
       }
     }
     return null;
-  }
-
-  private void run() {
-    int i = 0;
-    while (i < text.length()) {
-      int skipped = skipGsp(i, escapes);
-      if (skipped != i) {
-        i = skipped;
-        continue;
-      }
-      if (text.charAt(i) == '<') {
-        i = tag(i);
-      } else {
-        i++;
-      }
-    }
   }
 
   /**

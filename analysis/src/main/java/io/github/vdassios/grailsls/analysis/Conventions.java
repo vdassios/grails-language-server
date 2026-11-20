@@ -94,17 +94,21 @@ public final class Conventions {
   private final Function<String, String> texts;
   /** The classes a snippet of Groovy declares, from a parse only (a script's for an expression); null: none read. */
   private final Function<String, List<ClassNode>> snippets;
+  /** Whether pages are scanned with {@code \${} as text ({@link GspScanner.Scan}). */
+  private final boolean escapes;
 
   Conventions(SourceLookup lookup, String documentPath, Function<String, List<ClassNode>> parse) {
-    this(lookup, documentPath, parse, null, null);
+    this(lookup, documentPath, parse, null, null, false);
   }
 
-  Conventions(SourceLookup lookup, String documentPath, Function<String, List<ClassNode>> parse, Function<String, String> texts, Function<String, List<ClassNode>> snippets) {
+  Conventions(SourceLookup lookup, String documentPath, Function<String, List<ClassNode>> parse, Function<String, String> texts, Function<String, List<ClassNode>> snippets,
+      boolean escapes) {
     this.lookup = lookup;
     this.documentPath = documentPath;
     this.parse = parse;
     this.texts = texts;
     this.snippets = snippets;
+    this.escapes = escapes;
   }
 
   // what a string names
@@ -719,7 +723,7 @@ public final class Conventions {
         }
         Map<String, Integer> seen = new LinkedHashMap<>();
         Lines lines = null;
-        for (GspScanner.Tag tag : GspScanner.scan(text)) {
+        for (GspScanner.Tag tag : GspScanner.scan(text, escapes).tags) {
           GspScanner.Attribute name = tag.closing || !"g".equals(tag.namespace) || !"render".equals(tag.name) ? null : tag.attribute("template");
           if (name == null || name.value == null) {
             continue;

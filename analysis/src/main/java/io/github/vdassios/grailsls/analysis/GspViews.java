@@ -45,24 +45,25 @@ final class GspViews {
     return path.endsWith(".gsp");
   }
 
-  /** A page's text and tags, as last "compiled". */
+  /** A page's scan, as last "compiled". */
   private static final class Page {
     final String text;
     final SourceLookup lookup;
     final List<GspScanner.Tag> tags;
     final Lines lines;
 
-    Page(String text, SourceLookup lookup) {
-      this.text = text;
+    Page(GspScanner.Scan scan, SourceLookup lookup) {
+      this.text = scan.text;
       this.lookup = lookup;
-      this.tags = GspScanner.scan(text);
-      this.lines = new Lines(text);
+      this.tags = scan.tags;
+      this.lines = new Lines(scan.text);
     }
   }
 
-  CompileResult compile(CompileRequest request) {
+  /** The tag hints of a page; {@code scan} is of the request's text. */
+  CompileResult compile(CompileRequest request, GspScanner.Scan scan) {
     long start = System.nanoTime();
-    Page page = new Page(request.text, request.lookup);
+    Page page = new Page(scan, request.lookup);
     pages.put(request.path, page);
     completions.remove(request.path);
     List<Diagnostic> hints = new ArrayList<>();
@@ -259,8 +260,9 @@ final class GspViews {
     return "`" + attribute.name + "`" + (attribute.required ? " (required)" : "") + (attribute.doc == null ? "" : ": " + attribute.doc);
   }
 
-  CompletionList completion(CompileRequest request, int line, int column) {
-    Page page = new Page(request.text, request.lookup);
+  /** Tag, attribute and attribute value completion; {@code scan} is of the request's text. */
+  CompletionList completion(CompileRequest request, GspScanner.Scan scan, int line, int column) {
+    Page page = new Page(scan, request.lookup);
     int offset = page.lines.offset(line, column);
     GspScanner.Tag tag = GspScanner.at(page.tags, offset);
     completions.remove(request.path);

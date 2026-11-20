@@ -73,7 +73,7 @@ final class PageVariables {
    * whether a qualified class name resolves in the page's module, {@code compiled} types a model entry the parse does
    * not (null when it cannot).
    */
-  static PageVariables of(String path, String text, Conventions conventions, Set<String> taken, Predicate<String> resolves, Function<Conventions.ModelEntry, String> compiled) {
+  static PageVariables of(String path, GspScanner.Scan page, Conventions conventions, Set<String> taken, Predicate<String> resolves, Function<Conventions.ModelEntry, String> compiled) {
     Map<String, String> types = new LinkedHashMap<>();
     Map<String, Location> definitions = new LinkedHashMap<>();
     for (Conventions.ModelEntry model : conventions.models(path)) {
@@ -95,10 +95,10 @@ final class PageVariables {
       }
     }
     Lines lines = null;
-    for (GspScanner.Tag tag : GspScanner.scan(text)) {
+    for (GspScanner.Tag tag : page.tags) {
       GspScanner.Attribute var = tag.closing || !"g".equals(tag.namespace) || !"set".equals(tag.name) ? null : tag.attribute("var");
       if (var != null && var.valueStart >= 0 && declarable(var.value, taken) && !types.containsKey(var.value)) {
-        lines = lines == null ? new Lines(text) : lines;
+        lines = lines == null ? new Lines(page.text) : lines;
         types.put(var.value, null);
         definitions.put(var.value, new Location(path, lines.range(var.valueStart, var.valueEnd)));
       }

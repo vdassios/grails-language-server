@@ -95,6 +95,8 @@ public final class GroovyAnalyzer implements Analyzer {
   private final GspViews gsp;
   /** {@link GspTranslation#implicitObjects} of this loader, once read. */
   private volatile String implicitObjects;
+  /** {@link GspTranslation#escapes} of this loader, once read. */
+  private volatile Boolean escapes;
   /** The translation of each GSP page whose generated Groovy is kept in {@link #units}. */
   private final Map<String, GspTranslation> translations = new ConcurrentHashMap<>();
 
@@ -184,8 +186,9 @@ public final class GroovyAnalyzer implements Analyzer {
     units.remove(request.path);
     translations.remove(request.path);
     completions.remove(request.path);
-    CompileResult tags = gsp.compile(request);
-    GspTranslation translation = translate(request.path, request.text, request.lookup, request.cancelled);
+    GspScanner.Scan scan = GspScanner.scan(request.text, escapes());
+    CompileResult tags = gsp.compile(request, scan);
+    GspTranslation translation = translate(request.path, scan, request.lookup, request.cancelled);
     if (translation == null) {
       return tags;
     }
@@ -213,8 +216,18 @@ public final class GroovyAnalyzer implements Analyzer {
     return new CompileResult(diagnostics, false, kept.sources, millisSince(start));
   }
 
+  /** Whether this loader's Grails takes {@code \${} for text ({@link GspTranslation#escapes}), as pages are scanned. */
+  private boolean escapes() {
+    Boolean read = escapes;
+    if (read == null) {
+      read = GspTranslation.escapes(parent);
+      escapes = read;
+    }
+    return read;
+  }
+
   /** A page's translation, with the implicit objects typed and its variables declared; null without Grails's page parser. */
-  private GspTranslation translate(String path, String text, SourceLookup lookup, java.util.function.BooleanSupplier cancelled) {
+  private GspTranslation translate(String path, GspScanner.Scan page, SourceLookup lookup, java.util.function.BooleanSupplier cancelled) {
     String declarations = implicitObjects;
     if (declarations == null) {
       declarations = GspTranslation.implicitObjects(parent);
@@ -224,8 +237,8 @@ public final class GroovyAnalyzer implements Analyzer {
     for (String declaration : declarations.split(";")) {
       taken.add(declaration.trim().substring(declaration.trim().lastIndexOf(' ') + 1));
     }
-    PageVariables variables = PageVariables.of(path, text, modelConventions(lookup, path), taken, name -> resolves(name, lookup), model -> compiledType(model, lookup, cancelled));
-    return GspTranslation.of(parent, path, text, declarations + variables.declarations, variables.definitions, reports);
+    PageVariables variables = PageVariables.of(path, page, modelConventions(lookup, path), taken, name -> resolves(name, lookup), model -> compiledType(model, lookup, cancelled));
+    return GspTranslation.of(parent, path, page, declarations + variables.declarations, variables.definitions, reports);
   }
 
   /** Whether a qualified class name resolves in this module: a project source, or a class on its class path. */
@@ -267,7 +280,7 @@ public final class GroovyAnalyzer implements Analyzer {
         controllerParses.put(file, parsed);
       }
       return parsed.classes;
-    }, file -> textOf(file, lookup), snippet -> parserCache.parsing(() -> parsedClasses("model.groovy", snippet)));
+    }, file -> textOf(file, lookup), snippet -> parserCache.parsing(() -> parsedClasses("model.groovy", snippet)), escapes());
   }
 
   /** Texts of files read from disk, with the modification time and size they were read at: each page compile reads every controller. */
@@ -740,7 +753,8 @@ public final class GroovyAnalyzer implements Analyzer {
    */
   private CompletionList pageCompletion(CompileRequest request, int line, int column) {
     completions.remove(request.path);
-    CompletionList tags = gsp.completion(request, line, column);
+    GspScanner.Scan scan = GspScanner.scan(request.text, escapes());
+    CompletionList tags = gsp.completion(request, scan, line, column);
     if (!tags.items.isEmpty()) {
       return tags;
     }
@@ -748,7 +762,7 @@ public final class GroovyAnalyzer implements Analyzer {
     TagCalls tagCalls = tagCalls(request.lookup, true);
     String placeholder = Completions.placeholder(lineBefore(request.text, line, column));
     for (String insert : new String[] { "", placeholder, placeholder + "}" }) {
-      PageCompile compiled = pageCompile(request, line, column, insert);
+      PageCompile compiled = pageCompile(request, scan, line, column, insert);
       if (compiled == null) {
         continue;
       }
@@ -780,15 +794,19 @@ public final class GroovyAnalyzer implements Analyzer {
   /**
    * The page with text inserted at a position, translated and compiled, and the position in the generated text; the
    * kept compile when nothing is inserted and it is of the page's text. Null when the position is outside page code,
-   * the page does not translate, or the compile is cancelled.
+   * the page does not translate, or the compile is cancelled. {@code scan} is of the request's text, or null when it
+   * has not been scanned.
    */
-  private PageCompile pageCompile(CompileRequest request, int line, int column, String insert) {
+  private PageCompile pageCompile(CompileRequest request, GspScanner.Scan scan, int line, int column, String insert) {
     Kept kept = units.get(request.path);
     GspTranslation translation = translations.get(request.path);
     if (!insert.isEmpty() || kept == null || translation == null || !translation.text.equals(request.text)) {
-      int offset = new Lines(request.text).offset(line, column);
-      String text = request.text.substring(0, offset) + insert + request.text.substring(offset);
-      translation = translate(request.path, text, request.lookup, request.cancelled);
+      GspScanner.Scan page = scan;
+      if (!insert.isEmpty() || page == null) {
+        int offset = new Lines(request.text).offset(line, column);
+        page = GspScanner.scan(request.text.substring(0, offset) + insert + request.text.substring(offset), escapes());
+      }
+      translation = translate(request.path, page, request.lookup, request.cancelled);
       if (translation == null || translation.groovy == null || translation.toGroovy(line, column) == null) {
         return null;
       }
@@ -833,7 +851,7 @@ public final class GroovyAnalyzer implements Analyzer {
     if (GspViews.isGsp(request.path)) {
       // an unfinished call, "${link(", does not translate to code that parses
       for (String insert : new String[] { "", ")", ")}" }) {
-        PageCompile compiled = pageCompile(request, line, column, insert);
+        PageCompile compiled = pageCompile(request, null, line, column, insert);
         SignatureHelp help = compiled == null ? null : Signatures.at(compiled.kept.ast(), compiled.kept.uri, compiled.kept.lookup, compiled.at[0], compiled.at[1]);
         if (help != null) {
           return help;

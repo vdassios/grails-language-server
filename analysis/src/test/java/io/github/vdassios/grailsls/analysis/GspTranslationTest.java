@@ -56,8 +56,13 @@ abstract class GspTranslationTest {
     assertEquals(List.of(), reported);
   }
 
+  /** A page scanned as the loader's Grails scans it. */
+  private GspScanner.Scan scan(String text) {
+    return GspScanner.scan(text, GspTranslation.escapes(loader));
+  }
+
   private GspTranslation translate(String text) {
-    GspTranslation translation = GspTranslation.of(loader, PATH, text, "", Map.of(), reports);
+    GspTranslation translation = GspTranslation.of(loader, PATH, scan(text), "", Map.of(), reports);
     assertNotNull(translation);
     return translation;
   }
@@ -265,7 +270,7 @@ abstract class GspTranslationTest {
   @Test
   void declarationsGoOnTheLineOfInit() {
     String page = PAGES.get(0);
-    GspTranslation translation = GspTranslation.of(loader, PATH, page, "java.lang.String extra; ", Map.of(), reports);
+    GspTranslation translation = GspTranslation.of(loader, PATH, scan(page), "java.lang.String extra; ", Map.of(), reports);
     String line = translation.groovy.split("\n", -1)[translation.declarationLine];
     assertTrue(line.startsWith("java.lang.String extra; protected void init() {"), line);
     assertTrue(generatedAt(translation, at(page, "d.time", 0, 0)).startsWith("d.time)"), translation.groovy);
@@ -275,7 +280,7 @@ abstract class GspTranslationTest {
   @Test
   void aClassPathWithoutTheParserHasNoTranslation() throws IOException {
     try (URLClassLoader empty = new URLClassLoader(new URL[0], ClassLoader.getPlatformClassLoader())) {
-      assertNull(GspTranslation.of(empty, PATH, "<p>${a}</p>", "", Map.of(), reports));
+      assertNull(GspTranslation.of(empty, PATH, GspScanner.scan("<p>${a}</p>", false), "", Map.of(), reports));
     }
   }
 }

@@ -371,6 +371,13 @@ abstract class GspTest {
     assertEquals(List.of("2:12 " + io.github.vdassios.grailsls.api.Diagnostic.ERROR), severities(result), result.diagnostics.toString());
   }
 
+  /** So a tag written inside {@code \${ }} is code too, not a tag to check. */
+  @Test
+  void aTagInAnEscapedExpressionIsCodeUpToGrails7() throws Exception {
+    String page = fill("<p>\\${ '<ns:nope>' }</p>\n");
+    assertEquals(List.of(), hints(compile(page(), page)));
+  }
+
   /** Grails writes a GSP tag's attribute value that is {@code [...]} out as Groovy: it is code. */
   @Test
   void aListAttributeValueIsCode() throws Exception {

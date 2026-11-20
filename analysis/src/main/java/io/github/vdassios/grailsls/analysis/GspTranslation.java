@@ -23,7 +23,7 @@ import io.github.vdassios.grailsls.api.Range;
  * attributes become code of a {@code GroovyPage} subclass's {@code run()}.
  *
  * <p>
- * Positions: the parser is given a copy of the page in which each piece of page code ({@link GspScanner#code}) starts
+ * Positions: the parser is given a copy of the page in which each piece of page code ({@link GspScanner.Scan#code}) starts
  * with a unique comment, {@code /*gls<n>*}{@code /}. Grails copies a piece with its comment wherever it puts the piece,
  * however it reorders the code around it, so after the comments are taken out again each piece's place in the
  * generated text is known (a {@link Piece}), and the text is exactly what Grails generates for the page itself.
@@ -70,9 +70,11 @@ final class GspTranslation {
   /**
    * The page translated with the parser on {@code loader}, with {@code declarations} ({@link #implicitObjects},
    * {@link PageVariables}) added to the generated class; null when the loader has no GSP parser, or a parser this
-   * class cannot use (shown to the user through {@code reports}, once).
+   * class cannot use (shown to the user through {@code reports}, once). {@code page} is scanned as the loader's
+   * Grails scans it ({@link #escapes}).
    */
-  static GspTranslation of(ClassLoader loader, String path, String text, String declarations, Map<String, Location> definitions, Reports reports) {
+  static GspTranslation of(ClassLoader loader, String path, GspScanner.Scan page, String declarations, Map<String, Location> definitions, Reports reports) {
+    String text = page.text;
     Class<?> parser;
     try {
       parser = Class.forName(PARSER, true, loader);
@@ -82,8 +84,7 @@ final class GspTranslation {
       unusable(reports, e);
       return null;
     }
-    boolean escapes = escapes(loader);
-    Marks marks = new Marks(text, escapes);
+    Marks marks = new Marks(page);
     try {
       Object instance = construct(parser, loader, className(path), path, marks.text);
       Writer out = new StringWriter();
@@ -104,7 +105,7 @@ final class GspTranslation {
       String message = marks.unmark(String.valueOf(cause.getMessage()).trim(), new ArrayList<>());
       int line = lineOf(cause);
       // the parser gives the line where the token before the ${ starts, often lines above it
-      int unclosed = message.endsWith("Unclosed GSP expression") ? GspScanner.unclosedExpression(text, escapes) : -1;
+      int unclosed = message.endsWith("Unclosed GSP expression") ? GspScanner.unclosedExpression(text, page.escapes) : -1;
       if (unclosed >= 0) {
         int at = new Lines(text).line(unclosed);
         message = message.replaceFirst(":" + (line + 1) + "] ", ":" + (at + 1) + "] ");
@@ -347,21 +348,22 @@ final class GspTranslation {
     private final String prefix;
     private final List<int[]> code;
 
-    Marks(String page, boolean escapes) {
-      this.page = page;
+    Marks(GspScanner.Scan scan) {
+      this.page = scan.text;
       String prefix = "/*gls";
       while (page.contains(prefix)) {
         prefix += "_";
       }
       this.prefix = prefix;
-      this.code = GspScanner.code(page, escapes);
-      StringBuilder marked = new StringBuilder(page.length() + code.size() * (prefix.length() + 4));
+      this.code = new ArrayList<>(scan.code.size());
+      StringBuilder marked = new StringBuilder(page.length() + scan.code.size() * (prefix.length() + 4));
       int copied = 0;
-      for (int n = 0; n < code.size(); n++) {
-        int[] region = code.get(n);
+      for (int n = 0; n < scan.code.size(); n++) {
+        int[] region = scan.code.get(n).clone();
         if (page.startsWith("${", region[2]) && region[1] - region[0] > 1 && page.charAt(region[1] - 1) == '?') {
           region[1]--;
         }
+        code.add(region);
         marked.append(page, copied, region[0]).append(prefix).append(n).append("*/");
         copied = region[0];
       }
