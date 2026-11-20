@@ -19,17 +19,19 @@ processResources {
   }
 }
 
+// Implementation-Version: the server's version, reported as serverInfo.version.
 jar {
-  manifest { attributes "Main-Class": mainClassName }
+  manifest { attributes "Main-Class": mainClassName, "Implementation-Version": project.version }
 }
 
 shadowJar {
   archiveBaseName = "grails-language-server"
   archiveClassifier = "all"
+  archiveVersion = "" // the name releases and editors expect; the version is in the manifest
   destinationDirectory = rootProject.layout.buildDirectory.dir("libs")
   // ParserCache shares ANTLR's parser cache by writing a final field: JDK 26+ warns about that (JEP 500) unless the
   // executable jar allows it. Older JDKs ignore the attribute.
-  manifest { attributes "Main-Class": mainClassName, "Enable-Final-Field-Mutation": "ALL-UNNAMED" }
+  manifest { attributes "Main-Class": mainClassName, "Implementation-Version": project.version, "Enable-Final-Field-Mutation": "ALL-UNNAMED" }
 }
 
 tasks.named("build") { dependsOn tasks.named("shadowJar") }
@@ -37,10 +39,19 @@ tasks.named("build") { dependsOn tasks.named("shadowJar") }
 // A Groovy jar for module loaders in tests that need no Gradle build (the server itself has no Groovy).
 configurations { testGroovy }
 dependencies { testGroovy "org.codehaus.groovy:groovy:2.5.23" }
+// The server jar, for the test that reads serverInfo.version from its manifest.
+def serverJar = tasks.named("shadowJar")
+tasks.withType(Test).configureEach {
+  inputs.files(configurations.testGroovy).withPropertyName("testGroovy")
+  inputs.files(serverJar).withPropertyName("serverJar")
+  def groovyJars = configurations.testGroovy
+  def jarFiles = serverJar.map { it.outputs.files }
+  def serverVersion = project.version.toString()
+  jvmArgumentProviders.add({ ["-Dgls.testGroovy=${groovyJars.singleFile}",
+      "-Dgls.serverJar=${jarFiles.get().singleFile}", "-Dgls.version=${serverVersion}"] } as CommandLineArgumentProvider)
+}
 
 test {
-  inputs.files(configurations.testGroovy).withPropertyName("testGroovy")
-  jvmArgumentProviders.add({ ["-Dgls.testGroovy=${configurations.testGroovy.singleFile}"] } as CommandLineArgumentProvider)
   // FixtureModelTest builds the projects under fixtures/ with JDKs from GLS_TEST_JDK11 and GLS_TEST_JDK17.
   systemProperty "gls.fixtures", rootProject.file("fixtures").absolutePath
   inputs.dir(rootProject.file("fixtures")).withPropertyName("fixtures")

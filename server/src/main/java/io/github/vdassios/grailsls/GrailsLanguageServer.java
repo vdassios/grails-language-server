@@ -185,7 +185,12 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
     capabilities.setWorkspaceSymbolProvider(true);
     capabilities.setCompletionProvider(new CompletionOptions(true, List.of(".")));
     capabilities.setSignatureHelpProvider(new SignatureHelpOptions(List.of("(", ",")));
-    return CompletableFuture.completedFuture(new InitializeResult(capabilities, new ServerInfo("grails-language-server")));
+    return CompletableFuture.completedFuture(new InitializeResult(capabilities, new ServerInfo("grails-language-server", version())));
+  }
+
+  /** The server's version, from the jar's manifest; null when not run from the jar (tests). */
+  static String version() {
+    return GrailsLanguageServer.class.getPackage().getImplementationVersion();
   }
 
   @Override

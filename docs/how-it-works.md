@@ -20,6 +20,8 @@ Resolving the project runs its Gradle build scripts, and compiling a Grails proj
 
 The server logs each startup stage once with `window/logMessage`, as `startup: <stage> after <ms> ms` (stages: model resolved, declarations indexed, symbols indexed, first diagnostics).
 
+`initialize` answers with `serverInfo`: `name` is `grails-language-server`, `version` the server's version (from the jar's manifest).
+
 Initialization options: `trusted` (boolean, required to do anything), `gradle.timeoutSeconds` (default 300), `cacheDir` (default `$XDG_CACHE_HOME/grails-language-server`, else `~/.cache/grails-language-server`).
 
 The server exits when its client goes away, even if the client never sends `exit`: when its standard input ends, or when the process named by `processId` in `initialize` ends. It kills a running Gradle first. The exit code is 0 if `shutdown` came first, else 1. So an editor need not wait for the server when it quits.

@@ -12,7 +12,7 @@ java -jar build/libs/grails-language-server-all.jar   # LSP over stdio
 
 The demo GIFs in `docs/media/` are recorded from the tapes in `demo/` on the `demo/bookstore` app; see [demo/README.md](../demo/README.md).
 
-Releases: pushing a tag `v*` runs CI, and once the build passes it publishes the tested jar as a GitHub release (a tag with a hyphen, such as `v0.6.0-alpha.1`, as a pre-release).
+Releases: the version is `version` in `gradle.properties`; the jar's manifest carries it and the server reports it as `serverInfo.version`. Pushing a tag `v*` runs CI, and once the build passes it publishes the tested jar as a GitHub release (a tag with a hyphen, such as `v0.6.0-alpha.1`, as a pre-release). The tag must be `v` and that version, or the release step fails.
 
 The project-model tests run the fixture builds under `fixtures/` (see [its README](../fixtures/README.md)) with their own Gradle wrappers. They need a JDK 11 (Grails 4 fixture) and a JDK 17 (Grails 7 and plain Groovy fixtures), given as `GLS_TEST_JDK11` and `GLS_TEST_JDK17`; a test whose JDK is not set is skipped. `-PtestJavaHome=<jdk>` runs the tests on another JDK; CI runs them on JDK 11, the oldest the server supports, with both fixture JDKs set.
 

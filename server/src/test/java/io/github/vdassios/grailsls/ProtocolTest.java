@@ -26,6 +26,7 @@ import org.eclipse.lsp4j.MessageActionItem;
 import org.eclipse.lsp4j.MessageParams;
 import org.eclipse.lsp4j.Position;
 import org.eclipse.lsp4j.PublishDiagnosticsParams;
+import org.eclipse.lsp4j.ServerInfo;
 import org.eclipse.lsp4j.ShowMessageRequestParams;
 import org.eclipse.lsp4j.SignatureHelp;
 import org.eclipse.lsp4j.SignatureHelpParams;
@@ -113,6 +114,25 @@ class ProtocolTest {
     return status;
   }
 
+  /** The jar's manifest gives the version: {@code java -jar} answers initialize with it. */
+  @Test
+  void theJarReportsItsVersion() throws Exception {
+    Process process = new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin", "java").toString(), "-jar", System.getProperty("gls.serverJar"))
+        .redirectError(ProcessBuilder.Redirect.DISCARD).start();
+    try {
+      Launcher<GrailsServerProxy> launcher = Launcher.createLauncher(new RecordingClient(), GrailsServerProxy.class, process.getInputStream(), process.getOutputStream());
+      launcher.startListening();
+      InitializeParams params = new InitializeParams();
+      params.setWorkspaceFolders(List.of(new WorkspaceFolder(tmp.toUri().toString(), "project")));
+      ServerInfo info = launcher.getRemoteProxy().initialize(params).get(30, TimeUnit.SECONDS).getServerInfo();
+      assertEquals("grails-language-server", info.getName());
+      assertEquals(System.getProperty("gls.version"), info.getVersion());
+      launcher.getRemoteProxy().shutdown().get(10, TimeUnit.SECONDS);
+    } finally {
+      process.destroyForcibly();
+    }
+  }
+
   @Test
   void untrustedWorkspaceRunsNothing() throws Exception {
     Path root = FakeWrapper.write(tmp.resolve("project"), FakeWrapper.WRITES_MODEL).getParent();
@@ -185,6 +205,7 @@ class ProtocolTest {
     assertEquals(StatusParams.FAILED, failed.state);
     assertTrue(failed.message.startsWith("Gradle failed: boom (log: "), failed.message);
   }
+
 
   /** A project of one module whose main source set is {@code src} on the test's Groovy. */
   private Path groovyProject() throws Exception {

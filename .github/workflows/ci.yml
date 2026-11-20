@@ -46,6 +46,12 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           name: grails-language-server-all
+      - name: Check that the tag is the jar's version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=$(unzip -p grails-language-server-all.jar META-INF/MANIFEST.MF | sed -n 's/^Implementation-Version: *//p' | tr -d '\r')
+          if [[ "v$version" != "$TAG" ]]; then echo "tag $TAG, jar version $version (gradle.properties)"; exit 1; fi
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
