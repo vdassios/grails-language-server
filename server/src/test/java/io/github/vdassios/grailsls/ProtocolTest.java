@@ -13,13 +13,21 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.logging.Handler;
+import java.util.logging.Level;
+import java.util.logging.LogRecord;
+import java.util.logging.Logger;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 
 import org.eclipse.lsp4j.CompletionItem;
 import org.eclipse.lsp4j.CompletionParams;
+import org.eclipse.lsp4j.DidChangeTextDocumentParams;
+import org.eclipse.lsp4j.DidCloseTextDocumentParams;
 import org.eclipse.lsp4j.DidOpenTextDocumentParams;
+import org.eclipse.lsp4j.Hover;
+import org.eclipse.lsp4j.HoverParams;
 import org.eclipse.lsp4j.InitializeParams;
 import org.eclipse.lsp4j.InitializedParams;
 import org.eclipse.lsp4j.MessageActionItem;
@@ -31,11 +39,14 @@ import org.eclipse.lsp4j.ShowMessageRequestParams;
 import org.eclipse.lsp4j.SignatureHelp;
 import org.eclipse.lsp4j.SignatureHelpParams;
 import org.eclipse.lsp4j.SymbolInformation;
+import org.eclipse.lsp4j.TextDocumentContentChangeEvent;
 import org.eclipse.lsp4j.TextDocumentIdentifier;
 import org.eclipse.lsp4j.TextDocumentItem;
+import org.eclipse.lsp4j.VersionedTextDocumentIdentifier;
 import org.eclipse.lsp4j.WorkspaceFolder;
 import org.eclipse.lsp4j.WorkspaceSymbolParams;
 import org.eclipse.lsp4j.jsonrpc.Launcher;
+import org.eclipse.lsp4j.jsonrpc.RemoteEndpoint;
 import org.eclipse.lsp4j.jsonrpc.services.JsonRequest;
 import org.eclipse.lsp4j.services.LanguageServer;
 import org.junit.jupiter.api.AfterEach;
@@ -71,8 +82,12 @@ class ProtocolTest {
     start(root, options, proxy -> {});
   }
 
-  /** Starts the server; {@code beforeInitialized} runs between initialize and initialized, before the project resolves. */
   private void start(Path root, JsonObject options, java.util.function.Consumer<GrailsServerProxy> beforeInitialized) throws Exception {
+    start(root.toUri().toString(), options, beforeInitialized);
+  }
+
+  /** Starts the server; {@code beforeInitialized} runs between initialize and initialized, before the project resolves. */
+  private void start(String rootUri, JsonObject options, java.util.function.Consumer<GrailsServerProxy> beforeInitialized) throws Exception {
     PipedInputStream serverIn = new PipedInputStream();
     PipedOutputStream clientOut = new PipedOutputStream(serverIn);
     PipedInputStream clientIn = new PipedInputStream();
@@ -88,7 +103,7 @@ class ProtocolTest {
     server = clientLauncher.getRemoteProxy();
 
     InitializeParams params = new InitializeParams();
-    params.setWorkspaceFolders(List.of(new WorkspaceFolder(root.toUri().toString(), "project")));
+    params.setWorkspaceFolders(List.of(new WorkspaceFolder(rootUri, "project")));
     params.setInitializationOptions(options);
     server.initialize(params).get(10, TimeUnit.SECONDS);
     beforeInitialized.accept(server);
@@ -264,7 +279,7 @@ class ProtocolTest {
 
   /** A project of one module whose main source set is {@code src} on the Groovy jar given, reported as {@code version}. */
   private Path groovyProject(String groovyJar, String version) throws Exception {
-    Path root = tmp.resolve("project");
+    Path root = tmp.toRealPath().resolve("project"); // Gradle reports the project's real paths
     JsonObject main = new JsonObject();
     main.addProperty("name", "main");
     JsonArray roots = new JsonArray();
@@ -285,6 +300,93 @@ class ProtocolTest {
     Files.writeString(root.resolve("settings.gradle"), "");
     Files.createDirectories(root.resolve("src"));
     return root;
+  }
+
+  /**
+   * A workspace opened through a symlink: Gradle reports the project's real paths, the editor the paths it opened.
+   * On macOS {@code /tmp} against {@code /private/tmp} is enough. Diagnostics go to the editor's URI.
+   */
+  @Test
+  void aWorkspaceOpenedThroughASymlinkCompilesAndAnswers() throws Exception {
+    Path root = groovyProject();
+    Path link = Files.createSymbolicLink(tmp.resolve("link"), root);
+    start(link, trustedOptions());
+    assertEquals(StatusParams.RESOLVING, next().state);
+    assertEquals(StatusParams.INDEXING, next().state);
+    assertEquals(StatusParams.READY, next().state);
+
+    String uri = link.resolve("src/A.groovy").toUri().toString();
+    String text = "class A {\n  String name\n  Missing m\n  def run() { name.size() }\n}\n";
+    server.getTextDocumentService().didOpen(new DidOpenTextDocumentParams(new TextDocumentItem(uri, "groovy", 1, text)));
+    PublishDiagnosticsParams published = diagnostics.poll(30, TimeUnit.SECONDS);
+    assertTrue(published != null, "no diagnostics");
+    assertEquals(uri, published.getUri());
+    assertEquals(List.of("unable to resolve class Missing"), published.getDiagnostics().stream().map(d -> d.getMessage()).collect(java.util.stream.Collectors.toList()));
+    Hover hover = server.getTextDocumentService().hover(new HoverParams(new TextDocumentIdentifier(uri), new Position(3, 15))).get(30, TimeUnit.SECONDS);
+    assertEquals("```groovy\nprivate String name\n```", hover == null ? null : hover.getContents().getRight().getValue());
+  }
+
+  /** Documents that are no files ({@code untitled:}, {@code jdt:}) are ignored, and the others still compile. */
+  @Test
+  void documentsThatAreNoFilesAreIgnored() throws Exception {
+    List<LogRecord> warnings = endpointWarnings();
+    Path root = groovyProject();
+    start(root, trustedOptions());
+    assertEquals(StatusParams.RESOLVING, next().state);
+    assertEquals(StatusParams.INDEXING, next().state);
+    assertEquals(StatusParams.READY, next().state);
+
+    for (String uri : List.of("untitled:Untitled-1", "jdt://contents/rt.jar/java.lang/String.class")) {
+      server.getTextDocumentService().didOpen(new DidOpenTextDocumentParams(new TextDocumentItem(uri, "groovy", 1, "class A {\n")));
+      server.getTextDocumentService().didChange(new DidChangeTextDocumentParams(new VersionedTextDocumentIdentifier(uri, 2), List.of(new TextDocumentContentChangeEvent("class B {\n"))));
+      Hover hover = server.getTextDocumentService().hover(new HoverParams(new TextDocumentIdentifier(uri), new Position(0, 7))).get(30, TimeUnit.SECONDS);
+      assertNull(hover, uri);
+      server.getTextDocumentService().didClose(new DidCloseTextDocumentParams(new TextDocumentIdentifier(uri)));
+    }
+    String file = root.resolve("src/A.groovy").toUri().toString();
+    server.getTextDocumentService().didOpen(new DidOpenTextDocumentParams(new TextDocumentItem(file, "groovy", 1, "class A {\n")));
+    PublishDiagnosticsParams published = diagnostics.poll(30, TimeUnit.SECONDS);
+    assertTrue(published != null, "no diagnostics");
+    assertEquals(file, published.getUri(), "the only diagnostics are the file's");
+    assertEquals(List.of(), warnings.stream().map(r -> r.getMessage() + " " + r.getThrown()).collect(java.util.stream.Collectors.toList()));
+  }
+
+  /** A root that is no file starts nothing and says why; initialize does not fail. */
+  @Test
+  void aRootThatIsNoFileIsNoWorkspaceFolder() throws Exception {
+    start("untitled:project", trustedOptions(), proxy -> {});
+    assertEquals(new StatusParams(StatusParams.FAILED, "no workspace folder"), next());
+  }
+
+  /** The warnings lsp4j logs when a notification handler throws. */
+  private static List<LogRecord> endpointWarnings() {
+    List<LogRecord> records = new java.util.concurrent.CopyOnWriteArrayList<>();
+    Logger logger = Logger.getLogger(RemoteEndpoint.class.getName());
+    Handler handler = new Handler() {
+      @Override
+      public void publish(LogRecord record) {
+        if (record.getLevel().intValue() >= Level.WARNING.intValue()) {
+          records.add(record);
+        }
+      }
+
+      @Override
+      public void flush() {}
+
+      @Override
+      public void close() {}
+    };
+    logger.addHandler(handler);
+    HANDLERS.add(handler);
+    return records;
+  }
+
+  private static final List<Handler> HANDLERS = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+  @AfterEach
+  void removeHandlers() {
+    HANDLERS.forEach(Logger.getLogger(RemoteEndpoint.class.getName())::removeHandler);
+    HANDLERS.clear();
   }
 
   @Test

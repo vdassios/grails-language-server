@@ -3,7 +3,6 @@ package io.github.vdassios.grailsls;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.PrintStream;
-import java.net.URI;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -278,11 +277,11 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
     return workspace;
   }
 
-  /** The first workspace folder, else the root URI. */
+  /** The first workspace folder, else the root URI; null when there is none or it is no file. */
   @SuppressWarnings("deprecation")
   private static Path workspaceRoot(InitializeParams params) {
     String uri = params.getWorkspaceFolders() != null && !params.getWorkspaceFolders().isEmpty() ? params.getWorkspaceFolders().get(0).getUri() : params.getRootUri();
-    return uri == null ? null : Path.of(URI.create(uri));
+    return uri == null ? null : Documents.path(uri);
   }
 
   private static boolean bool(JsonElement element) {

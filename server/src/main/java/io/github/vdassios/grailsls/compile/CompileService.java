@@ -75,7 +75,7 @@ public final class CompileService {
 
   public void open(String uri, String text, int version) {
     Document document = documents.open(uri, text, version);
-    if (document.path != null) {
+    if (document != null) {
       schedule(document.path, 0);
     }
   }
@@ -89,13 +89,16 @@ public final class CompileService {
 
   public void close(String uri) {
     Path path = Documents.path(uri);
+    if (path == null) {
+      return; // no file: never opened
+    }
     documents.close(uri);
     Pending running = pending.remove(path);
     if (running != null) {
       running.cancel();
     }
     Workspace current = workspace;
-    CompileContext context = current == null || path == null ? null : current.contextOf(path);
+    CompileContext context = current == null ? null : current.contextOf(path);
     if (context != null) {
       context.forget(path.toString());
     }

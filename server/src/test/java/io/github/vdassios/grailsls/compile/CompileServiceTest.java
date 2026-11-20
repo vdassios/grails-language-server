@@ -41,7 +41,8 @@ class CompileServiceTest {
   private Path src;
 
   @BeforeEach
-  void start() {
+  void start() throws IOException {
+    tmp = tmp.toRealPath(); // Gradle reports real paths; on macOS the temporary directory is under the /var symlink
     src = tmp.resolve("src");
     service = new CompileService(published::add, CompileService.DEBOUNCE_MILLIS);
     service.setWorkspace(workspace());
@@ -189,6 +190,29 @@ class CompileServiceTest {
     PublishDiagnosticsParams cleared = next();
     assertEquals(uri("Broken.groovy"), cleared.getUri());
     assertEquals(List.of(), cleared.getDiagnostics());
+  }
+
+  /** Opened through a symlink and not saved yet: the file matches the source root through its directory's real path. */
+  @Test
+  void aNewFileOpenedThroughASymlinkCompiles() throws Exception {
+    Files.createDirectories(src);
+    Path link = Files.createSymbolicLink(tmp.resolve("link"), src);
+    String uri = link.resolve("lib/New.groovy").toUri().toString();
+    service.open(uri, "class New {\n", 1);
+    PublishDiagnosticsParams published = next();
+    assertEquals(uri, published.getUri(), "published to the editor's URI");
+    assertEquals(1, published.getDiagnostics().size(), messages(published).toString());
+    assertEquals("class New {\n", service.documents().get(src.resolve("lib/New.groovy")).text);
+  }
+
+  @Test
+  void documentsThatAreNoFilesAreIgnored() {
+    for (String uri : List.of("untitled:Untitled-1", "jdt://contents/rt.jar/java.lang/String.class", "file:relative")) {
+      service.open(uri, "class A {\n", 1);
+      service.change(uri, List.of(new TextDocumentContentChangeEvent("class B {\n")), 2);
+      service.close(uri);
+    }
+    assertEquals(List.of(), service.documents().all());
   }
 
   @Test

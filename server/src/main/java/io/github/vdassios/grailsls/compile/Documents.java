@@ -1,6 +1,8 @@
 package io.github.vdassios.grailsls.compile;
 
+import java.io.IOException;
 import java.net.URI;
+import java.nio.file.FileSystemNotFoundException;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
@@ -28,21 +30,53 @@ public final class Documents {
 
   private final Map<Path, Document> open = new ConcurrentHashMap<>();
 
-  /** The path of a {@code file:} URI, or null for any other scheme. */
+  /**
+   * The path of a {@code file:} URI with symlinks resolved, or null for any other scheme ({@code untitled:},
+   * {@code jdt:}). Resolved because the project model holds the real paths Gradle reports: a workspace opened through a
+   * symlink (on macOS {@code /tmp} is one) must still match its source roots.
+   */
   public static Path path(String uri) {
-    URI parsed = URI.create(uri);
-    return "file".equals(parsed.getScheme()) ? Path.of(parsed).normalize() : null;
+    try {
+      URI parsed = URI.create(uri);
+      return "file".equals(parsed.getScheme()) ? realPath(Path.of(parsed)) : null;
+    } catch (IllegalArgumentException | FileSystemNotFoundException e) {
+      return null; // not a URI, or one that is no absolute path
+    }
   }
 
+  /**
+   * Symlinks resolved. A file that does not exist (not saved yet, or deleted) gets the real path of its nearest
+   * existing directory and the rest of its own path.
+   */
+  static Path realPath(Path path) {
+    Path normal = path.normalize();
+    for (Path existing = normal; existing != null; existing = existing.getParent()) {
+      try {
+        return existing.toRealPath().resolve(existing.relativize(normal));
+      } catch (IOException e) {
+        // not there: try its directory
+      }
+    }
+    return normal;
+  }
+
+  /** Opens a document; returns null, and keeps nothing, when its URI is no file. */
   public Document open(String uri, String text, int version) {
-    Document document = new Document(uri, path(uri), text, version);
-    open.put(document.path, document);
+    Path path = path(uri);
+    if (path == null) {
+      return null;
+    }
+    Document document = new Document(uri, path, text, version);
+    open.put(path, document);
     return document;
   }
 
   /** Applies changes in order; returns the new version, or null when the document is not open. */
   public Document change(String uri, List<TextDocumentContentChangeEvent> changes, int version) {
     Path path = path(uri);
+    if (path == null) {
+      return null;
+    }
     return open.computeIfPresent(path, (key, document) -> {
       String text = document.text;
       for (TextDocumentContentChangeEvent change : changes) {
@@ -59,7 +93,10 @@ public final class Documents {
   }
 
   public void close(String uri) {
-    open.remove(path(uri));
+    Path path = path(uri);
+    if (path != null) {
+      open.remove(path);
+    }
   }
 
   public Document get(Path path) {
