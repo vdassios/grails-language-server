@@ -35,10 +35,8 @@ public final class ModuleRecord {
     public List<String> resourceRoots = new ArrayList<>();
     /** Files of the compile classpath configuration; sibling projects appear as their jars. */
     public List<String> compileClasspath = new ArrayList<>();
-    /** Class output dirs; the classes of {@link #javaFiles} are among them once the project is built. */
+    /** Class output dirs; the classes of the {@code .java} files in the source roots are among them once the project is built. */
     public List<String> classesDirs = new ArrayList<>();
-    /** Every {@code .java} file of the source set, including those in Groovy source dirs (joint compilation). */
-    public List<String> javaFiles = new ArrayList<>();
     /**
      * Other source sets of the project whose class output is on this one's compile classpath, in classpath order, e.g.
      * {@code main, test} for Grails' {@code integrationTest}.

@@ -7,8 +7,11 @@ import java.io.UncheckedIOException;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryStream;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -539,12 +542,12 @@ public final class Workspace implements AutoCloseable {
     }
 
     Map<String, Path> classFiles = new HashMap<>();
-    int notBuilt = javaClasses(sourceSet, classFiles);
+    int notBuilt = javaClasses(sourceSet, buildDirs, classFiles);
     if (main != null) {
-      javaClasses(main, classFiles); // main's are counted by main's own context
+      javaClasses(main, buildDirs, classFiles); // main's are counted by main's own context
     }
     for (SourceSetRecord other : others) {
-      javaClasses(other, classFiles);
+      javaClasses(other, buildDirs, classFiles);
     }
     // Gradle puts main's output (classes and resources) on the other source sets' classpath and siblings' jars on
     // every one, so their extension modules apply: statically compiled code calls their methods
@@ -662,12 +665,12 @@ public final class Workspace implements AutoCloseable {
    * Adds the class files of the source set's {@code .java} files: each top-level type's class and its {@code $}
    * classes, found in the source set's class directories. Returns how many files had no class there.
    */
-  private static int javaClasses(SourceSetRecord sourceSet, Map<String, Path> out) {
+  private static int javaClasses(SourceSetRecord sourceSet, Set<Path> buildDirs, Map<String, Path> out) {
     int notBuilt = 0;
-    for (String javaFile : sourceSet.javaFiles) {
+    for (Path javaFile : javaFiles(sourceSet, buildDirs)) {
       String text;
       try {
-        text = Files.readString(Path.of(javaFile), StandardCharsets.UTF_8);
+        text = Files.readString(javaFile, StandardCharsets.UTF_8);
       } catch (IOException e) {
         continue;
       }
@@ -682,6 +685,45 @@ public final class Workspace implements AutoCloseable {
       }
     }
     return notBuilt;
+  }
+
+  /**
+   * The {@code .java} files in the source set's roots, those in Groovy roots included (joint compilation), read from
+   * disk rather than the model so that one added since it was resolved counts. A build directory below a root is
+   * skipped; a root of generated sources inside one is not.
+   */
+  private static List<Path> javaFiles(SourceSetRecord sourceSet, Set<Path> buildDirs) {
+    Set<Path> files = new LinkedHashSet<>();
+    for (String name : sourceSet.sourceRoots) {
+      Path root = Path.of(name);
+      if (!Files.isDirectory(root)) {
+        continue;
+      }
+      try {
+        Files.walkFileTree(root, new SimpleFileVisitor<>() {
+          @Override
+          public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+            return !dir.equals(root) && buildDirs.contains(dir) ? FileVisitResult.SKIP_SUBTREE : FileVisitResult.CONTINUE;
+          }
+
+          @Override
+          public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+            if (file.getFileName().toString().endsWith(".java")) {
+              files.add(file);
+            }
+            return FileVisitResult.CONTINUE;
+          }
+
+          @Override
+          public FileVisitResult visitFileFailed(Path file, IOException e) {
+            return FileVisitResult.CONTINUE;
+          }
+        });
+      } catch (IOException e) {
+        throw new UncheckedIOException(e);
+      }
+    }
+    return new ArrayList<>(files);
   }
 
   /** Adds a top-level type's class file and its {@code $} classes from the class directories; false if none has it. */

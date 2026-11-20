@@ -29,13 +29,12 @@ class WorkspaceTest {
     return file;
   }
 
-  private static SourceSetRecord sourceSet(String name, List<Path> roots, List<Path> classpath, List<Path> classesDirs, List<Path> javaFiles) {
+  private static SourceSetRecord sourceSet(String name, List<Path> roots, List<Path> classpath, List<Path> classesDirs) {
     SourceSetRecord record = new SourceSetRecord();
     record.name = name;
     roots.forEach(p -> record.sourceRoots.add(p.toString()));
     classpath.forEach(p -> record.compileClasspath.add(p.toString()));
     classesDirs.forEach(p -> record.classesDirs.add(p.toString()));
-    javaFiles.forEach(p -> record.javaFiles.add(p.toString()));
     return record;
   }
 
@@ -59,16 +58,16 @@ class WorkspaceTest {
     touch("app/build/classes/groovy/main/a/Built$1.class", "");
     touch("app/build/classes/groovy/main/a/BuiltOther.class", "");
     touch("app/build/classes/groovy/main/a/GroovyClass.class", "");
-    Path built = touch("app/src/main/java/a/Built.java", "package a;\npublic class Built {\n  static class Inner {}\n}\n");
-    Path notBuilt = touch("app/src/main/groovy/a/Fresh.java", "package a;\npublic class Fresh {}\n");
-    Path testNotBuilt = touch("app/src/test/groovy/a/FreshTest.java", "package a;\npublic class FreshTest {}\n");
+    touch("app/src/main/java/a/Built.java", "package a;\npublic class Built {\n  static class Inner {}\n}\n");
+    touch("app/src/main/groovy/a/Fresh.java", "package a;\npublic class Fresh {}\n");
+    touch("app/src/test/groovy/a/FreshTest.java", "package a;\npublic class FreshTest {}\n");
     Path jar = touch("repo/dep.jar", "");
 
     SourceSetRecord appMain = sourceSet("main", List.of(app.resolve("grails-app/domain"), app.resolve("src/main/groovy"), app.resolve("src/main/java"), app.resolve("build/generated")),
-        List.of(jar, lib.resolve("build/libs/lib.jar")), List.of(appClasses, app.resolve("build/classes/java/main")), List.of(built, notBuilt));
+        List.of(jar, lib.resolve("build/libs/lib.jar")), List.of(appClasses, app.resolve("build/classes/java/main")));
     SourceSetRecord appTest = sourceSet("test", List.of(app.resolve("src/test/groovy")), List.of(jar, appClasses, app.resolve("build/resources/main"), lib.resolve("build/libs/lib.jar")),
-        List.of(app.resolve("build/classes/groovy/test")), List.of(testNotBuilt));
-    SourceSetRecord libMain = sourceSet("main", List.of(lib.resolve("src/main/groovy")), List.of(jar), List.of(lib.resolve("build/classes/groovy/main")), List.of());
+        List.of(app.resolve("build/classes/groovy/test")));
+    SourceSetRecord libMain = sourceSet("main", List.of(lib.resolve("src/main/groovy")), List.of(jar), List.of(lib.resolve("build/classes/groovy/main")));
     ModuleRecord root = module(":", tmp, null, List.of());
     return new Workspace(new ProjectModel(tmp, List.of(root, module(":app", app, "2.5.14", List.of(":lib"), appMain, appTest), module(":lib", lib, "2.5.14", List.of(), libMain)), false),
         tmp.resolve("analysis.jar"));
@@ -103,8 +102,8 @@ class WorkspaceTest {
     Path flat = touch("lib/libs/vendored-1.0.jar", "");
     Path app = tmp.resolve("app");
     Path lib = tmp.resolve("lib");
-    SourceSetRecord appMain = sourceSet("main", List.of(app.resolve("src/main/groovy")), List.of(groovy3011, old), List.of(), List.of());
-    SourceSetRecord libMain = sourceSet("main", List.of(lib.resolve("src/main/groovy")), List.of(groovy3014, xml3014, tests3014, newer, flat), List.of(), List.of());
+    SourceSetRecord appMain = sourceSet("main", List.of(app.resolve("src/main/groovy")), List.of(groovy3011, old), List.of());
+    SourceSetRecord libMain = sourceSet("main", List.of(lib.resolve("src/main/groovy")), List.of(groovy3014, xml3014, tests3014, newer, flat), List.of());
     ModuleRecord root = module(":", tmp, null, List.of());
     try (Workspace workspace = new Workspace(new ProjectModel(tmp, List.of(root, module(":app", app, "3.0.11", List.of(":lib"), appMain), module(":lib", lib, "3.0.14", List.of(), libMain)), false),
         tmp.resolve("analysis.jar"))) {
@@ -122,6 +121,18 @@ class WorkspaceTest {
       assertEquals(1, workspace.contexts().get(1).javaFilesNotBuilt);
       assertEquals(", 2 Java files not built (run Gradle :app:classes :app:testClasses)", workspace.summary(), "each source set needs its own task");
       assertEquals(3, workspace.contexts().get(1).javaClasses(), "a test source set sees main's Java classes");
+    }
+  }
+
+  /** The model lists no Java files: one added after the project was resolved is found in its root. */
+  @Test
+  void javaSourcesAreFoundInTheRoots() throws IOException {
+    touch("app/src/main/java/a/Later.java", "package a;\npublic class Later {}\n");
+    touch("app/build/classes/java/main/a/Later.class", "");
+    touch("app/src/main/groovy/a/Unbuilt.java", "package a;\npublic class Unbuilt {}\n");
+    try (Workspace workspace = workspace()) {
+      assertEquals(4, workspace.contexts().get(0).javaClasses(), "Built, Built$Inner, Built$1, Later");
+      assertEquals(2, workspace.contexts().get(0).javaFilesNotBuilt, "Fresh, Unbuilt");
     }
   }
 
@@ -144,10 +155,10 @@ class WorkspaceTest {
   @Test
   void aSourceSetWithAnotherOnesOutputOnItsClasspathAlsoSearchesItsRoots() throws IOException {
     Path app = tmp.resolve("app");
-    SourceSetRecord main = sourceSet("main", List.of(app.resolve("src/main/groovy")), List.of(), List.of(app.resolve("build/classes/groovy/main")), List.of());
-    SourceSetRecord test = sourceSet("test", List.of(app.resolve("src/test/groovy")), List.of(), List.of(app.resolve("build/classes/groovy/test")), List.of());
+    SourceSetRecord main = sourceSet("main", List.of(app.resolve("src/main/groovy")), List.of(), List.of(app.resolve("build/classes/groovy/main")));
+    SourceSetRecord test = sourceSet("test", List.of(app.resolve("src/test/groovy")), List.of(), List.of(app.resolve("build/classes/groovy/test")));
     test.outputsOf.add("main");
-    SourceSetRecord integrationTest = sourceSet("integrationTest", List.of(app.resolve("src/integration-test/groovy")), List.of(), List.of(), List.of());
+    SourceSetRecord integrationTest = sourceSet("integrationTest", List.of(app.resolve("src/integration-test/groovy")), List.of(), List.of());
     integrationTest.outputsOf.addAll(List.of("main", "test"));
     ProjectModel model = new ProjectModel(tmp, List.of(module(":app", app, "2.5.14", List.of(), main, test, integrationTest)), false);
     try (Workspace workspace = new Workspace(model, tmp.resolve("analysis.jar"))) {
@@ -173,7 +184,7 @@ class WorkspaceTest {
   @Test
   void onlyTheModulesBuildDirectoryIsNoSource() throws IOException {
     Path app = tmp.resolve("app");
-    SourceSetRecord main = sourceSet("main", List.of(app, app.resolve("out/generated")), List.of(), List.of(), List.of());
+    SourceSetRecord main = sourceSet("main", List.of(app, app.resolve("out/generated")), List.of(), List.of());
     ModuleRecord module = module(":app", app, "2.5.14", List.of(), main);
     module.buildDir = app.resolve("out").toString();
     try (Workspace workspace = new Workspace(new ProjectModel(tmp, List.of(module), false), tmp.resolve("analysis.jar"))) {
@@ -226,7 +237,7 @@ class WorkspaceTest {
     for (int i = 0; i < spec.length; i++) {
       Path dir = tmp.resolve(spec[i][0]);
       Files.createDirectories(dir.resolve("grails-app/controllers"));
-      SourceSetRecord main = sourceSet("main", List.of(dir.resolve("grails-app/controllers")), List.of(classpaths[i]), List.of(), List.of());
+      SourceSetRecord main = sourceSet("main", List.of(dir.resolve("grails-app/controllers")), List.of(classpaths[i]), List.of());
       if (i == 0) {
         main.runtimeOnly.add(render.toString());
       }
@@ -268,7 +279,7 @@ class WorkspaceTest {
     }
     Path dir = tmp.resolve("app");
     Files.createDirectories(dir.resolve("grails-app/controllers"));
-    SourceSetRecord main = sourceSet("main", List.of(dir.resolve("grails-app/controllers")), List.of(views), List.of(), List.of());
+    SourceSetRecord main = sourceSet("main", List.of(dir.resolve("grails-app/controllers")), List.of(views), List.of());
     main.runtimeOnly.add(assets.toString());
     try (Workspace workspace = new Workspace(new ProjectModel(tmp, List.of(module(":app", dir, "4.0.33", List.of(), main)), false), tmp.resolve("analysis.jar"))) {
       CompileContext app = workspace.contexts().get(0);
