@@ -18,18 +18,21 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Maps type names to the Groovy files that declare them, per source root. Built by a scan of the roots, then kept
- * current file by file ({@link #update}). Build output and tool directories below a root are never source.
+ * current file by file ({@link #update}). The modules' build directories are never source, wherever they lie.
  */
 public final class DeclarationIndex {
-  /** Directories that hold build output or copies of sources, never sources themselves. */
-  public static final Set<String> NOT_SOURCE = Set.of("build", "bin", "out", ".gradle", "node_modules");
-
   private final Map<Path, Root> roots = new ConcurrentHashMap<>();
+  /** The modules' build directories: they hold build output and copies of sources, never sources themselves. */
+  private final Set<Path> buildDirs;
+
+  public DeclarationIndex(Set<Path> buildDirs) {
+    this.buildDirs = Set.copyOf(buildDirs);
+  }
 
   /** Scans each root not indexed yet. */
   public void addRoots(List<Path> paths) {
     for (Path path : paths) {
-      roots.computeIfAbsent(path, Root::scan);
+      roots.computeIfAbsent(path, this::scan);
     }
   }
 
@@ -68,7 +71,7 @@ public final class DeclarationIndex {
       return;
     }
     for (Root root : roots.values()) {
-      if (file.startsWith(root.path) && isSource(root.path, file)) {
+      if (file.startsWith(root.path) && isSource(file)) {
         root.reindex(file);
       }
     }
@@ -96,14 +99,40 @@ public final class DeclarationIndex {
     return roots.values().stream().mapToInt(r -> r.namesByFile.size()).sum();
   }
 
-  /** True unless the file lies in a build or tool directory below {@code root}. */
-  public static boolean isSource(Path root, Path file) {
-    for (Path segment : root.relativize(file)) {
-      if (NOT_SOURCE.contains(segment.toString())) {
-        return false;
-      }
+  /** True unless the file or directory lies in a module's build directory. */
+  public boolean isSource(Path file) {
+    return buildDirs.stream().noneMatch(file::startsWith);
+  }
+
+  private Root scan(Path path) {
+    Root root = new Root(path);
+    if (!Files.isDirectory(path)) {
+      return root;
     }
-    return true;
+    try {
+      Files.walkFileTree(path, new SimpleFileVisitor<>() {
+        @Override
+        public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+          return buildDirs.contains(dir) ? FileVisitResult.SKIP_SUBTREE : FileVisitResult.CONTINUE;
+        }
+
+        @Override
+        public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+          if (file.toString().endsWith(".groovy")) {
+            root.reindex(file);
+          }
+          return FileVisitResult.CONTINUE;
+        }
+
+        @Override
+        public FileVisitResult visitFileFailed(Path file, IOException e) {
+          return FileVisitResult.CONTINUE;
+        }
+      });
+    } catch (IOException e) {
+      throw new UncheckedIOException(e);
+    }
+    return root;
   }
 
   private static final class Root {
@@ -113,37 +142,6 @@ public final class DeclarationIndex {
 
     Root(Path path) {
       this.path = path;
-    }
-
-    static Root scan(Path path) {
-      Root root = new Root(path);
-      if (!Files.isDirectory(path)) {
-        return root;
-      }
-      try {
-        Files.walkFileTree(path, new SimpleFileVisitor<>() {
-          @Override
-          public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
-            return !dir.equals(path) && NOT_SOURCE.contains(dir.getFileName().toString()) ? FileVisitResult.SKIP_SUBTREE : FileVisitResult.CONTINUE;
-          }
-
-          @Override
-          public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
-            if (file.toString().endsWith(".groovy")) {
-              root.reindex(file);
-            }
-            return FileVisitResult.CONTINUE;
-          }
-
-          @Override
-          public FileVisitResult visitFileFailed(Path file, IOException e) {
-            return FileVisitResult.CONTINUE;
-          }
-        });
-      } catch (IOException e) {
-        throw new UncheckedIOException(e);
-      }
-      return root;
     }
 
     synchronized List<Path> files() {

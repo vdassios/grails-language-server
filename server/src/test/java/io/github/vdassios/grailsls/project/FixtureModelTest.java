@@ -42,6 +42,7 @@ class FixtureModelTest {
     assertEquals("2.5.14", app.groovyVersion);
     assertEquals(List.of(":support"), app.dependsOn);
     assertEquals(List.of(), app.errors);
+    assertEquals(List.of("build"), relative(app, List.of(app.buildDir)));
     SourceSetRecord main = app.sourceSet("main");
     assertEquals(List.of("grails-app/controllers", "grails-app/domain", "grails-app/services", "grails-app/taglib", "src/main/groovy", "src/main/java"),
         relative(app, main.sourceRoots));

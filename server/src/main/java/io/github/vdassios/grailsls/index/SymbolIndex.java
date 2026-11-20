@@ -44,11 +44,11 @@ public final class SymbolIndex {
     return found;
   }
 
-  /** Top-level classes declared in files below {@code roots} that are source (see {@link DeclarationIndex#isSource}). */
+  /** Top-level classes declared in files below {@code roots} (every file indexed is source). */
   public List<Symbol> types(List<Path> roots) {
     List<Symbol> types = new ArrayList<>();
     files.forEach((file, symbols) -> {
-      if (roots.stream().noneMatch(root -> file.startsWith(root) && DeclarationIndex.isSource(root, file))) {
+      if (roots.stream().noneMatch(file::startsWith)) {
         return;
       }
       for (Symbol symbol : symbols) {

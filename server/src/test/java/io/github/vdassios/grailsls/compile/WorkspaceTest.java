@@ -164,7 +164,23 @@ class WorkspaceTest {
       assertSame(workspace.contexts().get(1), workspace.contextOf(tmp.resolve("app/src/test/groovy/a/BookSpec.groovy")));
       assertSame(workspace.contexts().get(2), workspace.contextOf(tmp.resolve("lib/src/main/groovy/l/Clock.groovy")));
       assertNull(workspace.contextOf(tmp.resolve("app/build.gradle")));
-      assertNull(workspace.contextOf(tmp.resolve("app/src/main/groovy/build/Copy.groovy")), "a build directory below a root is no source");
+      assertSame(workspace.contexts().get(0), workspace.contextOf(tmp.resolve("app/src/main/groovy/build/Copy.groovy")), "a package named build is source");
+      assertSame(workspace.contexts().get(0), workspace.contextOf(tmp.resolve("app/src/main/groovy/node_modules/out/bin/Tool.groovy")));
+    }
+  }
+
+  /** A source root holding the module's build directory: only that directory is excluded, whatever it is named. */
+  @Test
+  void onlyTheModulesBuildDirectoryIsNoSource() throws IOException {
+    Path app = tmp.resolve("app");
+    SourceSetRecord main = sourceSet("main", List.of(app, app.resolve("out/generated")), List.of(), List.of(), List.of());
+    ModuleRecord module = module(":app", app, "2.5.14", List.of(), main);
+    module.buildDir = app.resolve("out").toString();
+    try (Workspace workspace = new Workspace(new ProjectModel(tmp, List.of(module), false), tmp.resolve("analysis.jar"))) {
+      CompileContext context = workspace.contexts().get(0);
+      assertEquals(List.of(app), context.ownRoots, "a root in the build directory is no source");
+      assertSame(context, workspace.contextOf(app.resolve("build/b/Copy.groovy")), "build is a package here");
+      assertNull(workspace.contextOf(app.resolve("out/classes/Copy.groovy")));
     }
   }
 

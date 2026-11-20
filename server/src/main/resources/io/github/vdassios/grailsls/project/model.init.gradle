@@ -19,7 +19,7 @@ allprojects { p ->
   }
   task.doLast {
     def out = new File(p.rootProject.findProperty('gls.out') as String)
-    def record = [path: p.path, name: p.name, projectDir: p.projectDir.absolutePath, groovyVersion: null, dependsOn: [], sourceSets: [], errors: []]
+    def record = [path: p.path, name: p.name, projectDir: p.projectDir.absolutePath, buildDir: p.layout.buildDirectory.get().asFile.absolutePath, groovyVersion: null, dependsOn: [], sourceSets: [], errors: []]
     def sourceSets = p.extensions.findByName('sourceSets')
     sourceSets?.each { ss ->
       def conf = p.configurations.findByName(ss.compileClasspathConfigurationName)

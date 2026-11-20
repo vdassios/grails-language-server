@@ -1,5 +1,6 @@
 package io.github.vdassios.grailsls.project;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -8,6 +9,8 @@ public final class ModuleRecord {
   public String path;
   public String name;
   public String projectDir;
+  /** Gradle's build directory of the project: its output, never source. */
+  public String buildDir;
   /** Version of the {@code groovy} or {@code groovy-all} jar on a compile classpath; null without Groovy. */
   public String groovyVersion;
   /** Paths of sibling projects on a compile classpath, e.g. {@code :support}. */
@@ -15,6 +18,11 @@ public final class ModuleRecord {
   public List<SourceSetRecord> sourceSets = new ArrayList<>();
   /** Dependencies that failed to resolve; the rest of the classpath is still listed. */
   public List<String> errors = new ArrayList<>();
+
+  /** {@link #buildDir}, or {@code projectDir/build} for a record written by hand (tests). */
+  public Path buildDir() {
+    return buildDir != null ? Path.of(buildDir) : Path.of(projectDir, "build");
+  }
 
   public SourceSetRecord sourceSet(String name) {
     return sourceSets.stream().filter(s -> s.name.equals(name)).findFirst().orElse(null);

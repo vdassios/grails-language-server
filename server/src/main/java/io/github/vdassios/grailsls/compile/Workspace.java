@@ -56,7 +56,7 @@ public final class Workspace implements AutoCloseable {
   /** Files parsed per call when filling the symbol index. */
   public static final int SYMBOL_BATCH = 50;
 
-  private final DeclarationIndex index = new DeclarationIndex();
+  private final DeclarationIndex index;
   private final SymbolIndex symbols = new SymbolIndex();
   private final ClassSources classSources;
   /** Every module's {@code grails-app} directory that exists. */
@@ -91,6 +91,8 @@ public final class Workspace implements AutoCloseable {
   public Workspace(ProjectModel model, Path analysisJar, BiConsumer<Boolean, String> reporter) {
     this.analysisJar = analysisJar;
     classSources = new ClassSources(analysisJar.resolveSibling("sources"));
+    Set<Path> buildDirs = model.modules.stream().map(ModuleRecord::buildDir).collect(Collectors.toSet());
+    index = new DeclarationIndex(buildDirs);
     for (ModuleRecord module : model.modules) {
       Path grailsApp = Path.of(module.projectDir, "grails-app");
       if (Files.isDirectory(grailsApp)) {
@@ -103,8 +105,8 @@ public final class Workspace implements AutoCloseable {
         continue;
       }
       for (SourceSetRecord sourceSet : module.sourceSets) {
-        if (!ownRoots(module, sourceSet).isEmpty()) {
-          CompileContext context = context(model, module, sourceSet, analysisJar, antlr, reporter);
+        if (!ownRoots(sourceSet, buildDirs).isEmpty()) {
+          CompileContext context = context(model, module, sourceSet, buildDirs, analysisJar, antlr, reporter);
           contexts.add(context);
           probes.putIfAbsent(module.groovyVersion, context);
           if (sourceSet.name.equals("main")) {
@@ -208,7 +210,7 @@ public final class Workspace implements AutoCloseable {
     int depth = -1;
     for (CompileContext context : contexts) {
       for (Path root : context.ownRoots) {
-        if (file.startsWith(root) && root.getNameCount() > depth && DeclarationIndex.isSource(root, file)) {
+        if (file.startsWith(root) && root.getNameCount() > depth && index.isSource(file)) {
           best = context;
           depth = root.getNameCount();
         }
@@ -489,28 +491,27 @@ public final class Workspace implements AutoCloseable {
     antlr.values().stream().filter(loader -> loader != null).forEach(AntlrLoader::close);
   }
 
-  private static CompileContext context(ProjectModel model, ModuleRecord module, SourceSetRecord sourceSet, Path analysisJar,
-      Map<Path, AntlrLoader> antlr, BiConsumer<Boolean, String> reporter) {
+  private static CompileContext context(ProjectModel model, ModuleRecord module, SourceSetRecord sourceSet, Set<Path> buildDirs,
+      Path analysisJar, Map<Path, AntlrLoader> antlr, BiConsumer<Boolean, String> reporter) {
     SourceSetRecord main = sourceSet.name.equals("main") ? null : module.sourceSet("main");
     List<ModuleRecord> siblings = siblings(model, module);
 
-    List<Path> own = ownRoots(module, sourceSet);
+    List<Path> own = ownRoots(sourceSet, buildDirs);
     Set<Path> search = new LinkedHashSet<>(own);
     if (main != null) {
-      search.addAll(ownRoots(module, main));
+      search.addAll(ownRoots(main, buildDirs));
     }
     List<SourceSetRecord> others = others(module, sourceSet);
     for (SourceSetRecord other : others) {
-      search.addAll(ownRoots(module, other));
+      search.addAll(ownRoots(other, buildDirs));
     }
     for (ModuleRecord sibling : siblings) {
       SourceSetRecord siblingMain = sibling.sourceSet("main");
       if (siblingMain != null) {
-        search.addAll(ownRoots(sibling, siblingMain));
+        search.addAll(ownRoots(siblingMain, buildDirs));
       }
     }
 
-    List<Path> buildDirs = model.modules.stream().map(m -> Path.of(m.projectDir).resolve("build")).collect(Collectors.toList());
     Set<Path> classpath = new LinkedHashSet<>();
     classpath.add(analysisJar);
     addOutsideBuildDirs(classpath, sourceSet.compileClasspath, buildDirs);
@@ -596,7 +597,7 @@ public final class Workspace implements AutoCloseable {
     }
   }
 
-  private static void addOutsideBuildDirs(Set<Path> classpath, List<String> entries, List<Path> buildDirs) {
+  private static void addOutsideBuildDirs(Set<Path> classpath, List<String> entries, Set<Path> buildDirs) {
     for (String entry : entries) {
       Path path = Path.of(entry);
       if (buildDirs.stream().noneMatch(path::startsWith)) {
@@ -636,11 +637,9 @@ public final class Workspace implements AutoCloseable {
         .collect(Collectors.toList());
   }
 
-  /** Source roots without build output and tool directories below the module. */
-  private static List<Path> ownRoots(ModuleRecord module, SourceSetRecord sourceSet) {
-    Path projectDir = Path.of(module.projectDir);
-    return sourceSet.sourceRoots.stream().map(Path::of).filter(root -> !root.startsWith(projectDir) || DeclarationIndex.isSource(projectDir, root))
-        .collect(Collectors.toList());
+  /** Source roots outside the modules' build directories (generated sources are build output). */
+  private static List<Path> ownRoots(SourceSetRecord sourceSet, Set<Path> buildDirs) {
+    return sourceSet.sourceRoots.stream().map(Path::of).filter(root -> buildDirs.stream().noneMatch(root::startsWith)).collect(Collectors.toList());
   }
 
   /** Modules this one depends on, directly or through another sibling, in breadth-first order. */

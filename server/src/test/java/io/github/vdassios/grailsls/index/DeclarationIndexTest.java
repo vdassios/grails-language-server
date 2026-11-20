@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import org.junit.jupiter.api.Test;
@@ -23,20 +24,26 @@ class DeclarationIndexTest {
     return file;
   }
 
+  /** Only the modules' build directories are excluded: a package may be named like any build or tool directory. */
   @Test
-  void buildOutputAndToolDirectoriesAreNeverSource() throws IOException {
-    Path root = tmp.resolve("src");
-    Path real = write("src/p/A.groovy", "package p\nclass A {}\n");
-    for (String dir : List.of("build", "bin", "out", ".gradle", "node_modules")) {
-      write("src/" + dir + "/p/A.groovy", "package p\nclass A {}\nclass Copy" + dir.replace(".", "") + " {}\n");
+  void onlyTheBuildDirectoriesAreNeverSource() throws IOException {
+    Path root = tmp.resolve("app");
+    Path real = write("app/p/A.groovy", "package p\nclass A {}\n");
+    write("app/build/p/A.groovy", "package p\nclass A {}\nclass Copy {}\n");
+    for (String dir : List.of("bin", "out", "node_modules")) {
+      write("app/p/" + dir + "/" + dir + "Class.groovy", "package p." + dir + "\nclass " + dir + "Class {}\n");
     }
-    DeclarationIndex index = new DeclarationIndex();
+    DeclarationIndex index = new DeclarationIndex(Set.of(root.resolve("build")));
     index.addRoots(List.of(root));
     assertEquals(real, index.fileOf("p.A", List.of(root)));
-    assertEquals(1, index.files());
-    assertNull(index.fileOf("p.Copybuild", List.of(root)));
-    index.update(tmp.resolve("src/build/p/A.groovy"));
-    assertEquals(1, index.files(), "an update below build/ is ignored");
+    assertNull(index.fileOf("p.Copy", List.of(root)));
+    assertEquals(tmp.resolve("app/p/bin/binClass.groovy"), index.fileOf("p.bin.binClass", List.of(root)));
+    assertEquals(4, index.files());
+    index.update(tmp.resolve("app/build/p/A.groovy"));
+    assertEquals(4, index.files(), "an update below the build directory is ignored");
+    Path build = write("app/p/build/B.groovy", "package p.build\nclass B {}\n");
+    index.update(build);
+    assertEquals(build, index.fileOf("p.build.B", List.of(root)), "a package named build is source");
   }
 
   @Test
@@ -45,7 +52,7 @@ class DeclarationIndexTest {
     Path second = tmp.resolve("two");
     write("one/p/A.groovy", "package p\nclass A {}\n");
     Path b = write("two/p/B.groovy", "package p\nclass A {}\nclass B {}\n");
-    DeclarationIndex index = new DeclarationIndex();
+    DeclarationIndex index = new DeclarationIndex(Set.of());
     index.addRoots(List.of(first, second));
     assertEquals(first.resolve("p/A.groovy"), index.fileOf("p.A", List.of(first, second)));
     assertEquals(b, index.fileOf("p.A", List.of(second, first)));
@@ -56,7 +63,7 @@ class DeclarationIndexTest {
   void updatesFollowEditsAndDeletes() throws IOException {
     Path root = tmp.resolve("src");
     Path file = write("src/p/A.groovy", "package p\nclass A {}\n");
-    DeclarationIndex index = new DeclarationIndex();
+    DeclarationIndex index = new DeclarationIndex(Set.of());
     index.addRoots(List.of(root));
 
     Files.writeString(file, "package q\nclass Renamed {}\n");
@@ -81,7 +88,7 @@ class DeclarationIndexTest {
     write("one/a/BookService.groovy", "package a\nclass BookService { enum BookService2 {} }\n");
     write("two/b/Other.groovy", "package b\nclass BookService {}\nclass MyBookService {}\n");
     write("two/Top.groovy", "class BookService {}\n");
-    DeclarationIndex index = new DeclarationIndex();
+    DeclarationIndex index = new DeclarationIndex(Set.of());
     index.addRoots(List.of(first, second));
     List<String> found = index.classesNamed("BookService", List.of(first, second));
     assertEquals("a.BookService", found.get(0), "the first root first");

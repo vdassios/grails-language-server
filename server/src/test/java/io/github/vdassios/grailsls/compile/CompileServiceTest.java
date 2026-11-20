@@ -218,7 +218,7 @@ class CompileServiceTest {
   @Test
   void filesOutsideTheSourceRootsAreNotCompiled() throws Exception {
     service.open(tmp.resolve("build.gradle").toUri().toString(), "this is not groovy {\n", 1);
-    service.open(src.resolve("build/Copy.groovy").toUri().toString(), "class Copy {\n", 1);
+    service.open(tmp.resolve("build/tmp/Copy.groovy").toUri().toString(), "class Copy {\n", 1); // the build directory; a package named build is source
     assertNull(published.poll(1, TimeUnit.SECONDS));
   }
 
