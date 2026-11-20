@@ -269,6 +269,26 @@ abstract class GormTest {
     }
   }
 
+  /**
+   * GORM rejects a finder call only with too few arguments: what follows them is query settings or ignored, and a
+   * closure in a variable is the further criteria. A name GORM cannot read hides no other warning of the file.
+   */
+  @Test
+  void onlyWhatGormRejectsIsAWarning() throws Exception {
+    try (Workspace workspace = workspace()) {
+      String text = serviceWith("def criteria = { }", "D.findAllByFirst(wanted, [max: 1], criteria)", "D.findByFirstAndAndSecond(wanted, wanted)", "D.findByNoSuchThing(wanted)");
+      CompileResult result = compile(workspace, service(), text);
+      assertEquals(List.of(), messages(result, Diagnostic.ERROR));
+      String name = app().domain;
+      String first = cap(app().first);
+      String second = cap(app().second);
+      int column = 9 + name.length() + 1;
+      assertEquals(List.of(
+          "7:" + (column + 6 + first.length()) + "-" + (column + 6 + first.length() + 6) + " No property named here for this finder (" + name + ".findBy" + first + "AndAnd" + second + ")",
+          "8:" + (column + 6) + "-" + (column + 17) + " No property 'noSuchThing' for this finder (" + name + ".findByNoSuchThing)"), messages(result, Diagnostic.WARNING));
+    }
+  }
+
   @Test
   void criteriaBlocksNameMethodsAndProperties() throws Exception {
     try (Workspace workspace = workspace()) {

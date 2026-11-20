@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import org.codehaus.groovy.GroovyBugError;
 import org.codehaus.groovy.ast.ASTNode;
 import org.codehaus.groovy.ast.AnnotationNode;
 import org.codehaus.groovy.ast.ClassCodeVisitorSupport;
@@ -332,7 +333,13 @@ public final class Gorm {
         public void visitMethodCallExpression(MethodCallExpression call) {
           super.visitMethodCallExpression(call);
           Expression name = call.getMethod();
-          Finder finder = name.getLineNumber() > 0 ? finder(call, type) : null;
+          Finder finder;
+          try {
+            finder = name.getLineNumber() > 0 ? finder(call, type) : null;
+          } catch (GroovyBugError | RuntimeException | LinkageError e) {
+            // a class this call needs cannot be loaded: no warning for it, and the others still come
+            return;
+          }
           if (finder == null) {
             return;
           }
@@ -357,7 +364,11 @@ public final class Gorm {
     return problems;
   }
 
-  /** After the arguments a finder needs come, at most, a map of query settings and a closure of further criteria. */
+  /**
+   * GORM rejects a call with fewer arguments than its conditions need ({@code DynamicFinder.createFinderInvocation});
+   * after them it reads a map of query settings and ignores the rest. A closure at the end is further criteria, not
+   * an argument; one in a variable is counted, which can only hide a warning.
+   */
   private static String argumentProblem(Finder finder, MethodCallExpression call) {
     if (!(call.getArguments() instanceof ArgumentListExpression)) {
       return null;
@@ -370,7 +381,7 @@ public final class Gorm {
       arguments.remove(arguments.size() - 1);
     }
     int needed = finder.name.arguments();
-    if (arguments.size() == needed || arguments.size() == needed + 1) {
+    if (arguments.size() >= needed) {
       return null;
     }
     return "This finder takes " + needed + (needed == 1 ? " argument" : " arguments") + ", not " + arguments.size();
