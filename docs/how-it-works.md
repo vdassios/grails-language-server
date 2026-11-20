@@ -8,7 +8,7 @@
 
 ## Trust
 
-Resolving the project runs its Gradle build scripts, and compiling a Grails project runs its AST transformations. Both execute project code inside the server. The server does neither until the client sends `initializationOptions.trusted = true`. When compiling, `@Grab` is disabled (`groovy.grape.enable=false`) and `@ASTTest` annotations are removed before they run.
+Resolving the project runs its Gradle build scripts, and compiling a Grails project runs its AST transformations. Both execute project code inside the server. The server does neither until the client sends `initializationOptions.trusted = true`. When compiling, `@Grab` is disabled (`groovy.grape.enable=false`) and `@ASTTest` annotations, also under an import alias, are removed before they run. The server runs a Gradle wrapper only from the workspace folder itself, never from a parent directory.
 
 ## Protocol
 

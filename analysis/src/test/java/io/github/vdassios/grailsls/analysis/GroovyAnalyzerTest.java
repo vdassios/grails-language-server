@@ -438,6 +438,28 @@ class GroovyAnalyzerTest {
   }
 
   @Test
+  void aliasedAstTestClosuresDoNotRun() throws Exception {
+    Path marker = tmp.resolve("marker");
+    String source = "import groovy.transform.ASTTest as T\n@T(value = { new File('" + marker + "').text = 'ran' })\nclass A {}\n";
+    compile(tmp.resolve("A.groovy").toString(), source);
+    assertFalse(Files.exists(marker), "an aliased @ASTTest ran in the server");
+
+    try (GroovyClassLoader plain = new GroovyClassLoader()) {
+      plain.parseClass(source);
+    }
+    assertTrue(Files.exists(marker), "control: a plain compile runs it");
+  }
+
+  @Test
+  void astTestClosuresInAnAnnotationCollectorDoNotRun() throws Exception {
+    Path marker = tmp.resolve("marker");
+    String source = "import groovy.transform.*\n@ASTTest(value = { new File('" + marker + "').text = 'ran' })\n@AnnotationCollector\n@interface Probe {}\n"
+        + "@Probe\nclass A {}\n";
+    compile(tmp.resolve("A.groovy").toString(), source);
+    assertFalse(Files.exists(marker), "@ASTTest collected by an annotation collector ran in the server");
+  }
+
+  @Test
   void grapeIsDisabled() {
     CompileResult result = compile(tmp.resolve("A.groovy").toString(), "@Grab('org.example:nothing:1.0')\nimport groovy.lang.Grab\nclass A {}\n");
     assertEquals(List.of(), errors(result));
