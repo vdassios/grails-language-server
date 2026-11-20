@@ -97,6 +97,36 @@ class GradleBridgeTest {
     assertEquals(broken.size() + 2, FakeWrapper.runs(root));
   }
 
+  /** Two servers on one build: a second run must not delete the records of a first one still reading them. */
+  @Test
+  void runsOnOneBuildDoNotShareTheirOutput() throws Exception {
+    Path root = project("if [ ! -f \"$(dirname \"$0\")/first\" ]; then\n"
+        + FakeWrapper.WRITES_MODEL + "touch \"$(dirname \"$0\")/first\"\nsleep 2\nelse\nsleep 4\n" + FakeWrapper.WRITES_MODEL + "fi\n");
+    java.util.concurrent.CompletableFuture<ProjectModel> first = java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+      try {
+        return bridge(Duration.ofSeconds(30)).resolve(root, true);
+      } catch (Exception e) {
+        throw new java.util.concurrent.CompletionException(e);
+      }
+    });
+    for (int i = 0; i < 100 && !Files.exists(root.resolve("first")); i++) {
+      Thread.sleep(50);
+    }
+    assertTrue(Files.exists(root.resolve("first")));
+    ProjectModel second = bridge(Duration.ofSeconds(30)).resolve(root, true);
+    assertEquals(":", first.get(30, java.util.concurrent.TimeUnit.SECONDS).modules.get(0).path);
+    assertEquals(":", second.modules.get(0).path);
+  }
+
+  @Test
+  void aRunLeavesNoOutputDirectoryBehind() throws Exception {
+    Path root = project(FakeWrapper.WRITES_MODEL);
+    bridge(Duration.ofSeconds(30)).resolve(root, false);
+    try (java.util.stream.Stream<Path> files = Files.list(cacheFile(root).getParent())) {
+      assertEquals(List.of("gradle.log", "model.init.gradle", "model.json"), files.map(f -> f.getFileName().toString()).sorted().collect(java.util.stream.Collectors.toList()));
+    }
+  }
+
   @Test
   void runsGradleOnTheConfiguredJdk() throws Exception {
     Path root = project(FakeWrapper.WRITES_MODEL);

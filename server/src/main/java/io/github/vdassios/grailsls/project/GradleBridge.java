@@ -181,6 +181,14 @@ public final class GradleBridge {
     Path buildRoot = findBuildRoot(realPath(workspaceRoot));
     Path dir = cacheDir.resolve(sha256(buildRoot.toString().getBytes(StandardCharsets.UTF_8)).substring(0, 16));
     Path out = run(buildRoot, dir, "sources", SOURCES_TASK);
+    try {
+      return sourcesReport(out);
+    } finally {
+      deleteQuietly(out);
+    }
+  }
+
+  private SourcesReport sourcesReport(Path out) throws BridgeException {
     Set<String> available = new TreeSet<>();
     Set<String> unavailable = new TreeSet<>();
     Set<String> failed = new TreeSet<>();
@@ -206,25 +214,43 @@ public final class GradleBridge {
 
   private List<ModuleRecord> runGradle(Path buildRoot, Path dir) throws BridgeException, InterruptedException {
     Path out = run(buildRoot, dir, "out", TASK);
-    List<ModuleRecord> modules = readRecords(out);
+    List<ModuleRecord> modules;
+    try {
+      modules = readRecords(out);
+    } finally {
+      deleteQuietly(out);
+    }
     if (modules.isEmpty()) {
       throw new BridgeException("Gradle wrote no project model (log: " + dir.resolve("gradle.log") + ")");
     }
     return modules;
   }
 
-  /** Runs one task of the init script in every project; returns the emptied directory it wrote its records to. */
+  /**
+   * Runs one task of the init script in every project; returns the new directory it wrote its records to, which the
+   * caller deletes. Each run has its own, so two servers on one build never read or delete each other's records.
+   */
   private Path run(Path buildRoot, Path dir, String outName, String task) throws BridgeException, InterruptedException {
-    Path out = dir.resolve(outName);
     Path init = dir.resolve(INIT_SCRIPT);
     Path log = dir.resolve(outName.equals("out") ? "gradle.log" : outName + ".log");
+    Path out;
     try {
-      deleteTree(out);
-      Files.createDirectories(out);
-      Files.write(init, initScript());
+      Files.createDirectories(dir);
+      out = Files.createTempDirectory(dir, outName + "-");
+      writeAtomically(init, initScript());
     } catch (IOException e) {
       throw new BridgeException("cannot write to the cache directory " + dir + ": " + e.getMessage(), e);
     }
+    try {
+      runIn(buildRoot, init, out, log, task);
+    } catch (BridgeException | InterruptedException | RuntimeException e) {
+      deleteQuietly(out);
+      throw e;
+    }
+    return out;
+  }
+
+  private void runIn(Path buildRoot, Path init, Path out, Path log, String task) throws BridgeException, InterruptedException {
     List<String> command = new ArrayList<>();
     if (WINDOWS) {
       command.addAll(List.of("cmd", "/c"));
@@ -255,7 +281,6 @@ public final class GradleBridge {
     if (process.exitValue() != 0) {
       throw new BridgeException(failure(buildRoot, log));
     }
-    return out;
   }
 
   /** Output of a Gradle or a build that does not run on the JDK it was given (measured: too new, then too old). */
@@ -408,23 +433,34 @@ public final class GradleBridge {
 
   private static void writeAtomically(Path file, String text) throws BridgeException {
     try {
-      Files.createDirectories(file.getParent());
-      Path tmp = Files.createTempFile(file.getParent(), "model", ".tmp");
-      Files.writeString(tmp, text);
-      Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+      writeAtomically(file, text.getBytes(StandardCharsets.UTF_8));
     } catch (IOException e) {
       throw new BridgeException("cannot write the model cache " + file + ": " + e.getMessage(), e);
     }
   }
 
-  private static void deleteTree(Path dir) throws IOException {
+  /** Written next to the file and moved over it, so that a reader (another server's Gradle) sees the old or the new bytes. */
+  private static void writeAtomically(Path file, byte[] bytes) throws IOException {
+    Files.createDirectories(file.getParent());
+    Path tmp = Files.createTempFile(file.getParent(), file.getFileName().toString(), ".tmp");
+    try {
+      Files.write(tmp, bytes);
+      Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+    } finally {
+      Files.deleteIfExists(tmp);
+    }
+  }
+
+  private static void deleteQuietly(Path dir) {
     if (!Files.exists(dir)) {
       return;
     }
     try (Stream<Path> paths = Files.walk(dir)) {
       for (Path p : (Iterable<Path>) paths.sorted(Comparator.reverseOrder())::iterator) {
-        Files.delete(p);
+        Files.deleteIfExists(p);
       }
+    } catch (IOException | UncheckedIOException e) {
+      // left behind
     }
   }
 
