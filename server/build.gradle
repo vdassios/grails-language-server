@@ -36,18 +36,24 @@ shadowJar {
 
 tasks.named("build") { dependsOn tasks.named("shadowJar") }
 
-// A Groovy jar for module loaders in tests that need no Gradle build (the server itself has no Groovy).
-configurations { testGroovy }
-dependencies { testGroovy "org.codehaus.groovy:groovy:2.5.23" }
+// A Groovy jar for module loaders in tests that need no Gradle build (the server itself has no Groovy), and one whose
+// ASM reads class files up to Java 15 only, for the check that the project's Groovy can read the JDK's.
+configurations { testGroovy; testGroovyOldAsm }
+dependencies {
+  testGroovy "org.codehaus.groovy:groovy:2.5.23"
+  testGroovyOldAsm "org.codehaus.groovy:groovy:2.5.14"
+}
 // The server jar, for the test that reads serverInfo.version from its manifest.
 def serverJar = tasks.named("shadowJar")
 tasks.withType(Test).configureEach {
   inputs.files(configurations.testGroovy).withPropertyName("testGroovy")
+  inputs.files(configurations.testGroovyOldAsm).withPropertyName("testGroovyOldAsm")
   inputs.files(serverJar).withPropertyName("serverJar")
   def groovyJars = configurations.testGroovy
+  def oldAsmJars = configurations.testGroovyOldAsm
   def jarFiles = serverJar.map { it.outputs.files }
   def serverVersion = project.version.toString()
-  jvmArgumentProviders.add({ ["-Dgls.testGroovy=${groovyJars.singleFile}",
+  jvmArgumentProviders.add({ ["-Dgls.testGroovy=${groovyJars.singleFile}", "-Dgls.testGroovyOldAsm=${oldAsmJars.singleFile}",
       "-Dgls.serverJar=${jarFiles.get().singleFile}", "-Dgls.version=${serverVersion}"] } as CommandLineArgumentProvider)
 }
 
@@ -58,8 +64,8 @@ test {
   inputs.property("jdks", [System.getenv("GLS_TEST_JDK11"), System.getenv("GLS_TEST_JDK17")].toString())
   useJUnitPlatform { excludeTags "perf", "jdk17" }
 }
-// Tests tagged jdk17 compile the Grails 7 fixture in-process: its classes need Java 17, so they run on GLS_TEST_JDK17
-// (skipped without it, like the other fixture tests).
+// Tests tagged jdk17 compile the Grails 7 fixture in-process (its classes need Java 17), or need a JDK newer than Groovy
+// 2.5.14 reads: they run on GLS_TEST_JDK17 (the fixture tests are skipped without it).
 def testJdk17 = tasks.register("testJdk17", Test) {
   description = "Runs the tests tagged jdk17 on the JDK in GLS_TEST_JDK17."
   group = "verification"

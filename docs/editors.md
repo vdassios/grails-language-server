@@ -19,7 +19,7 @@ java -jar grails-language-server-all.jar
 | 4.0.33 | 7 | 27 (version 71) |
 | 5.1.3 | 8 | 27 (version 71) |
 
-The server itself needs Java 11 or later, Grails 7 and 8 need 17. It supports Grails 4 or later (Groovy 2.5 or later): for a module on an older Groovy (Grails 3), it reports `failed` and compiles nothing.
+The server itself needs Java 11 or later, Grails 7 and 8 need 17. It supports Grails 4 or later (Groovy 2.5 or later): for a module on an older Groovy (Grails 3), it reports `failed` and compiles nothing. Before it reports `ready`, the project's Groovy reads one of the JDK's class files, as its compiler does; when that Groovy cannot read them (a JDK newer than the table allows), the server reports `failed`, naming both versions, instead of an error at line 0 of every file.
 
 The server does nothing until the client sends `initializationOptions.trusted = true` (see [Trust](how-it-works.md#trust)). The workspace root must be the Gradle root, the directory with `gradlew`; the server reads the project model from there. It never runs a wrapper from a parent directory: opening a sub-module fails with a message naming the folder to open.
 

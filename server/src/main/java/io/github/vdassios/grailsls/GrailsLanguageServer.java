@@ -157,6 +157,11 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
     project = new ProjectService(bridge, workspaceRoot(params), trusted, status -> client.status(status), model -> {
       marks.mark(StartupMarks.MODEL_RESOLVED);
       Workspace workspace = new Workspace(model, AnalysisJar.extract(cacheDir));
+      String jdkError = workspace.jdkClassFileError();
+      if (jdkError != null) {
+        workspace.close();
+        throw new ProjectService.Unsupported(jdkError);
+      }
       workspace.index();
       marks.mark(StartupMarks.DECLARATIONS_INDEXED);
       compiles.setWorkspace(workspace);

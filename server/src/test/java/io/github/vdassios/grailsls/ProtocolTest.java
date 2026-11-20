@@ -39,6 +39,7 @@ import org.eclipse.lsp4j.jsonrpc.Launcher;
 import org.eclipse.lsp4j.jsonrpc.services.JsonRequest;
 import org.eclipse.lsp4j.services.LanguageServer;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.DisabledOnOs;
 import org.junit.jupiter.api.condition.OS;
@@ -218,6 +219,40 @@ class ProtocolTest {
     assertNull(diagnostics.poll(1, TimeUnit.SECONDS), "nothing compiles");
   }
 
+  /**
+   * Groovy 2.5.14's ASM reads class files up to Java 15: on JDK 17 (class file version 61) it cannot read the JDK's own
+   * classes, and every compile would fail at line 0. Runs in {@code testJdk17}.
+   */
+  @Test
+  @Tag("jdk17")
+  void refusesAGroovyThatCannotReadTheJdksClassFiles() throws Exception {
+    Path root = groovyProject(System.getProperty("gls.testGroovyOldAsm"), "2.5.14");
+    start(root, trustedOptions());
+
+    assertEquals(StatusParams.RESOLVING, next().state);
+    assertEquals(StatusParams.INDEXING, next().state);
+    StatusParams failed = next();
+    assertEquals(new StatusParams(StatusParams.FAILED, "Groovy 2.5.14 cannot read the class files of JDK " + System.getProperty("java.version")
+        + " (Unsupported class file major version " + (Runtime.version().feature() + 44) + "): run the server on a JDK this Groovy supports, see docs/editors.md"), failed);
+    server.getTextDocumentService().didOpen(new DidOpenTextDocumentParams(new TextDocumentItem(root.resolve("src/A.groovy").toUri().toString(), "groovy", 1, "class A {\n")));
+    assertNull(diagnostics.poll(1, TimeUnit.SECONDS), "nothing compiles");
+  }
+
+  /** The same Groovy on the JDK the tests run on (11 in CI, where Groovy 2.5.14 still reads the JDK's class files). */
+  @Test
+  void acceptsAGroovyThatReadsTheJdksClassFiles() throws Exception {
+    Path root = groovyProject(System.getProperty("gls.testGroovyOldAsm"), "2.5.14");
+    start(root, trustedOptions());
+
+    assertEquals(StatusParams.RESOLVING, next().state);
+    assertEquals(StatusParams.INDEXING, next().state);
+    StatusParams last = next();
+    if (Runtime.version().feature() <= 15) {
+      assertEquals(new StatusParams(StatusParams.READY, "1 module"), last);
+    } else {
+      assertEquals(StatusParams.FAILED, last.state, last.toString());
+    }
+  }
 
   /** A project of one module whose main source set is {@code src} on the test's Groovy. */
   private Path groovyProject() throws Exception {

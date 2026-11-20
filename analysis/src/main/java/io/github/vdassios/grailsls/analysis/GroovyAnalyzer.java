@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.lang.reflect.Field;
 import java.net.URI;
+import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
@@ -27,6 +28,7 @@ import org.codehaus.groovy.ast.AnnotationNode;
 import org.codehaus.groovy.ast.ClassNode;
 import org.codehaus.groovy.ast.MethodNode;
 import org.codehaus.groovy.ast.ModuleNode;
+import org.codehaus.groovy.ast.decompiled.AsmDecompiler;
 import org.codehaus.groovy.ast.expr.ConstantExpression;
 import org.codehaus.groovy.ast.expr.Expression;
 import org.codehaus.groovy.ast.expr.MapEntryExpression;
@@ -118,6 +120,21 @@ public final class GroovyAnalyzer implements Analyzer {
   @Override
   public String groovyVersion() {
     return GroovySystem.getVersion();
+  }
+
+  @Override
+  public String jdkClassFileError() {
+    URL object = parent.getResource("java/lang/Object.class");
+    if (object == null) {
+      return "the JDK's java/lang/Object.class is not readable";
+    }
+    try {
+      AsmDecompiler.parseClass(object);
+      return null;
+    } catch (IOException | RuntimeException e) {
+      // ASM: IllegalArgumentException("Unsupported class file major version 61")
+      return e.getMessage() != null ? e.getMessage() : e.toString();
+    }
   }
 
   @Override

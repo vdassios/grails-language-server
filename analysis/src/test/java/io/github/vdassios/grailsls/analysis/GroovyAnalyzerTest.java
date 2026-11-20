@@ -113,6 +113,12 @@ class GroovyAnalyzerTest {
     return result.diagnostics.stream().filter(d -> d.severity == Diagnostic.ERROR).map(Diagnostic::toString).collect(Collectors.toList());
   }
 
+  /** Each Groovy tested reads the class files of the JDKs the tests run on (11 and 17). */
+  @Test
+  void readsTheRunningJdksClassFiles() {
+    assertNull(analyzer.jdkClassFileError());
+  }
+
   @Test
   void validDocumentHasNoDiagnostics() {
     CompileResult result = compile(tmp.resolve("A.groovy").toString(), "class A { String name\n int size() { name.size() } }\n");

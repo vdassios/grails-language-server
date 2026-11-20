@@ -35,7 +35,7 @@ public final class ProjectService {
 
   /**
    * @param onModel takes each resolved model (indexes it, sets up compiling) and returns detail for the ready message,
-   *                e.g. ", 2 Java files not built", or an empty string
+   *                e.g. ", 2 Java files not built", or an empty string; throws {@link Unsupported} to report it failed
    */
   public ProjectService(GradleBridge bridge, Path workspaceRoot, boolean trusted, Consumer<StatusParams> status, Function<ProjectModel, String> onModel) {
     this.bridge = bridge;
@@ -143,6 +143,8 @@ public final class ProjectService {
       Thread.currentThread().interrupt();
     } catch (BridgeException e) {
       status.accept(new StatusParams(StatusParams.FAILED, e.getMessage()));
+    } catch (Unsupported e) {
+      status.accept(new StatusParams(StatusParams.FAILED, e.getMessage()));
     } catch (RuntimeException e) {
       status.accept(new StatusParams(StatusParams.FAILED, e.toString()));
     }
@@ -164,6 +166,15 @@ public final class ProjectService {
       }
     }
     return null;
+  }
+
+  /** Thrown by {@code onModel} when the project cannot be served; its message is the reason reported as {@code failed}. */
+  public static final class Unsupported extends RuntimeException {
+    private static final long serialVersionUID = 1L;
+
+    public Unsupported(String message) {
+      super(message);
+    }
   }
 
   static String summary(ProjectModel model) {

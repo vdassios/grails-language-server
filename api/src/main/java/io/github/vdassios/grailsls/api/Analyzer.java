@@ -20,6 +20,13 @@ public interface Analyzer extends AutoCloseable {
   String groovyVersion();
 
   /**
+   * Why the project's Groovy cannot compile against the JDK the server runs on, or null when it can. Reads that JDK's
+   * {@code java/lang/Object.class} with the class-file reader the compiler uses for classes it does not load (ASM): a
+   * JDK newer than that ASM fails here, where a compile would fail at line 0.
+   */
+  String jdkClassFileError();
+
+  /**
    * Compiles one document to canonicalization (on to instruction selection when it has {@code @CompileStatic} or
    * {@code @GrailsCompileStatic} code, for the types the static type checker infers), with the classes it uses pulled
    * in from source through {@code lookup}.

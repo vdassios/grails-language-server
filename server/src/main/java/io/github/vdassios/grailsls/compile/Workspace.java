@@ -21,11 +21,13 @@ import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
+import io.github.vdassios.grailsls.api.Analyzer;
 import io.github.vdassios.grailsls.api.SourceLookup;
 import io.github.vdassios.grailsls.api.Symbol;
 import io.github.vdassios.grailsls.index.DeclarationIndex;
@@ -67,6 +69,8 @@ public final class Workspace implements AutoCloseable {
   private final Map<CompileContext, List<Path>> pageJars = new HashMap<>();
   /** Packages and classes of the jars, for import completion. */
   private final ClasspathNames classpathNames = new ClasspathNames();
+  /** One context per Groovy version of the modules, for {@link #jdkClassFileError()}. */
+  private final Map<String, CompileContext> probes = new LinkedHashMap<>();
   /** The analysis layer's jar: first on every context's class path, but not the project's. */
   private final Path analysisJar;
 
@@ -89,6 +93,7 @@ public final class Workspace implements AutoCloseable {
         if (!ownRoots(module, sourceSet).isEmpty()) {
           CompileContext context = context(model, module, sourceSet, analysisJar, antlr);
           contexts.add(context);
+          probes.putIfAbsent(module.groovyVersion, context);
           if (sourceSet.name.equals("main")) {
             mains.put(module.path, context);
           }
@@ -352,6 +357,33 @@ public final class Workspace implements AutoCloseable {
       }
     }
     return dirs;
+  }
+
+  /**
+   * Why the project's Groovy cannot compile on the JDK the server runs on, or null when it can: each Groovy version of
+   * the modules reads one of the JDK's class files in a context of its own (see {@link Analyzer#jdkClassFileError}).
+   * The contexts started here are the ones the first compiles and the symbol index use.
+   */
+  public String jdkClassFileError() {
+    for (CompileContext context : probes.values()) {
+      String found;
+      try {
+        found = context.query(analyzer -> {
+          String error = analyzer.jdkClassFileError();
+          return error == null ? null : "Groovy " + analyzer.groovyVersion() + " cannot read the class files of JDK " + System.getProperty("java.version")
+              + " (" + error + "): run the server on a JDK this Groovy supports, see docs/editors.md";
+        }).get();
+      } catch (ExecutionException e) {
+        throw new IllegalStateException("cannot check the JDK in " + context.name + ": " + e.getCause(), e.getCause());
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        return null;
+      }
+      if (found != null) {
+        return found;
+      }
+    }
+    return null;
   }
 
   /** Status detail: empty, or what limits the results (Java sources not compiled yet, and the tasks that build them). */
