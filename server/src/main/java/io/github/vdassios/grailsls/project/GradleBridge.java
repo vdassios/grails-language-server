@@ -31,7 +31,8 @@ import com.google.gson.JsonParseException;
 /**
  * Reads the project model by running the project's Gradle wrapper with {@code model.init.gradle}. Runs project code
  * (its build scripts), so callers must only use it for trusted workspaces. The result is cached on disk, keyed by a
- * hash of the build files, the JDK and the init script; failures are not cached.
+ * hash of the build files, the JDK and the init script, and used only while every jar it names exists; failures are
+ * not cached.
  */
 public final class GradleBridge {
   static final String TASK = "grailsLanguageServerModel";
@@ -84,7 +85,7 @@ public final class GradleBridge {
     String key = cacheKey(buildRoot);
     if (!force) {
       CachedModel cached = readCache(cacheFile);
-      if (cached != null && key.equals(cached.key)) {
+      if (cached != null && key.equals(cached.key) && jarsExist(cached.modules)) {
         return new ProjectModel(buildRoot, cached.modules, true);
       }
     }
@@ -129,7 +130,11 @@ public final class GradleBridge {
     return hex(digest.digest());
   }
 
-  /** Gradle scripts, properties, version catalogs, the wrapper properties and everything under {@code buildSrc/src}. */
+  /**
+   * Gradle scripts, properties, version catalogs, dependency lock files ({@code gradle.lockfile}, the
+   * {@code gradle/dependency-locks/} of Gradle 5 and 6: all named {@code *.lockfile}), the wrapper properties and
+   * everything under {@code buildSrc/src}.
+   */
   static List<Path> buildFiles(Path buildRoot) {
     List<Path> files = new ArrayList<>();
     Path buildSrc = buildRoot.resolve("buildSrc").resolve("src");
@@ -146,7 +151,7 @@ public final class GradleBridge {
         public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
           String name = file.getFileName().toString();
           if (name.endsWith(".gradle") || name.endsWith(".gradle.kts") || name.equals("gradle.properties") || name.equals("gradle-wrapper.properties")
-              || name.endsWith(".versions.toml") || file.startsWith(buildSrc)) {
+              || name.endsWith(".versions.toml") || name.endsWith(".lockfile") || file.startsWith(buildSrc)) {
             files.add(file);
           }
           return FileVisitResult.CONTINUE;
@@ -346,15 +351,59 @@ public final class GradleBridge {
     process.destroyForcibly();
   }
 
+  /** The cached model, or null when there is none or it does not read as one: then Gradle runs again. */
   private CachedModel readCache(Path file) {
     if (!Files.isRegularFile(file)) {
       return null;
     }
+    CachedModel cached;
     try (Reader reader = Files.newBufferedReader(file)) {
-      return gson.fromJson(reader, CachedModel.class);
+      cached = gson.fromJson(reader, CachedModel.class);
     } catch (IOException | JsonParseException e) {
-      return null; // unreadable cache: run Gradle again
+      return null;
     }
+    return cached != null && cached.key != null && complete(cached.modules) ? cached : null;
+  }
+
+  /** Whether every value the server reads from the records is there (a JSON {@code null} replaces a field's default). */
+  private static boolean complete(List<ModuleRecord> modules) {
+    if (modules == null || modules.isEmpty()) {
+      return false;
+    }
+    for (ModuleRecord module : modules) {
+      if (module == null || module.path == null || module.projectDir == null || module.dependsOn == null || module.errors == null || module.sourceSets == null) {
+        return false;
+      }
+      for (ModuleRecord.SourceSetRecord sourceSet : module.sourceSets) {
+        if (sourceSet == null || sourceSet.name == null || sourceSet.sourceRoots == null || sourceSet.resourceRoots == null || sourceSet.compileClasspath == null
+            || sourceSet.classesDirs == null || sourceSet.outputsOf == null || sourceSet.runtimeOnly == null) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Whether every jar the model names, outside the modules' build directories, is on disk: a cleaned or pruned Gradle
+   * cache leaves the model pointing at jars that are gone, and resolving again downloads them.
+   */
+  private static boolean jarsExist(List<ModuleRecord> modules) {
+    List<Path> buildDirs = new ArrayList<>();
+    modules.forEach(module -> buildDirs.add(module.buildDir()));
+    for (ModuleRecord module : modules) {
+      for (ModuleRecord.SourceSetRecord sourceSet : module.sourceSets) {
+        for (List<String> entries : List.of(sourceSet.compileClasspath, sourceSet.runtimeOnly)) {
+          for (String entry : entries) {
+            Path path = Path.of(entry);
+            if (entry.endsWith(".jar") && buildDirs.stream().noneMatch(path::startsWith) && !Files.isRegularFile(path)) {
+              return false;
+            }
+          }
+        }
+      }
+    }
+    return true;
   }
 
   private static void writeAtomically(Path file, String text) throws BridgeException {

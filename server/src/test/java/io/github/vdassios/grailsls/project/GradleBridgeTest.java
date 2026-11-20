@@ -51,6 +51,52 @@ class GradleBridgeTest {
     assertEquals(3, FakeWrapper.runs(root));
   }
 
+  /** The cache file of the build in {@code root}. */
+  private Path cacheFile(Path root) throws Exception {
+    try (java.util.stream.Stream<Path> files = Files.walk(tmp.resolve("cache"))) {
+      return files.filter(f -> f.getFileName().toString().equals("model.json")).findFirst().orElseThrow();
+    }
+  }
+
+  /** Body that writes a root record whose main compile classpath holds {@code jar} and a jar in its build directory. */
+  private static String writesModelWith(Path jar) {
+    return "printf '%s' '{\"path\":\":\",\"name\":\"fake\",\"projectDir\":\"'\"$PWD\"'\",\"buildDir\":\"'\"$PWD/build\"'\","
+        + "\"sourceSets\":[{\"name\":\"main\",\"compileClasspath\":[\"" + jar + "\",\"'\"$PWD/build/libs/own.jar\"'\"]}]}' > \"$out/_root.json\"\n";
+  }
+
+  @Test
+  void aCacheHitNeedsEveryClasspathJar() throws Exception {
+    Path jar = Files.writeString(Files.createDirectories(tmp.resolve("gradle-cache")).resolve("lib-1.0.jar"), "");
+    Path root = project(writesModelWith(jar));
+    GradleBridge bridge = bridge(Duration.ofSeconds(30));
+    assertFalse(bridge.resolve(root, false).fromCache);
+    assertTrue(bridge.resolve(root, false).fromCache, "a jar in the build directory is not built yet");
+    Files.delete(jar); // a pruned Gradle cache
+    assertFalse(bridge.resolve(root, false).fromCache);
+    assertEquals(2, FakeWrapper.runs(root));
+  }
+
+  @Test
+  void aCacheFileThatDoesNotReadIsAMiss() throws Exception {
+    Path root = project(FakeWrapper.WRITES_MODEL);
+    GradleBridge bridge = bridge(Duration.ofSeconds(30));
+    bridge.resolve(root, false);
+    Path cache = cacheFile(root);
+    String key = bridge.cacheKey(root.toRealPath());
+    List<String> broken = List.of("{\"key\":", "not json", "[]", "{\"key\":\"" + key + "\"}", "{\"key\":\"" + key + "\",\"modules\":[null]}",
+        "{\"key\":\"" + key + "\",\"modules\":[{\"path\":\":\"}]}", "{\"key\":\"" + key + "\",\"modules\":[{\"path\":\":\",\"projectDir\":\"/p\",\"sourceSets\":null}]}");
+    for (String text : broken) {
+      Files.writeString(cache, text);
+      ProjectModel model = bridge.resolve(root, false);
+      assertFalse(model.fromCache, text);
+      assertEquals(":", model.modules.get(0).path);
+    }
+    Files.writeString(cache, "{}");
+    Files.setPosixFilePermissions(cache, PosixFilePermissions.fromString("-w-------"));
+    assertFalse(bridge.resolve(root, false).fromCache, "unreadable");
+    assertEquals(broken.size() + 2, FakeWrapper.runs(root));
+  }
+
   @Test
   void runsGradleOnTheConfiguredJdk() throws Exception {
     Path root = project(FakeWrapper.WRITES_MODEL);
@@ -140,13 +186,16 @@ class GradleBridgeTest {
     Path root = project(FakeWrapper.WRITES_MODEL);
     for (String file : List.of("settings.gradle", "gradle.properties", "app/build.gradle.kts", "gradle/libs.versions.toml",
         "gradle/wrapper/gradle-wrapper.properties", "buildSrc/src/main/groovy/Conventions.groovy", "app/build/tmp/x.gradle",
-        "node_modules/a/build.gradle", ".gradle/b.gradle", "app/src/main/groovy/A.groovy", "out/build.gradle.kts", "out/build/tmp/y.gradle", "bin/build.gradle")) {
+        "node_modules/a/build.gradle", ".gradle/b.gradle", "app/src/main/groovy/A.groovy", "out/build.gradle.kts", "out/build/tmp/y.gradle", "bin/build.gradle",
+        "gradle.lockfile", "settings-gradle.lockfile", "app/gradle.lockfile", "app/buildscript-gradle.lockfile", "gradle/dependency-locks/compileClasspath.lockfile")) {
       Path path = root.resolve(file);
       Files.createDirectories(path.getParent());
       Files.writeString(path, "");
     }
     List<String> found = GradleBridge.buildFiles(root).stream().map(p -> root.relativize(p).toString()).sorted().collect(java.util.stream.Collectors.toList());
-    assertEquals(List.of("app/build.gradle.kts", "bin/build.gradle", "build.gradle", "buildSrc/src/main/groovy/Conventions.groovy", "gradle.properties",
-        "gradle/libs.versions.toml", "gradle/wrapper/gradle-wrapper.properties", "out/build.gradle.kts", "settings.gradle"), found, "a module named out or bin is hashed");
+    assertEquals(List.of("app/build.gradle.kts", "app/buildscript-gradle.lockfile", "app/gradle.lockfile", "bin/build.gradle", "build.gradle",
+        "buildSrc/src/main/groovy/Conventions.groovy", "gradle.lockfile", "gradle.properties", "gradle/dependency-locks/compileClasspath.lockfile",
+        "gradle/libs.versions.toml", "gradle/wrapper/gradle-wrapper.properties", "out/build.gradle.kts", "settings-gradle.lockfile", "settings.gradle"), found,
+        "a module named out or bin is hashed, and dependency lockfiles");
   }
 }
