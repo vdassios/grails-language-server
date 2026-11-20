@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.time.Duration;
 import java.util.List;
 
@@ -90,17 +91,28 @@ class GradleBridgeTest {
   }
 
   @Test
-  void findsTheWrapperInAParentDirectory() throws Exception {
+  void refusesAWrapperInAParentDirectory() throws Exception {
+    // Trusting proj/app must not run proj/gradlew: the wrapper is taken only from the workspace folder.
     Path root = project(FakeWrapper.WRITES_MODEL);
-    Path module = Files.createDirectories(root.resolve("app/src"));
-    assertEquals(root.toRealPath(), bridge(Duration.ofSeconds(30)).resolve(module, false).buildRoot);
+    Path module = Files.createDirectories(root.resolve("app"));
+    BridgeException e = assertThrows(BridgeException.class, () -> bridge(Duration.ofSeconds(30)).resolve(module, false));
+    assertTrue(e.getMessage().contains("open " + root.toRealPath() + " as the workspace"), e.getMessage());
+    assertEquals(0, FakeWrapper.runs(root));
+  }
+
+  @Test
+  void namesAWrapperThatIsNotExecutable() throws Exception {
+    Path root = project(FakeWrapper.WRITES_MODEL);
+    Files.setPosixFilePermissions(root.resolve("gradlew"), PosixFilePermissions.fromString("rw-r--r--"));
+    BridgeException e = assertThrows(BridgeException.class, () -> bridge(Duration.ofSeconds(30)).resolve(root, false));
+    assertEquals("cannot start gradlew: " + root.toRealPath().resolve("gradlew") + " is not executable (chmod +x gradlew)", e.getMessage());
   }
 
   @Test
   void failsWithoutAWrapper() throws Exception {
     Path root = Files.createDirectories(tmp.resolve("bare"));
     BridgeException e = assertThrows(BridgeException.class, () -> GradleBridge.findBuildRoot(root));
-    assertTrue(e.getMessage().startsWith("no Gradle wrapper (gradlew) in "), e.getMessage());
+    assertEquals("no Gradle wrapper (gradlew) in " + root, e.getMessage());
   }
 
   @Test

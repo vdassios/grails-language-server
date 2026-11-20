@@ -21,7 +21,7 @@ java -jar grails-language-server-all.jar
 
 The server itself needs Java 11 or later, Grails 7 and 8 need 17.
 
-The server does nothing until the client sends `initializationOptions.trusted = true` (see [Trust](how-it-works.md#trust)). The workspace root must be the Gradle root, the directory with `settings.gradle` (or `gradlew`); the server reads the project model from there.
+The server does nothing until the client sends `initializationOptions.trusted = true` (see [Trust](how-it-works.md#trust)). The workspace root must be the Gradle root, the directory with `gradlew`; the server reads the project model from there. It never runs a wrapper from a parent directory: opening a sub-module fails with a message naming the folder to open.
 
 ## Editor setup
 

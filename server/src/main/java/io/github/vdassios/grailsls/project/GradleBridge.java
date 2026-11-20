@@ -93,13 +93,21 @@ public final class GradleBridge {
     return new ProjectModel(buildRoot, modules, false);
   }
 
-  static Path findBuildRoot(Path start) throws BridgeException {
-    for (Path dir = start; dir != null; dir = dir.getParent()) {
+  /**
+   * The workspace folder itself, if it holds the wrapper. A wrapper is never taken from a parent directory: trusting
+   * {@code proj/app} must not run {@code proj/gradlew}. A parent's wrapper is named in the message as the folder to open.
+   */
+  static Path findBuildRoot(Path workspaceRoot) throws BridgeException {
+    if (Files.isRegularFile(workspaceRoot.resolve(WRAPPER))) {
+      return workspaceRoot;
+    }
+    for (Path dir = workspaceRoot.getParent(); dir != null; dir = dir.getParent()) {
       if (Files.isRegularFile(dir.resolve(WRAPPER))) {
-        return dir;
+        throw new BridgeException("no Gradle wrapper (" + WRAPPER + ") in " + workspaceRoot + "; it belongs to the build in " + dir
+            + ": open " + dir + " as the workspace");
       }
     }
-    throw new BridgeException("no Gradle wrapper (" + WRAPPER + ") in " + start + " or a parent directory");
+    throw new BridgeException("no Gradle wrapper (" + WRAPPER + ") in " + workspaceRoot);
   }
 
   /** Hash of everything that can change the model: build files, the JDK and the init script. */
@@ -212,6 +220,10 @@ public final class GradleBridge {
       command.addAll(List.of("cmd", "/c"));
     }
     command.addAll(List.of(buildRoot.resolve(WRAPPER).toString(), "--init-script", init.toString(), "-Pgls.out=" + out, "--console=plain", task));
+    Path wrapper = buildRoot.resolve(WRAPPER);
+    if (!WINDOWS && !Files.isExecutable(wrapper)) {
+      throw new BridgeException("cannot start " + WRAPPER + ": " + wrapper + " is not executable (chmod +x " + WRAPPER + ")");
+    }
     ProcessBuilder builder = new ProcessBuilder(command).directory(buildRoot.toFile()).redirectErrorStream(true).redirectOutput(log.toFile());
     builder.environment().put("JAVA_HOME", javaHome.toString());
     Process process;
