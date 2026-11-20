@@ -28,6 +28,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 import java.util.regex.Pattern;
 
 import org.codehaus.groovy.ast.ASTNode;
@@ -72,8 +73,10 @@ public final class Completions {
   private final ASTNodeVisitor ast;
   private final ClasspathTypes classpath;
   private final Conventions conventions;
-  /** Tags called as methods, or null. */
-  private final TagCalls tags;
+  /** The tags of a namespace, for tags called as methods ({@link TagCalls}); null: none are offered. */
+  private final Function<String, Map<String, Taglibs.Tag>> namespaces;
+  /** Page code: calls with no receiver may be tags too. */
+  private final boolean page;
   private final List<Completion> items = new ArrayList<>();
   /** The declaration behind each item with an id, by id: a node, or a tag ({@link Taglibs.Tag}). */
   private final List<Object> declarations = new ArrayList<>();
@@ -83,11 +86,12 @@ public final class Completions {
   /** Leaves out the private members of the type itself too: it is seen from another class. */
   private boolean fromOutside;
 
-  private Completions(ASTNodeVisitor ast, ClasspathTypes classpath, Conventions conventions, TagCalls tags) {
+  private Completions(ASTNodeVisitor ast, ClasspathTypes classpath, Conventions conventions, Function<String, Map<String, Taglibs.Tag>> namespaces, boolean page) {
     this.ast = ast;
     this.classpath = classpath;
     this.conventions = conventions;
-    this.tags = tags;
+    this.namespaces = namespaces;
+    this.page = page && namespaces != null;
   }
 
   /**
@@ -95,22 +99,24 @@ public final class Completions {
    *
    * @param classpath classes of the classpath to offer, or null for those of the compile only
    * @param conventions names Grails resolves by convention, or null
-   * @param tags tags called as methods, or null
+   * @param namespaces the tags of a namespace, for tags called as methods ({@link TagCalls}), or null
+   * @param page whether the document is page code
    * @param typed the text of the line before the position
    */
-  static Completions at(ASTNodeVisitor ast, URI document, ClasspathTypes classpath, Conventions conventions, TagCalls tags, int line, int column, String typed) {
+  static Completions at(ASTNodeVisitor ast, URI document, ClasspathTypes classpath, Conventions conventions, Function<String, Map<String, Taglibs.Tag>> namespaces, boolean page,
+      int line, int column, String typed) {
     ASTNode offsetNode = ast.getNodeAtLineAndColumn(document, line, column);
     if (offsetNode == null) {
       return null;
     }
-    Completions completions = new Completions(ast, classpath, conventions, tags);
+    Completions completions = new Completions(ast, classpath, conventions, namespaces, page);
     completions.populate(offsetNode, line, column, typed);
     return completions;
   }
 
   /** The static members of a class whose names start with a prefix: {@code import static a.B.m}. */
   static Completions staticMembers(ASTNodeVisitor ast, ClassNode type, String prefix) {
-    Completions completions = new Completions(ast, null, null, null);
+    Completions completions = new Completions(ast, null, null, null, false);
     completions.fromOutside = true;
     completions.members(type, true, prefix, new HashSet<>());
     return completions;
@@ -192,15 +198,15 @@ public final class Completions {
           Gorm.properties(queried).keySet().forEach(property -> add(property, Completion.Kind.FIELD, null, prefix, names));
         }
         fromScope(variable, prefix);
-        if (tags != null) {
-          tags(tags.pageTags(), prefix);
+        if (page) {
+          tags(TagCalls.pageTags(namespaces), prefix);
         }
         // a key of named arguments GORM reads: title nullable: true, Book.list(max: 10); after the names in scope
         Set<String> keys = new HashSet<>();
         List<String> named = new ArrayList<>(Gorm.argumentKeys(variable, ast));
         named.addAll(Conventions.argumentKeys(variable, ast));
-        if (tags != null) {
-          named.addAll(tags.argumentKeys(variable, ast));
+        if (namespaces != null) {
+          named.addAll(TagCalls.argumentKeys(variable, ast, namespaces, page));
         }
         for (String key : named) {
           if (key.startsWith(prefix) && keys.add(key)) {
@@ -280,8 +286,8 @@ public final class Completions {
     if (range != null) {
       String prefix = prefix(call.getMethodAsString(), range, line, column);
       fromReceiver(call.getObjectExpression(), call, prefix);
-      if (tags != null && call.isImplicitThis()) {
-        tags(tags.pageTags(), prefix);
+      if (page && call.isImplicitThis()) {
+        tags(TagCalls.pageTags(namespaces), prefix);
       }
     }
   }
@@ -308,7 +314,7 @@ public final class Completions {
 
   /** Members of the receiver's type: static ones for a class ({@code Book.}), the others for a value. */
   private void fromReceiver(Expression receiver, ASTNode expression, String prefix) {
-    Map<String, Taglibs.Tag> namespace = tags == null ? null : tags.namespaceOf(receiver);
+    Map<String, Taglibs.Tag> namespace = namespaces == null ? null : TagCalls.namespaceOf(receiver, namespaces);
     if (namespace != null) {
       tags(namespace, prefix);
       return;

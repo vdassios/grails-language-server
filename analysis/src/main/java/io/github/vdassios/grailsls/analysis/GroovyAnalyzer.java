@@ -21,6 +21,7 @@ import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
+import java.util.function.Function;
 
 import org.codehaus.groovy.GroovyBugError;
 import org.codehaus.groovy.ast.ASTNode;
@@ -648,11 +649,12 @@ public final class GroovyAnalyzer implements Analyzer {
   /** The tag a call at a position of a kept compile names ({@link TagCalls}), or null. */
   private Taglibs.Tag tagAt(Kept kept, boolean page, int line, int column) {
     ASTNode node = kept.ast().getNodeAtLineAndColumn(kept.uri, line, column);
-    return node == null ? null : tagCalls(kept.lookup, page).at(node, kept.ast());
+    return node == null ? null : TagCalls.at(node, kept.ast(), namespaces(kept.lookup), page);
   }
 
-  private TagCalls tagCalls(SourceLookup lookup, boolean page) {
-    return new TagCalls(() -> taglibs.all(lookup), page);
+  /** The tags of a namespace by name, null when no taglib declares it: for {@link TagCalls}. */
+  private Function<String, Map<String, Taglibs.Tag>> namespaces(SourceLookup lookup) {
+    return namespace -> taglibs.all(lookup).get(namespace);
   }
 
   @Override
@@ -702,17 +704,17 @@ public final class GroovyAnalyzer implements Analyzer {
     ClasspathTypes types = sourceTypes(request.lookup);
     Kept kept = current(request);
     Conventions conventions = conventions(request.lookup, request.path);
-    TagCalls tags = tagCalls(request.lookup, false);
-    Completions found = kept == null ? null : Completions.at(kept.ast(), kept.uri, types, conventions, tags, line, column, typed);
+    Function<String, Map<String, Taglibs.Tag>> tags = namespaces(request.lookup);
+    Completions found = kept == null ? null : Completions.at(kept.ast(), kept.uri, types, conventions, tags, false, line, column, typed);
     if (found == null) {
       kept = compileCopy(request, line, column, Completions.placeholder(typed));
-      found = kept == null ? null : Completions.at(kept.ast(), kept.uri, types, conventions, tags, line, column, typed);
+      found = kept == null ? null : Completions.at(kept.ast(), kept.uri, types, conventions, tags, false, line, column, typed);
     }
     String close = Completions.closeString(typed);
     if (found == null && close != null) {
       // inside a string not closed yet: render(view: 'sh
       kept = compileCopy(request, line, column, Completions.placeholder(typed) + close);
-      found = kept == null ? null : Completions.at(kept.ast(), kept.uri, types, conventions, tags, line, column, typed);
+      found = kept == null ? null : Completions.at(kept.ast(), kept.uri, types, conventions, tags, false, line, column, typed);
     }
     if (found == null) {
       completions.remove(request.path);
@@ -759,7 +761,7 @@ public final class GroovyAnalyzer implements Analyzer {
       return tags;
     }
     ClasspathTypes types = sourceTypes(request.lookup);
-    TagCalls tagCalls = tagCalls(request.lookup, true);
+    Function<String, Map<String, Taglibs.Tag>> namespaces = namespaces(request.lookup);
     String placeholder = Completions.placeholder(lineBefore(request.text, line, column));
     for (String insert : new String[] { "", placeholder, placeholder + "}" }) {
       PageCompile compiled = pageCompile(request, scan, line, column, insert);
@@ -767,7 +769,7 @@ public final class GroovyAnalyzer implements Analyzer {
         continue;
       }
       int[] at = compiled.at;
-      Completions found = Completions.at(compiled.kept.ast(), compiled.kept.uri, types, null, tagCalls, at[0], at[1], lineBefore(compiled.translation.groovy, at[0], at[1]));
+      Completions found = Completions.at(compiled.kept.ast(), compiled.kept.uri, types, null, namespaces, true, at[0], at[1], lineBefore(compiled.translation.groovy, at[0], at[1]));
       if (found != null) {
         completions.put(request.path, new LastCompletion(found, compiled.kept));
         return onPage(found.list(), compiled.translation);
