@@ -41,7 +41,7 @@ vim.lsp.enable 'grails_ls'
 
 ## Status
 
-Pre-alpha, milestone M6 (distribution). Tested on Grails 4 and Grails 7 fixtures, and measured on five public Grails projects, Grails 4 to 8 ([benchmarks/results.md](benchmarks/results.md)). What is covered, planned or out of scope, feature by feature: [docs/conformance.md](docs/conformance.md).
+Pre-alpha, milestone M6 (distribution). Linux and macOS only: nothing is tested on Windows. Tested on Grails 4 and Grails 7 fixtures, and measured on five public Grails projects, Grails 4 to 8 ([benchmarks/results.md](benchmarks/results.md)). What is covered, planned or out of scope, feature by feature: [docs/conformance.md](docs/conformance.md).
 
 ## Documentation
 
