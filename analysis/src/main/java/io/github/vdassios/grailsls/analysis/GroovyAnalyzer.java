@@ -74,7 +74,7 @@ import io.github.vdassios.grailsls.api.Symbol;
  */
 public final class GroovyAnalyzer implements Analyzer {
   private final Map<String, Kept> units = new ConcurrentHashMap<>();
-  /** The last completion per document, for resolve; dropped by the next compile of the document. */
+  /** The last completion per document (a Groovy one, or a page's tags), for resolve; dropped by the next compile of the document. */
   private final Map<String, LastCompletion> completions = new ConcurrentHashMap<>();
   /** Failures, to the server: shown to the user or logged, each once. */
   private final Reports reports;
@@ -756,8 +756,12 @@ public final class GroovyAnalyzer implements Analyzer {
   private CompletionList pageCompletion(CompileRequest request, int line, int column) {
     completions.remove(request.path);
     GspScanner.Scan scan = GspScanner.scan(request.text, escapes());
-    CompletionList tags = gsp.completion(request, scan, line, column);
+    List<CompletionDetail> details = new ArrayList<>();
+    CompletionList tags = gsp.completion(request, scan, line, column, details);
     if (!tags.items.isEmpty()) {
+      if (!details.isEmpty()) {
+        completions.put(request.path, new LastCompletion(details));
+      }
       return tags;
     }
     ClasspathTypes types = sourceTypes(request.lookup);
@@ -837,8 +841,8 @@ public final class GroovyAnalyzer implements Analyzer {
   @Override
   public CompletionDetail resolveCompletion(String documentPath, int id) {
     LastCompletion last = completions.get(documentPath);
-    if (GspViews.isGsp(documentPath) && last == null) {
-      return gsp.resolveCompletion(documentPath, id);
+    if (last != null && last.details != null) {
+      return id < 0 || id >= last.details.size() ? null : last.details.get(id);
     }
     Taglibs.Tag tag = last == null ? null : last.completions.tag(id);
     if (tag != null) {
@@ -1096,13 +1100,22 @@ public final class GroovyAnalyzer implements Analyzer {
     }
   }
 
+  /** A completion's items' declarations, with the compile they are of; or, for a page's tags, their documentation by id. */
   private static final class LastCompletion {
     final Completions completions;
     final Kept compile;
+    final List<CompletionDetail> details;
 
     LastCompletion(Completions completions, Kept compile) {
       this.completions = completions;
       this.compile = compile;
+      this.details = null;
+    }
+
+    LastCompletion(List<CompletionDetail> details) {
+      this.completions = null;
+      this.compile = null;
+      this.details = details;
     }
   }
 

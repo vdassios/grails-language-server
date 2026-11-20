@@ -33,8 +33,6 @@ final class GspViews {
   /** Conventions for a lookup and a page path. */
   private final BiFunction<SourceLookup, String, Conventions> conventions;
   private final Map<String, Page> pages = new ConcurrentHashMap<>();
-  /** The documentation of each item of a page's last completion, by its id. */
-  private final Map<String, List<CompletionDetail>> completions = new ConcurrentHashMap<>();
 
   GspViews(Taglibs taglibs, BiFunction<SourceLookup, String, Conventions> conventions) {
     this.taglibs = taglibs;
@@ -65,7 +63,6 @@ final class GspViews {
     long start = System.nanoTime();
     Page page = new Page(scan, request.lookup);
     pages.put(request.path, page);
-    completions.remove(request.path);
     List<Diagnostic> hints = new ArrayList<>();
     Taglibs.Index index = taglibs.index(request.lookup);
     Map<String, Map<String, Taglibs.Tag>> all = index.tags;
@@ -260,18 +257,19 @@ final class GspViews {
     return "`" + attribute.name + "`" + (attribute.required ? " (required)" : "") + (attribute.doc == null ? "" : ": " + attribute.doc);
   }
 
-  /** Tag, attribute and attribute value completion; {@code scan} is of the request's text. */
-  CompletionList completion(CompileRequest request, GspScanner.Scan scan, int line, int column) {
+  /**
+   * Tag, attribute and attribute value completion; {@code scan} is of the request's text. The documentation of each
+   * item with an id is added to {@code details}, at its id.
+   */
+  CompletionList completion(CompileRequest request, GspScanner.Scan scan, int line, int column, List<CompletionDetail> details) {
     Page page = new Page(scan, request.lookup);
     int offset = page.lines.offset(line, column);
     GspScanner.Tag tag = GspScanner.at(page.tags, offset);
-    completions.remove(request.path);
     if (tag == null || tag.closing && offset > tag.nameEnd) {
       return CompletionList.EMPTY;
     }
     Map<String, Map<String, Taglibs.Tag>> all = taglibs.all(request.lookup);
     List<Completion> items = new ArrayList<>();
-    List<CompletionDetail> details = new ArrayList<>();
     if (offset >= tag.namespaceStart() && offset < tag.nameStart) {
       Range replace = page.lines.range(tag.namespaceStart(), tag.nameStart - 1);
       for (String namespace : all.keySet()) {
@@ -320,9 +318,6 @@ final class GspViews {
         }
       }
     }
-    if (!details.isEmpty()) {
-      completions.put(request.path, details);
-    }
     return items.isEmpty() ? CompletionList.EMPTY : new CompletionList(items, false);
   }
 
@@ -330,18 +325,11 @@ final class GspViews {
     return Character.isLetterOrDigit(c) || c == '_' || c == '-' || c == '.';
   }
 
-  CompletionDetail resolveCompletion(String path, int id) {
-    List<CompletionDetail> details = completions.get(path);
-    return details == null || id < 0 || id >= details.size() ? null : details.get(id);
-  }
-
   void forget(String path) {
     pages.remove(path);
-    completions.remove(path);
   }
 
   void clear() {
     pages.clear();
-    completions.clear();
   }
 }
