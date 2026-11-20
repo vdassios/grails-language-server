@@ -388,6 +388,24 @@ abstract class GormTest {
     }
   }
 
+  /** GORM persists every property with a getter and a setter, a field or not ({@code GormMappingConfigurationStrategy}); not a getter alone. */
+  @Test
+  void aGetterAndSetterPairIsAFinderCondition() throws Exception {
+    try (Workspace workspace = workspace()) {
+      App app = app();
+      Path domain = domainFile(app.domain);
+      String saved = Files.readString(domain);
+      int end = saved.lastIndexOf('}');
+      String text = saved.substring(0, end) + fill("\n    String getNickname() { first }\n    void setNickname(String nickname) { first = nickname }\n    String getShout() { first }\n"
+          + "\n    static def probe(String wanted) {\n        findByNickname(wanted)\n        findByShout(wanted)\n    }\n") + saved.substring(end);
+      CompileResult result = compile(workspace, domain, text);
+      assertEquals(List.of(), messages(result, Diagnostic.ERROR));
+      List<String> warnings = messages(result, Diagnostic.WARNING);
+      assertEquals(1, warnings.size(), warnings.toString());
+      assertTrue(warnings.get(0).contains("No property 'shout'"), warnings.toString());
+    }
+  }
+
   /** GORM persists the properties a trait gives a domain class: seen in a corpus project, where every domain class takes its label from one. */
   @Test
   void aPropertyFromATraitIsAFinderCondition() throws Exception {

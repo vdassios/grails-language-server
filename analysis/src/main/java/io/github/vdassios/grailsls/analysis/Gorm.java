@@ -60,6 +60,8 @@ public final class Gorm {
   static final List<String> QUERY_SETTINGS = List.of("max", "offset", "sort", "order", "fetch", "readOnly", "cache", "ignoreCase");
   static final List<String> CONSTRAINTS = List.of("nullable", "blank", "size", "maxSize", "minSize", "min", "max", "inList", "matches", "email", "url", "unique",
       "validator", "range", "scale", "notEqual", "creditCard");
+  /** Bean properties GORM never maps ({@code ClassPropertyFetcher.EXCLUDED_PROPERTIES}). */
+  private static final Set<String> NOT_PERSISTENT = Set.of("class", "metaClass", "properties");
   /** Key of the finder a call names, kept on the call: one method node per call, however often it is asked for. */
   private static final String FINDER_KEY = "grailsls.finder";
   private static final Object NO_FINDER = new Object();
@@ -114,7 +116,9 @@ public final class Gorm {
    * The persistent properties of a domain class and its superclasses, nearest first: declared ones that are neither
    * static nor transient, and those Grails adds ({@code id}, {@code version}, one per {@code hasMany} and
    * {@code belongsTo} entry). A class read from a class file has no property nodes: its fields with a getter instead.
-   * The properties of a trait are fields of the class that implements it, in source and class file alike.
+   * The properties of a trait are fields of the class that implements it, in source and class file alike. A getter
+   * and setter pair without a field is one too, as GORM maps every bean property that can be read and written
+   * ({@code GormMappingConfigurationStrategy.getPersistentProperties}).
    */
   public static Map<String, Property> properties(ClassNode domain) {
     Map<String, Property> found = new LinkedHashMap<>();
@@ -153,8 +157,54 @@ public final class Gorm {
         }
         found.putIfAbsent(name, fromTrait < 0 ? new Property(name, field.getType(), null, type, null, field) : new Property(name, field.getType(), elementOf(hasMany.get(name)), type, getter, getter));
       }
+      for (MethodNode getter : GroovyASTUtils.members(type::getMethods, List.<MethodNode>of())) {
+        String name = readProperty(getter);
+        FieldNode field = name == null ? null : GroovyASTUtils.members(() -> type.getDeclaredField(name), null);
+        if (name == null || found.containsKey(name) || NOT_PERSISTENT.contains(name) || transients.contains(name) || isTransient(getter) || woven(getter)
+            || field != null && (field.isStatic() || Modifier.isTransient(field.getModifiers())) || !writable(type, getter)) {
+          continue;
+        }
+        found.put(name, new Property(name, getter.getReturnType(), elementOf(hasMany.get(name)), type, getter, getter));
+      }
     }
     return found;
+  }
+
+  /**
+   * The property a public instance getter reads ({@code getURL} reads {@code URL}, as {@code Introspector} names it),
+   * or null: no getter, or one of type {@code Object}, which GORM does not map.
+   */
+  private static String readProperty(MethodNode method) {
+    String name = method.getName();
+    ClassNode type = method.getReturnType();
+    int at = name.startsWith("get") ? 3 : name.startsWith("is") && type.equals(ClassHelper.boolean_TYPE) ? 2 : -1;
+    if (at < 0 || name.length() == at || !method.isPublic() || method.isStatic() || method.isSynthetic() || method.getParameters().length > 0
+        || type.equals(ClassHelper.VOID_TYPE) || type.equals(ClassHelper.OBJECT_TYPE)) {
+      return null;
+    }
+    String rest = name.substring(at);
+    return rest.length() > 1 && Character.isUpperCase(rest.charAt(0)) && Character.isUpperCase(rest.charAt(1)) ? rest : Character.toLowerCase(rest.charAt(0)) + rest.substring(1);
+  }
+
+  /** True when the class has a public instance setter for what a getter reads. */
+  private static boolean writable(ClassNode type, MethodNode getter) {
+    String name = "set" + getter.getName().substring(getter.getName().startsWith("is") ? 2 : 3);
+    for (MethodNode setter : GroovyASTUtils.members(() -> type.getMethods(name), List.<MethodNode>of())) {
+      if (setter.isPublic() && !setter.isStatic() && setter.getParameters().length == 1 && setter.getParameters()[0].getType().equals(getter.getReturnType())) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** A method a trait gave the class: GORM's own ({@code errors}, ...) are no columns, and a trait's properties are its fields. */
+  private static boolean woven(MethodNode method) {
+    for (AnnotationNode annotation : GroovyASTUtils.members(method::getAnnotations, List.<AnnotationNode>of())) {
+      if (annotation.getClassNode().getName().endsWith("TraitBridge")) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /** GORM's own traits mark what is not persistent ({@code errors}) with JPA's {@code @Transient} on the getter. */
