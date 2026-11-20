@@ -75,8 +75,12 @@ abstract class GspTest {
     views = Path.of(model.module(":app").projectDir, "grails-app/views");
   }
 
+  /** An open context keeps its thread, and through it the fixture's class loader: the tests would overflow the heap. */
   @AfterEach
   void nothingReported() {
+    if (workspace != null) {
+      workspace.close();
+    }
     assertEquals(List.of(), reported);
   }
 
