@@ -6,6 +6,7 @@ import java.util.regex.Pattern;
 /** Markdown for a documentation comment read from source text: its description, without the block tags. */
 final class Javadoc {
   private static final Pattern INLINE_TAG = Pattern.compile("\\{@(\\w+)\\s*([^}]*)\\}");
+  private static final Pattern PRE_TAG = Pattern.compile("<(/?)pre\\b[^>]*>", Pattern.CASE_INSENSITIVE);
 
   private Javadoc() {}
 
@@ -13,11 +14,13 @@ final class Javadoc {
   static String markdown(String comment) {
     String body = comment.substring(3, comment.endsWith("*/") ? comment.length() - 2 : comment.length());
     StringBuilder description = new StringBuilder();
+    boolean pre = false;
     for (String line : body.split("\n")) {
       line = line.replaceFirst("^\\s*\\*? ?", "");
-      if (line.matches("\\s*@\\w.*")) {
-        break; // the block tags: @param, @return
+      if (!pre && line.matches("\\s*@\\w.*")) {
+        break; // the block tags: @param, @return; inside <pre>, an annotation is code
       }
+      pre = inPre(line, pre);
       description.append(line.replaceFirst("\\s+$", "")).append('\n');
     }
     // inline tags may span lines, so before the lines are converted
@@ -33,6 +36,15 @@ final class Javadoc {
     }
     String result = markdown.toString().replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&").replaceAll("\n{3,}", "\n\n").trim();
     return result.isEmpty() ? null : result;
+  }
+
+  /** Whether the text after {@code line} is inside {@code <pre>}, given whether the line starts inside it. */
+  private static boolean inPre(String line, boolean pre) {
+    Matcher tag = PRE_TAG.matcher(line);
+    while (tag.find()) {
+      pre = tag.group(1).isEmpty();
+    }
+    return pre;
   }
 
   private static String inline(String tag, String content) {
