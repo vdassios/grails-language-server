@@ -558,6 +558,47 @@ class GroovyAnalyzerTest {
     assertNull(analyzer.definition(path, 1, 19)); // on toUpperCase
   }
 
+  /** The range of the definition at a position in the document, as {@link Range#toString()} gives it (1-based), or null. */
+  private String definitionRange(String path, int line, int column) {
+    Location location = analyzer.definition(path, line, column);
+    if (location == null) {
+      return null;
+    }
+    assertEquals(path, location.path);
+    return location.range.toString();
+  }
+
+  @Test
+  void definitionOfAParameterIsItsDeclaration() {
+    String path = tmp.resolve("A.groovy").toString();
+    compile(path, "class A {\n  A(int param) {\n  }\n  void run(int param) {\n    param\n  }\n}\n");
+    assertEquals("2:5-2:14", definitionRange(path, 1, 10), "on a constructor's parameter");
+    assertEquals("4:12-4:21", definitionRange(path, 3, 16), "on a method's parameter");
+    assertEquals("4:12-4:21", definitionRange(path, 4, 6), "on a use of it");
+  }
+
+  @Test
+  void definitionOfAMemberOfAnArrayItemIsTheMember() {
+    String path = tmp.resolve("A.groovy").toString();
+    compile(path, "class A {\n  A() {\n    A[] items\n    items[0].hello\n  }\n  public String hello\n}\n");
+    assertEquals("6:3-6:22", definitionRange(path, 3, 15));
+  }
+
+  /** A field, a method and a class of the document: from their declarations, an assignment, a call, a type, a class expression. */
+  @Test
+  void definitionOfTheDocumentsMembersAndClasses() {
+    String path = tmp.resolve("A.groovy").toString();
+    compile(path, "class A {\n  public int memberVar\n  public void memberMethod() {}\n  public static void staticMethod() {}\n  A() {\n"
+        + "    memberVar = 123\n    memberMethod()\n    A a\n    A.staticMethod()\n  }\n}\n");
+    assertEquals("2:3-2:23", definitionRange(path, 1, 18), "on the field's declaration");
+    assertEquals("2:3-2:23", definitionRange(path, 5, 6), "on an assignment to the field");
+    assertEquals("3:3-3:32", definitionRange(path, 2, 16), "on the method's declaration");
+    assertEquals("3:3-3:32", definitionRange(path, 6, 6), "on a call of the method");
+    assertEquals("1:1-11:2", definitionRange(path, 0, 6), "on the class's declaration");
+    assertEquals("1:1-11:2", definitionRange(path, 7, 4), "on a variable's type");
+    assertEquals("1:1-11:2", definitionRange(path, 8, 4), "on a class expression");
+  }
+
   /** A class read from a class file: its source file, when the lookup has one, and the comment there. */
   @Test
   void definitionAndHoverOfAJdkMemberUseItsSourceFile() throws IOException {
@@ -767,6 +808,67 @@ class GroovyAnalyzerTest {
     List<String> labels = labels(complete(path, "class A {\n  static int count() { 1 }\n  int size() { 2 }\n  def run() {\n    A.\n  }\n}\n", 4, 6));
     assertTrue(labels.contains("count"), labels.toString());
     assertFalse(labels.contains("size"), labels.toString());
+  }
+
+  /** The kind of the item with a label at a position, or null when there is no such item. */
+  private Completion.Kind kindOf(String path, String text, int line, int column, String label) {
+    return complete(path, text, line, column).items.stream().filter(c -> c.label.equals(label)).map(c -> c.kind).findFirst().orElse(null);
+  }
+
+  @Test
+  void membersAfterADotOnALocalVariableThisAndAnArrayItem() {
+    String path = tmp.resolve("A.groovy").toString();
+    assertEquals(Completion.Kind.METHOD, kindOf(path, "class A {\n  A() {\n    String local\n    local.\n  }\n}\n", 3, 10, "charAt"));
+    assertEquals(Completion.Kind.FIELD, kindOf(path, "class A {\n  String field\n  A() {\n    this.\n  }\n}\n", 3, 9, "field"));
+    assertEquals(Completion.Kind.METHOD, kindOf(path, "class A {\n  A() {\n    String[] items\n    items[0].\n  }\n}\n", 3, 13, "charAt"));
+  }
+
+  /** "a." followed by a statement parses as one expression ({@code a.b}, {@code a.m()}): still the members of a. */
+  @Test
+  void aDotBeforeAnotherStatementCompletesTheReceiversMembers() {
+    String path = tmp.resolve("A.groovy").toString();
+    assertEquals(Completion.Kind.METHOD, kindOf(path, "class A {\n  A() {\n    String local\n    local.\n    local\n  }\n}\n", 3, 10, "charAt"));
+    assertEquals(Completion.Kind.METHOD, kindOf(path, "class A {\n  A() {\n    String local\n    local.\n    run()\n  }\n}\n", 3, 10, "charAt"));
+  }
+
+  @Test
+  void aMemberNameTypedInPartNarrowsTheMembersToThoseItStarts() {
+    String path = tmp.resolve("A.groovy").toString();
+    List<String> labels = labels(complete(path, "class A {\n  A() {\n    String local\n    local.charA\n  }\n}\n", 3, 15));
+    assertEquals(List.of("charAt"), labels);
+    String text = "class A {\n  A() {\n    this.abcde\n  }\n  def abc() {}\n  def abcdef() {}\n}\n";
+    assertEquals(List.of("abc", "abcdef"), labels(complete(path, text, 2, 11)).stream().sorted().collect(Collectors.toList()), "on \"ab\"");
+    assertEquals(List.of("abcdef"), labels(complete(path, text, 2, 13)), "on \"abcd\"");
+  }
+
+  /** A field, a method, a parameter and a local variable, on a name typed in part and on a whole name. */
+  @Test
+  void namesInScopeCompleteFromAPartOrAllOfTheName() {
+    String path = tmp.resolve("A.groovy").toString();
+    String field = "class A {\n  String memberVar\n  A() {\n    %s\n  }\n}\n";
+    assertEquals(Completion.Kind.FIELD, kindOf(path, String.format(field, "mem"), 3, 7, "memberVar"));
+    assertEquals(Completion.Kind.FIELD, kindOf(path, String.format(field, "memberVar"), 3, 7, "memberVar"));
+    String method = "class A {\n  String memberMethod() {}\n  A() {\n    %s\n  }\n}\n";
+    assertEquals(Completion.Kind.METHOD, kindOf(path, String.format(method, "mem"), 3, 7, "memberMethod"));
+    assertEquals(Completion.Kind.METHOD, kindOf(path, String.format(method, "memberMethod"), 3, 7, "memberMethod"));
+    String parameter = "class A {\n  void run(String paramName) {\n    %s\n  }\n}\n";
+    assertEquals(Completion.Kind.VARIABLE, kindOf(path, String.format(parameter, "par"), 2, 7, "paramName"));
+    assertEquals(Completion.Kind.VARIABLE, kindOf(path, String.format(parameter, "paramName"), 2, 13, "paramName"));
+    String local = "class A {\n  void run() {\n    String localVar\n    %s\n  }\n}\n";
+    assertEquals(Completion.Kind.VARIABLE, kindOf(path, String.format(local, "loc"), 3, 7, "localVar"));
+    assertEquals(Completion.Kind.VARIABLE, kindOf(path, String.format(local, "localVar"), 3, 12, "localVar"));
+    String inBlock = "class A {\n  void run() {\n    String localVar\n    if (true) {\n      loc\n    }\n  }\n}\n";
+    assertEquals(Completion.Kind.VARIABLE, kindOf(path, inBlock, 4, 9, "localVar"));
+  }
+
+  @Test
+  void theDocumentsOwnClassCompletesWithItsPackage() {
+    String path = tmp.resolve("src/com/example/Completion.groovy").toString();
+    CompletionList list = complete(path, "package com.example\nclass Completion {\n  Completion() {\n    Completio\n  }\n}\n", 3, 13);
+    Completion own = list.items.stream().filter(c -> c.label.equals("Completion")).findFirst().orElseThrow();
+    assertEquals(Completion.Kind.CLASS, own.kind);
+    assertEquals("com.example", own.detail);
+    assertEquals(List.of(), own.additionalEdits, "no import for the document's own class");
   }
 
   @Test
