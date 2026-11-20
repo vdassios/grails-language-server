@@ -15,9 +15,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.function.Function;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
@@ -345,9 +347,22 @@ class FixtureCompileTest {
   /** Each kept every AST it saw until the loader closed: 2.5 GB after a sweep of one module of the target project. */
   @Test
   void grailsTransformationCachesAreEmptyAfterACompile() throws Exception {
-    ProjectModel model = Fixtures.built("grails4", "GLS_TEST_JDK11");
-    try (Workspace workspace = workspace(model)) {
-      Path controller = file(model, ":app", "grails-app/controllers/fixture/library/BookController.groovy");
+    transformationCachesAreEmptyAfterACompile("grails4", "GLS_TEST_JDK11", "grails-app/controllers/fixture/library/BookController.groovy");
+  }
+
+  @Test
+  @Tag("jdk17") // Grails 7's classes need Java 17
+  void grails7TransformationCachesAreEmptyAfterACompile() throws Exception {
+    transformationCachesAreEmptyAfterACompile("grails7", "GLS_TEST_JDK17", "grails-app/controllers/fixture/catalog/ItemController.groovy");
+  }
+
+  /** The caches are emptied, and every field the workarounds need is found: nothing shown or logged. */
+  private void transformationCachesAreEmptyAfterACompile(String fixture, String jdk, String controllerPath) throws Exception {
+    ProjectModel model = Fixtures.built(fixture, jdk);
+    List<String> reported = new CopyOnWriteArrayList<>();
+    try (Workspace workspace = new Workspace(model, AnalysisJar.extract(tmp), (show, message) -> reported.add(message))) {
+      workspace.index();
+      Path controller = file(model, ":app", controllerPath);
       assertEquals(List.of(), errors(compile(workspace, controller)));
       ClassLoader loader = workspace.contextOf(controller).loader();
       Map<String, Integer> sizes = new TreeMap<>();
@@ -356,6 +371,7 @@ class FixtureCompileTest {
       sizes.put("GORM properties", staticMapSize(loader, "org.grails.datastore.gorm.transform.AstPropertyResolveUtils", "cachedClassProperties"));
       assertEquals(Map.of("data binding", 0, "GORM domain check", 0, "GORM properties", 0), sizes);
     }
+    assertEquals(List.of(), reported);
   }
 
   /** Size of a static map, or of the cache of a static {@code @Memoized} closure, read through the module loader. */

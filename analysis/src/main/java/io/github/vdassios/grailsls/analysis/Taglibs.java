@@ -147,6 +147,7 @@ final class Taglibs {
   }
 
   private final BiFunction<String, String, List<ClassNode>> parse;
+  private final Reports reports;
   /** Tags of the jar taglibs, by namespace and name; read once (the class path does not change). */
   private volatile Map<String, Map<String, Tag>> jarTags;
   /** Tags of each project taglib file, kept while the file's text is the same. */
@@ -162,9 +163,10 @@ final class Taglibs {
     }
   }
 
-  /** {@code parse} parses a project file (parse only). */
-  Taglibs(BiFunction<String, String, List<ClassNode>> parse) {
+  /** {@code parse} parses a project file (parse only); taglib class files that cannot be read go to {@code reports}. */
+  Taglibs(BiFunction<String, String, List<ClassNode>> parse, Reports reports) {
     this.parse = parse;
+    this.reports = reports;
   }
 
   /** Every tag, by namespace and name: project taglibs over jar taglibs over the GSP compiler's. */
@@ -188,18 +190,26 @@ final class Taglibs {
     Map<String, Map<String, Tag>> read = jarTags;
     if (read == null) {
       read = new TreeMap<>();
+      List<String> unreadable = new ArrayList<>();
       for (Map.Entry<String, String> taglib : lookup.taglibClasses().entrySet()) {
-        for (Tag tag : classFileTags(taglib.getKey(), taglib.getValue(), lookup)) {
+        for (Tag tag : classFileTags(taglib.getKey(), taglib.getValue(), lookup, unreadable)) {
           read.computeIfAbsent(tag.namespace, ns -> new TreeMap<>()).putIfAbsent(tag.name, tag);
         }
+      }
+      if (!unreadable.isEmpty()) {
+        reports.show("taglib class files", "the tags of " + unreadable.size() + (unreadable.size() == 1 ? " taglib class are" : " taglib classes are")
+            + " unknown: " + unreadable.get(0) + (unreadable.size() > 1 ? " (and " + (unreadable.size() - 1) + " more)" : ""));
       }
       jarTags = read;
     }
     return read;
   }
 
-  /** The tags of a taglib class, read from its class file in {@code jar} (which may not be on the compile's class path). */
-  private static List<Tag> classFileTags(String className, String jar, SourceLookup lookup) {
+  /**
+   * The tags of a taglib class, read from its class file in {@code jar} (which may not be on the compile's class path).
+   * A class file that cannot be read adds why to {@code unreadable}.
+   */
+  private static List<Tag> classFileTags(String className, String jar, SourceLookup lookup, List<String> unreadable) {
     String internalName = className.replace('.', '/');
     byte[] bytes;
     try (ZipFile zip = new ZipFile(jar)) {
@@ -211,6 +221,7 @@ final class Taglibs {
         bytes = in.readAllBytes();
       }
     } catch (IOException e) {
+      unreadable.add("cannot read " + className + " in " + jar + ": " + e);
       return List.of();
     }
     Set<String> closures = new LinkedHashSet<>();
@@ -231,7 +242,9 @@ final class Taglibs {
         }
       }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
     } catch (RuntimeException e) {
-      return List.of(); // a class file this Groovy's ASM cannot read
+      // a class file this Groovy's ASM cannot read
+      unreadable.add("cannot read " + className + " in " + jar + ": " + e);
+      return List.of();
     }
     String ns = namespace[0] == null ? "g" : namespace[0];
     List<Tag> tags = new ArrayList<>();

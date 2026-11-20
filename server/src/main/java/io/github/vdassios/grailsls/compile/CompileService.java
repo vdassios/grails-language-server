@@ -199,18 +199,18 @@ public final class CompileService {
     }
     context.compile(new CompileRequest(path.toString(), document.text, lookup(current, context), task.cancelled::get)).whenComplete((result, error) -> {
       try {
-        report(path, task, document, current, result, error);
+        report(path, task, document, current, context, result, error);
       } finally {
         finish(path, task);
       }
     });
   }
 
-  /** Publishes the diagnostics of a compile still current, or logs why it failed. */
-  private void report(Path path, Pending task, Document document, Workspace current, CompileResult result, Throwable error) {
+  /** Publishes the diagnostics of a compile still current, or reports why it failed. */
+  private void report(Path path, Pending task, Document document, Workspace current, CompileContext context, CompileResult result, Throwable error) {
     if (error != null) {
       if (!task.cancelled.get() && workspace == current) {
-        System.err.println("grails-language-server: compile of " + path + " failed: " + error);
+        context.compileFailed(path.toString(), error);
       }
       return;
     }

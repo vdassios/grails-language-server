@@ -13,7 +13,11 @@ import java.util.Map;
  * completion, hover and definition answer about its tags and their attributes. It has no symbols or signature help.
  */
 public interface Analyzer extends AutoCloseable {
-  /** Binary name of the implementation, loaded by name in each module loader. */
+  /**
+   * Binary name of the implementation, loaded by name in each module loader. It has a public constructor taking a
+   * {@code java.util.function.BiConsumer<Boolean, String>}: where the analyzer reports its failures, {@code true} with
+   * those to show to the user (a feature is off), {@code false} with those only to log (a workaround is off).
+   */
   String IMPLEMENTATION = "io.github.vdassios.grailsls.analysis.GroovyAnalyzer";
 
   /** Version of the Groovy the module loader provides (the project's). */

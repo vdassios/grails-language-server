@@ -19,6 +19,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
 
 import org.codehaus.groovy.GroovyBugError;
@@ -77,7 +78,9 @@ public final class GroovyAnalyzer implements Analyzer {
   private final Map<String, Kept> units = new ConcurrentHashMap<>();
   /** The last completion per document, for resolve; dropped by the next compile of the document. */
   private final Map<String, LastCompletion> completions = new ConcurrentHashMap<>();
-  private final TransformCaches caches = new TransformCaches(GroovyAnalyzer.class.getClassLoader());
+  /** Failures, to the server: shown to the user or logged, each once. */
+  private final Reports reports;
+  private final TransformCaches caches;
   private final ParserCache parserCache = new ParserCache(GroovyAnalyzer.class.getClassLoader());
   /** Parent of each compile's class loader: the module loader that loaded this class. */
   private final ClassLoader parent;
@@ -98,15 +101,31 @@ public final class GroovyAnalyzer implements Analyzer {
   /** The translation of each GSP page whose generated Groovy is kept in {@link #units}. */
   private final Map<String, GspTranslation> translations = new ConcurrentHashMap<>();
 
-  public GroovyAnalyzer() {
+  /**
+   * @param reporter takes {@code true} and a message to show to the user (a feature is off), {@code false} and one only
+   *                 to log (a workaround is off); called from the compile thread
+   */
+  public GroovyAnalyzer(BiConsumer<Boolean, String> reporter) {
+    this(GroovyAnalyzer.class.getClassLoader(), reporter);
+  }
+
+  /** Reporting to stderr, for tests. */
+  GroovyAnalyzer() {
     this(GroovyAnalyzer.class.getClassLoader());
   }
 
-  /** With another parent loader, for tests. */
+  /** With another parent loader, reporting to stderr, for tests. */
   GroovyAnalyzer(ClassLoader parent) {
+    this(parent, (show, message) -> System.err.println(message));
+  }
+
+  /** With another parent loader, for tests. */
+  GroovyAnalyzer(ClassLoader parent, BiConsumer<Boolean, String> reporter) {
     this.parent = parent;
+    this.reports = new Reports(reporter);
+    this.caches = new TransformCaches(GroovyAnalyzer.class.getClassLoader(), reports);
     this.lateTransforms = new LateTransforms(parent);
-    this.taglibs = new Taglibs((path, text) -> parserCache.parsing(() -> parsedClasses(path, text)));
+    this.taglibs = new Taglibs((path, text) -> parserCache.parsing(() -> parsedClasses(path, text)), reports);
     this.gsp = new GspViews(taglibs, this::conventions);
     try {
       this.output = Files.createTempDirectory("grails-ls-output");
@@ -115,6 +134,10 @@ public final class GroovyAnalyzer implements Analyzer {
     }
     // @Grab would download and load code at compile time
     System.setProperty("groovy.grape.enable", "false");
+    if (DocumentUnit.DECLARATION_CHECK == null) {
+      reports.log("declaration check", "Groovy " + GroovySystem.getVersion() + " has no ResolveVisitor.checkingVariableTypeInDeclaration: after a class is "
+          + "pulled in from source, a property typed by a superclass's type parameter may be reported as an unresolved class");
+    }
   }
 
   @Override
@@ -205,7 +228,7 @@ public final class GroovyAnalyzer implements Analyzer {
       taken.add(declaration.trim().substring(declaration.trim().lastIndexOf(' ') + 1));
     }
     PageVariables variables = PageVariables.of(path, text, modelConventions(lookup, path), taken, name -> resolves(name, lookup), model -> compiledType(model, lookup, cancelled));
-    return GspTranslation.of(parent, path, text, declarations + variables.declarations, variables.definitions);
+    return GspTranslation.of(parent, path, text, declarations + variables.declarations, variables.definitions, reports);
   }
 
   /** Whether a qualified class name resolves in this module: a project source, or a class on its class path. */

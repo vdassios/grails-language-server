@@ -1,6 +1,7 @@
 package io.micronaut.ast.groovy;
 
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.codehaus.groovy.ast.ASTNode;
@@ -22,6 +23,9 @@ import org.codehaus.groovy.transform.GroovyASTTransformation;
 @GroovyASTTransformation(phase = CompilePhase.SEMANTIC_ANALYSIS)
 public class TypeElementVisitorTransform implements ASTTransformation {
   public static final AtomicInteger METHODS_READ = new AtomicInteger();
+  /** Micronaut 3 and 4's per-thread state, which the server empties between compiles ({@code TransformCaches}). */
+  protected static ThreadLocal<Map<String, Object>> loadedVisitors = new ThreadLocal<>();
+  protected static ThreadLocal<List<Object>> beanDefinitionBuilders = new ThreadLocal<>();
 
   @Override
   public void visit(ASTNode[] nodes, SourceUnit source) {

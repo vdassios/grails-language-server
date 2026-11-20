@@ -10,9 +10,11 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -59,15 +61,22 @@ abstract class GspTest {
 
   private Workspace workspace;
   private Path views;
+  /** What the workspace showed or logged: the fixtures' page parser and taglibs are all usable, so nothing. */
+  private final List<String> reported = new CopyOnWriteArrayList<>();
   /** Unsaved texts by path, as the editor holds them. */
   private Map<Path, String> open = Map.of();
 
   @BeforeEach
   void setUp() throws Exception {
     ProjectModel model = Fixtures.built(app().fixture, app().jdkVariable);
-    workspace = new Workspace(model, AnalysisJar.extract(tmp));
+    workspace = new Workspace(model, AnalysisJar.extract(tmp), (show, message) -> reported.add(message));
     workspace.index();
     views = Path.of(model.module(":app").projectDir, "grails-app/views");
+  }
+
+  @AfterEach
+  void nothingReported() {
+    assertEquals(List.of(), reported);
   }
 
   /** {@code ns:}, {@code NS.} and {@code TAG} stand for the fixture taglib's namespace and tag. */

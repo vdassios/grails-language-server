@@ -9,8 +9,11 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BiConsumer;
 import java.util.function.Function;
 
 import io.github.vdassios.grailsls.api.Analyzer;
@@ -46,6 +49,10 @@ public final class CompileContext implements AutoCloseable {
   public final String classesTask;
   /** ANTLR's runtime, shared with the other contexts of the same Groovy jar; null when not shared. Owned by the workspace. */
   private final AntlrLoader antlr;
+  /** Where failures go: {@code true} to show to the user, {@code false} only to log. */
+  private final BiConsumer<Boolean, String> reporter;
+  /** Whether a failed compile has been shown to the user: later ones are only logged. */
+  private final AtomicBoolean compileFailureShown = new AtomicBoolean();
 
   private ExecutorService thread;
   private ModuleClassLoader loader;
@@ -53,7 +60,7 @@ public final class CompileContext implements AutoCloseable {
   private boolean closed;
 
   CompileContext(String name, List<Path> ownRoots, List<Path> searchRoots, List<Path> classpath, Map<String, Path> javaClasses,
-      Map<String, List<Path>> resources, int javaFilesNotBuilt, String classesTask, AntlrLoader antlr) {
+      Map<String, List<Path>> resources, int javaFilesNotBuilt, String classesTask, AntlrLoader antlr, BiConsumer<Boolean, String> reporter) {
     this.name = name;
     this.ownRoots = List.copyOf(ownRoots);
     this.searchRoots = List.copyOf(searchRoots);
@@ -63,6 +70,7 @@ public final class CompileContext implements AutoCloseable {
     this.javaFilesNotBuilt = javaFilesNotBuilt;
     this.classesTask = classesTask;
     this.antlr = antlr;
+    this.reporter = reporter;
   }
 
   /** Classpath entries of the loader, analysis jar first. For tests and status. */
@@ -105,6 +113,15 @@ public final class CompileContext implements AutoCloseable {
     return CompletableFuture.supplyAsync(() -> CompilerOutput.muted(() -> query.apply(analyzer())), executor);
   }
 
+  /**
+   * A compile of {@code path} threw (the analysis layer did not load, a bug): the file has no diagnostics and its
+   * queries find nothing. The first failure is shown to the user, later ones are only logged.
+   */
+  void compileFailed(String path, Throwable error) {
+    Throwable cause = error instanceof CompletionException && error.getCause() != null ? error.getCause() : error;
+    reporter.accept(compileFailureShown.compareAndSet(false, true), name + ": the compile of " + path + " failed: " + cause);
+  }
+
   /** Drops what the analyzer keeps for a closed document. */
   public synchronized void forget(String path) {
     if (analyzer != null && thread != null) {
@@ -124,7 +141,8 @@ public final class CompileContext implements AutoCloseable {
       }
       try {
         Class<?> type = Class.forName(Analyzer.IMPLEMENTATION, true, loader);
-        analyzer = (Analyzer) type.getConstructor().newInstance();
+        BiConsumer<Boolean, String> analysisReporter = (show, message) -> reporter.accept(show, name + ": " + message);
+        analyzer = (Analyzer) type.getConstructor(BiConsumer.class).newInstance(analysisReporter);
       } catch (ReflectiveOperationException | LinkageError e) {
         throw new IllegalStateException("cannot load the analysis layer in " + name + ": " + e, e);
       }

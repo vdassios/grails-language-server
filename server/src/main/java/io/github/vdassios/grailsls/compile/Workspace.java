@@ -22,6 +22,7 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
+import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
@@ -74,8 +75,17 @@ public final class Workspace implements AutoCloseable {
   /** The analysis layer's jar: first on every context's class path, but not the project's. */
   private final Path analysisJar;
 
-  /** @param analysisJar the analysis layer's jar, in the server's cache directory; library sources are extracted next to it */
+  /** Reports to stderr: for tests. */
   public Workspace(ProjectModel model, Path analysisJar) {
+    this(model, analysisJar, (show, message) -> System.err.println("grails-language-server: " + message));
+  }
+
+  /**
+   * @param analysisJar the analysis layer's jar, in the server's cache directory; library sources are extracted next to it
+   * @param reporter    where failures go, each prefixed with its context's name: {@code true} for those to show to the
+   *                    user (a feature is off), {@code false} for those only to log
+   */
+  public Workspace(ProjectModel model, Path analysisJar, BiConsumer<Boolean, String> reporter) {
     this.analysisJar = analysisJar;
     classSources = new ClassSources(analysisJar.resolveSibling("sources"));
     for (ModuleRecord module : model.modules) {
@@ -91,7 +101,7 @@ public final class Workspace implements AutoCloseable {
       }
       for (SourceSetRecord sourceSet : module.sourceSets) {
         if (!ownRoots(module, sourceSet).isEmpty()) {
-          CompileContext context = context(model, module, sourceSet, analysisJar, antlr);
+          CompileContext context = context(model, module, sourceSet, analysisJar, antlr, reporter);
           contexts.add(context);
           probes.putIfAbsent(module.groovyVersion, context);
           if (sourceSet.name.equals("main")) {
@@ -409,7 +419,7 @@ public final class Workspace implements AutoCloseable {
   }
 
   private static CompileContext context(ProjectModel model, ModuleRecord module, SourceSetRecord sourceSet, Path analysisJar,
-      Map<Path, AntlrLoader> antlr) {
+      Map<Path, AntlrLoader> antlr, BiConsumer<Boolean, String> reporter) {
     SourceSetRecord main = sourceSet.name.equals("main") ? null : module.sourceSet("main");
     List<ModuleRecord> siblings = siblings(model, module);
 
@@ -483,7 +493,7 @@ public final class Workspace implements AutoCloseable {
     }
     AntlrLoader shared = groovyJar == null ? null : antlr.get(groovyJar);
     return new CompileContext(name, own, new ArrayList<>(search), new ArrayList<>(classpath), classFiles, descriptors, notBuilt,
-        classesTask(module.path, sourceSet.name), shared);
+        classesTask(module.path, sourceSet.name), shared, reporter);
   }
 
   /**

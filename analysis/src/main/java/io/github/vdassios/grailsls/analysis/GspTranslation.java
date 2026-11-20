@@ -71,13 +71,17 @@ final class GspTranslation {
 
   /**
    * The page translated with the parser on {@code loader}, with {@code declarations} ({@link #implicitObjects},
-   * {@link PageVariables}) added to the generated class; null when the loader has no GSP parser.
+   * {@link PageVariables}) added to the generated class; null when the loader has no GSP parser, or a parser this
+   * class cannot use (shown to the user through {@code reports}, once).
    */
-  static GspTranslation of(ClassLoader loader, String path, String text, String declarations, Map<String, Location> definitions) {
+  static GspTranslation of(ClassLoader loader, String path, String text, String declarations, Map<String, Location> definitions, Reports reports) {
     Class<?> parser;
     try {
       parser = Class.forName(PARSER, true, loader);
-    } catch (ClassNotFoundException | LinkageError e) {
+    } catch (ClassNotFoundException e) {
+      return null; // not a web module
+    } catch (LinkageError e) {
+      unusable(reports, e);
       return null;
     }
     Object instance;
@@ -108,8 +112,14 @@ final class GspTranslation {
       }
       return new GspTranslation(text, null, null, message, line, -1, Map.of());
     } catch (ReflectiveOperationException | LinkageError | RuntimeException e) {
+      unusable(reports, e);
       return null;
     }
+  }
+
+  /** The parser is there but cannot be used: a Grails version whose parser has another shape, or a bug here. */
+  private static void unusable(Reports reports, Throwable e) {
+    reports.show("gsp parser", "GSP pages are not compiled, only their tags are checked: Grails's page parser (" + PARSER + ") cannot be used: " + e);
   }
 
   /**

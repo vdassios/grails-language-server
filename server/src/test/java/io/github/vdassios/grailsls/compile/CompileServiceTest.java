@@ -11,8 +11,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
 
 import org.eclipse.lsp4j.Position;
@@ -51,6 +53,10 @@ class CompileServiceTest {
   }
 
   private Workspace workspace(Path... classpath) {
+    return workspace(AnalysisJar.extract(tmp.resolve("cache")), (show, message) -> System.err.println(message), classpath);
+  }
+
+  private Workspace workspace(Path analysisJar, BiConsumer<Boolean, String> reporter, Path... classpath) {
     SourceSetRecord main = new SourceSetRecord();
     main.name = "main";
     main.sourceRoots.add(src.toString());
@@ -63,7 +69,7 @@ class CompileServiceTest {
     module.projectDir = tmp.toString();
     module.groovyVersion = "2.5.23";
     module.sourceSets.add(main);
-    Workspace workspace = new Workspace(new ProjectModel(tmp, List.of(module), false), AnalysisJar.extract(tmp.resolve("cache")));
+    Workspace workspace = new Workspace(new ProjectModel(tmp, List.of(module), false), analysisJar, reporter);
     workspace.index();
     return workspace;
   }
@@ -94,6 +100,23 @@ class CompileServiceTest {
     PublishDiagnosticsParams clean = next();
     assertEquals(uri("Clean.groovy"), clean.getUri());
     assertEquals(List.of(), messages(clean));
+  }
+
+  /** Every compile throws when the analysis layer does not load: the user is told once per module, not only in stderr. */
+  @Test
+  void aCompileThatThrowsIsShownOncePerContext() throws Exception {
+    List<String> shown = new CopyOnWriteArrayList<>();
+    List<String> logged = new CopyOnWriteArrayList<>();
+    service.setWorkspace(workspace(tmp.resolve("missing-analysis.jar"), (show, message) -> (show ? shown : logged).add(message)));
+    service.open(uri("A.groovy"), "class A {}\n", 1);
+    service.open(uri("B.groovy"), "class B {}\n", 1);
+    service.afterPendingCompiles().get(30, TimeUnit.SECONDS);
+    assertEquals(1, shown.size(), shown.toString());
+    assertTrue(shown.get(0).startsWith(": main: the compile of " + src.resolve("A.groovy") + " failed"), shown.get(0));
+    assertTrue(shown.get(0).contains("cannot load the analysis layer in : main"), shown.get(0));
+    assertEquals(1, logged.size(), "the next failure is logged: " + logged);
+    assertTrue(logged.get(0).startsWith(": main: the compile of " + src.resolve("B.groovy") + " failed"), logged.get(0));
+    assertNull(published.poll(1, TimeUnit.SECONDS), "no diagnostics");
   }
 
   @Test

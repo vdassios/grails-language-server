@@ -20,6 +20,8 @@ Resolving the project runs its Gradle build scripts, and compiling a Grails proj
 
 The server logs each startup stage once with `window/logMessage`, as `startup: <stage> after <ms> ms` (stages: model resolved, declarations indexed, symbols indexed, first diagnostics).
 
+A failure that turns a feature off is shown with `window/showMessage` (type Error), once per module source set, so a `ready` status is never the only sign: a compile that throws (for example, the analysis layer did not load; later failures in that source set are only logged), Grails's GSP page parser being there but unusable (pages then get tag checks only), and taglib class files that cannot be read (their tags are unknown). A failure that only turns off a workaround, while the features still work, is logged once with `window/logMessage` (type Warning): a field the server empties between compiles, or one of Groovy's that it resets, missing from the project's version of its class. An error while indexing ends in `failed`, never a stuck `indexing`.
+
 `initialize` answers with `serverInfo`: `name` is `grails-language-server`, `version` the server's version (from the jar's manifest).
 
 Initialization options: `trusted` (boolean, required to do anything), `gradle.timeoutSeconds` (default 300), `cacheDir` (default `$XDG_CACHE_HOME/grails-language-server`, else `~/.cache/grails-language-server`).

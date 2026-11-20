@@ -156,7 +156,7 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
     }, CompileService.DEBOUNCE_MILLIS);
     project = new ProjectService(bridge, workspaceRoot(params), trusted, status -> client.status(status), model -> {
       marks.mark(StartupMarks.MODEL_RESOLVED);
-      Workspace workspace = new Workspace(model, AnalysisJar.extract(cacheDir));
+      Workspace workspace = new Workspace(model, AnalysisJar.extract(cacheDir), this::report);
       String jdkError = workspace.jdkClassFileError();
       if (jdkError != null) {
         workspace.close();
@@ -191,6 +191,18 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
     capabilities.setCompletionProvider(new CompletionOptions(true, List.of(".")));
     capabilities.setSignatureHelpProvider(new SignatureHelpOptions(List.of("(", ",")));
     return CompletableFuture.completedFuture(new InitializeResult(capabilities, new ServerInfo("grails-language-server", version())));
+  }
+
+  /**
+   * A failure: shown to the user ({@code window/showMessage}) when it turns a feature off, so that a {@code ready}
+   * status with nothing working is never the only sign; otherwise only logged ({@code window/logMessage}).
+   */
+  private void report(boolean show, String message) {
+    if (show) {
+      client.showMessage(new MessageParams(MessageType.Error, message));
+    } else {
+      client.logMessage(new MessageParams(MessageType.Warning, message));
+    }
   }
 
   /** The server's version, from the jar's manifest; null when not run from the jar (tests). */
