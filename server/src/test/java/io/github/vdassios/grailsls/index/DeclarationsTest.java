@@ -51,4 +51,39 @@ class DeclarationsTest {
   void anIndentedTypeInsideABlockOfNoTypeIsSkipped() {
     assertEquals(List.of(), Declarations.of("def make = {\n  class Odd {}\n}\n"));
   }
+
+  /** A string holding {@code /*} opens no comment: the classes after it are still found. */
+  @Test
+  void aStringThatLooksLikeACommentHidesNothing() {
+    String text = "package p\nclass Urls {\n  static final String API = \"/api/**\"\n}\nclass Lost {}\n/** Docs. */\nclass After {}\n";
+    assertEquals(List.of("p.Urls", "p.Lost", "p.After"), Declarations.of(text));
+    assertEquals(List.of("Kept"), Declarations.of("def glob = '/static/*'\nclass Kept {}\n// */\n"));
+  }
+
+  /** Source embedded in a multi-line string (a Spock spec's input) declares nothing. */
+  @Test
+  void classesInsideMultiLineStringsAreNotDeclared() {
+    String single = "package s\nclass ParserSpec {\n  def source = '''\nclass Phantom {}\n'''\n}\n";
+    assertEquals(List.of("s.ParserSpec"), Declarations.of(single));
+    String doubled = "package s\nclass ParserSpec {\n  def source = \"\"\"\npackage other\nclass Phantom { def x = \"${1}\" }\n\"\"\"\n}\nclass Real {}\n";
+    assertEquals(List.of("s.ParserSpec", "s.Real"), Declarations.of(doubled));
+  }
+
+  /** Quotes in comments open no string, and braces in strings and interpolations do not count. */
+  @Test
+  void commentsAndStringsAreReadInOnePass() {
+    assertEquals(List.of("B"), Declarations.of("// don't\nclass B {}\n"));
+    assertEquals(List.of("B", "C"), Declarations.of("/* it's ''' */\nclass B {}\n/* ''' */\nclass C {}\n"));
+    assertEquals(List.of("Odd"), Declarations.of("def s = \"${'{'}${[a: '}'].a}\"\n  class Odd {}\n"));
+    assertEquals(List.of("Odd"), Declarations.of("def s = 'it\\'s {'\n  class Odd {}\n"), "an escaped quote does not end the string");
+    assertEquals(List.of("A", "B"), Declarations.of("class A {\n}\n/* note */ class B {}\n"), "a comment before the keyword nests nothing");
+  }
+
+  /** A very long line is read without running out of stack. */
+  @Test
+  void aLongLineIsRead() {
+    String text = "def s = \"" + "x\\\"".repeat(10_000) + "\"\n  class Odd {}\n";
+    assertEquals(List.of("Odd"), Declarations.of(text));
+    assertEquals(List.of("Long"), Declarations.of("/* " + "*".repeat(20_000) + " */\nclass Long {}\n"));
+  }
 }
