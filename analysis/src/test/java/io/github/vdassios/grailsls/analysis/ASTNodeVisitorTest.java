@@ -1,6 +1,7 @@
 package io.github.vdassios.grailsls.analysis;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -167,5 +168,31 @@ class ASTNodeVisitorTest {
     visitor.visitDocument(unit, uri);
     assertSame(statement, visitor.getParent(call));
     assertTrue(assertTimeoutPreemptively(Duration.ofSeconds(10), () -> visitor.contains(run, call)));
+  }
+
+  /**
+   * A class named in its nested class's {@code extends} is a second class node, equal to the class (a class node equals
+   * any other of the same name) but not the class: it is no ancestor of the class's members, and it is the node at its
+   * own position.
+   */
+  @Test
+  void aReferenceToAClassIsNotTheClass() {
+    CompilerConfiguration config = new CompilerConfiguration();
+    CompilationUnit unit = new CompilationUnit(config);
+    URI uri = URI.create("file:/src/A.groovy");
+    unit.addSource(new SourceUnit("A.groovy", new StringReaderSourceWithURI("class A {\n  static class B extends A {}\n  def run() {}\n}\n", uri, config),
+        config, unit.getClassLoader(), unit.getErrorCollector()));
+    unit.compile(Phases.CANONICALIZATION);
+
+    ClassNode a = unit.getAST().getClass("A");
+    ClassNode reference = unit.getAST().getClass("A$B").getUnresolvedSuperClass();
+    assertNotSame(a, reference);
+    assertEquals(a, reference, "class nodes of one name are equal");
+    ASTNodeVisitor visitor = new ASTNodeVisitor();
+    visitor.visitDocument(unit, uri);
+    assertSame(reference, visitor.getNodeAtLineAndColumn(uri, 1, 25));
+    MethodNode run = a.getMethods("run").get(0);
+    assertTrue(visitor.contains(a, run));
+    assertFalse(visitor.contains(reference, run), "the reference is no ancestor of the class's method");
   }
 }

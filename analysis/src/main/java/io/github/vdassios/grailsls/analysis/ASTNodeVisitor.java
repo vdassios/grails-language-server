@@ -177,7 +177,8 @@ public class ASTNodeVisitor extends ClassCodeVisitorSupport {
 	}
 
 	public ASTNode getNodeAtLineAndColumn(URI uri, int line, int column) {
-		Map<ASTNode, Range> nodeToRange = new HashMap<>();
+		// by identity, as the lookup: two class nodes of one name (a class and a reference to it) are equal
+		Map<ASTNode, Range> nodeToRange = new IdentityHashMap<>();
 		List<ASTNode> nodes = nodesByURI.get(uri);
 		if (nodes == null) {
 			return null;
@@ -242,7 +243,7 @@ public class ASTNodeVisitor extends ClassCodeVisitorSupport {
 	public boolean contains(ASTNode ancestor, ASTNode descendant) {
 		ASTNode current = getParent(descendant);
 		while (current != null) {
-			if (current.equals(ancestor)) {
+			if (current == ancestor) {
 				return true;
 			}
 			current = getParent(current);
