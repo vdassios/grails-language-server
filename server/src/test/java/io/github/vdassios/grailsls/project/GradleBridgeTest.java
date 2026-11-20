@@ -136,17 +136,17 @@ class GradleBridgeTest {
   }
 
   @Test
-  void buildFilesSkipBuildOutputAndToolDirectories() throws Exception {
+  void buildFilesSkipBuildOutputAndToolDirectoriesButNotModulesNamedSo() throws Exception {
     Path root = project(FakeWrapper.WRITES_MODEL);
     for (String file : List.of("settings.gradle", "gradle.properties", "app/build.gradle.kts", "gradle/libs.versions.toml",
         "gradle/wrapper/gradle-wrapper.properties", "buildSrc/src/main/groovy/Conventions.groovy", "app/build/tmp/x.gradle",
-        "node_modules/a/build.gradle", ".gradle/b.gradle", "app/src/main/groovy/A.groovy")) {
+        "node_modules/a/build.gradle", ".gradle/b.gradle", "app/src/main/groovy/A.groovy", "out/build.gradle.kts", "out/build/tmp/y.gradle", "bin/build.gradle")) {
       Path path = root.resolve(file);
       Files.createDirectories(path.getParent());
       Files.writeString(path, "");
     }
     List<String> found = GradleBridge.buildFiles(root).stream().map(p -> root.relativize(p).toString()).sorted().collect(java.util.stream.Collectors.toList());
-    assertEquals(List.of("app/build.gradle.kts", "build.gradle", "buildSrc/src/main/groovy/Conventions.groovy", "gradle.properties",
-        "gradle/libs.versions.toml", "gradle/wrapper/gradle-wrapper.properties", "settings.gradle"), found);
+    assertEquals(List.of("app/build.gradle.kts", "bin/build.gradle", "build.gradle", "buildSrc/src/main/groovy/Conventions.groovy", "gradle.properties",
+        "gradle/libs.versions.toml", "gradle/wrapper/gradle-wrapper.properties", "out/build.gradle.kts", "settings.gradle"), found, "a module named out or bin is hashed");
   }
 }

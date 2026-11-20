@@ -39,7 +39,7 @@ public final class GradleBridge {
   private static final String INIT_SCRIPT = "model.init.gradle";
   private static final boolean WINDOWS = System.getProperty("os.name", "").startsWith("Windows");
   private static final String WRAPPER = WINDOWS ? "gradlew.bat" : "gradlew";
-  /** Directories never searched for build files: build output, caches, VCS and tool dirs. */
+  /** Directories not searched for build files (build output, caches, VCS and tool dirs), unless one holds a build script: a module may be named so. */
   private static final Set<String> SKIP_DIRS = Set.of("build", "out", "bin", "target", ".gradle", ".git", ".idea", "node_modules");
 
   private final Gson gson = new Gson();
@@ -137,7 +137,9 @@ public final class GradleBridge {
       Files.walkFileTree(buildRoot, new SimpleFileVisitor<>() {
         @Override
         public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
-          return !dir.equals(buildRoot) && SKIP_DIRS.contains(dir.getFileName().toString()) ? FileVisitResult.SKIP_SUBTREE : FileVisitResult.CONTINUE;
+          boolean skip = !dir.equals(buildRoot) && SKIP_DIRS.contains(dir.getFileName().toString())
+              && !Files.isRegularFile(dir.resolve("build.gradle")) && !Files.isRegularFile(dir.resolve("build.gradle.kts"));
+          return skip ? FileVisitResult.SKIP_SUBTREE : FileVisitResult.CONTINUE;
         }
 
         @Override
