@@ -385,6 +385,15 @@ abstract class GspTest {
     assertEquals(List.of("2:36 " + io.github.vdassios.grailsls.api.Diagnostic.ERROR), severities(error), error.diagnostics.toString());
   }
 
+  /** A page variable named like a member of Grails's page class is that member, as in Grails; declared, it would not compile. */
+  @Test
+  void aPageVariableNamedLikeAPageMemberIsThatMember() throws Exception {
+    for (String name : List.of("binding", "pluginContextPath")) {
+      String page = "<g:set var=\"" + name + "\" value=\"${1}\"/>\n<p>${" + name + "}</p>\n";
+      assertEquals(List.of(), hints(compile(page(), page)), name);
+    }
+  }
+
   @Test
   void aPageTheGspCompilerRejectsHasOneError() throws Exception {
     CompileResult result = compile(page(), "<p>\n<g:if test=\"${true}\">\n<p>x</p>\n");
