@@ -25,6 +25,14 @@ configurations {
 dependencies {
   grails8Taglibs "org.apache.grails:grails-gsp:8.0.0"
 }
+// Grails 8's page parser and scanner, Java 21 class files: GspTranslationTest reads from the scanner's class file
+// whether it escapes \${, as the server reads it from a project's class path. The jar alone, never on a class path.
+configurations {
+  grails8Gsp { transitive = false }
+}
+dependencies {
+  grails8Gsp "org.apache.grails.views:grails-gsp-core:8.0.0"
+}
 // Grails's GSP page parser as the Grails 4 and Grails 7 fixtures have it, with what it needs (its own Groovy):
 // GspTranslationTest runs it in a class loader of its own, as the server runs a project's.
 configurations {
@@ -41,11 +49,13 @@ tasks.withType(Test).configureEach {
   def taglibs = configurations.grails8Taglibs
   def gsp4 = configurations.grails4Gsp
   def gsp7 = configurations.grails7Gsp
+  def gsp8 = configurations.grails8Gsp
   inputs.files(taglibs).withPropertyName("grails8Taglibs").withNormalizer(ClasspathNormalizer)
   inputs.files(gsp4).withPropertyName("grails4Gsp").withNormalizer(ClasspathNormalizer)
   inputs.files(gsp7).withPropertyName("grails7Gsp").withNormalizer(ClasspathNormalizer)
+  inputs.files(gsp8).withPropertyName("grails8Gsp").withNormalizer(ClasspathNormalizer)
   jvmArgumentProviders.add({ ["-Dgrails8.taglibs=${taglibs.singleFile}".toString(), "-Dgrails4.gsp=${gsp4.asPath}".toString(),
-      "-Dgrails7.gsp=${gsp7.asPath}".toString()] } as CommandLineArgumentProvider)
+      "-Dgrails7.gsp=${gsp7.asPath}".toString(), "-Dgrails8.gsp=${gsp8.singleFile}".toString()] } as CommandLineArgumentProvider)
 }
 
 groovyRuntimes.each { name, coordinates ->

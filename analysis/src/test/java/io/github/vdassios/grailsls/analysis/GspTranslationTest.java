@@ -1,6 +1,7 @@
 package io.github.vdassios.grailsls.analysis;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -126,7 +127,8 @@ abstract class GspTranslationTest {
       "%{\n  def a = 1 &amp;&amp; 2\n  out <<   a<br>out << 3\n}%\n<p>${a}</p>\n",
       "%{-- one\ntwo --}%\n<%-- three\nfour --%>\n<p>\n  ${x.y}\n</p>\n",
       "<p>${(a)} ${a.b?} <%= c %> ${ d }</p>\n<g:if test=\"${e}\">f</g:if><g:else>${g}</g:else>\n",
-      "<g:set var=\"t\" value=\"${\"x ${y}\"}\"/>\n<g:link title=\"a ${b} c\" params=\"[d: e]\">${t}</g:link>\n");
+      "<g:set var=\"t\" value=\"${\"x ${y}\"}\"/>\n<g:link title=\"a ${b} c\" params=\"[d: e]\">${t}</g:link>\n",
+      "<g:each in=\"${[1, 2]}\" var=\"n\">\\${n}</g:each>\n");
 
   @Test
   void theGeneratedTextIsGrailsOwn() throws ReflectiveOperationException {
@@ -188,6 +190,28 @@ abstract class GspTranslationTest {
     assertTrue(generatedAt(gstrings, at(attributes, "b}", 0, 0)).startsWith("b}"), gstrings.groovy);
     assertTrue(generatedAt(gstrings, at(attributes, "t}", 0, 0)).startsWith("t)"), gstrings.groovy);
     assertNull(gstrings.toGroovy(at(attributes, "<g:link", 0, 1)[0], at(attributes, "<g:link", 0, 1)[1]), "a tag is no code");
+  }
+
+  /** Up to Grails 7 {@code \${} is an expression, the {@code \} text. */
+  @Test
+  void anEscapedExpressionMapsUpToGrails7() {
+    String page = PAGES.get(7);
+    GspTranslation translation = translate(page);
+    assertTrue(generatedAt(translation, at(page, "n}", 0, 0)).startsWith("n)"), translation.groovy);
+    roundTrip(translation, at(page, "n}", 0, 0));
+  }
+
+  /** Grails 8's scanner, and only it, has {@code isEscapedGExpression}: there {@code \${} is text. */
+  @Test
+  void onlyGrails8EscapesAnExpression() throws IOException {
+    assertFalse(GspTranslation.escapes(loader));
+    URL grails8 = new File(System.getProperty("grails8.gsp")).toURI().toURL();
+    try (URLClassLoader jar = new URLClassLoader(new URL[] { grails8 }, ClassLoader.getPlatformClassLoader())) {
+      assertTrue(GspTranslation.escapes(jar));
+    }
+    try (URLClassLoader empty = new URLClassLoader(new URL[0], ClassLoader.getPlatformClassLoader())) {
+      assertFalse(GspTranslation.escapes(empty));
+    }
   }
 
   /** The page line of a generated position just before a piece of code: the line the code is on. */

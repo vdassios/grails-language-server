@@ -364,6 +364,13 @@ abstract class GspTest {
     assertEquals(0, syntax.diagnostics.get(0).startLine, syntax.diagnostics.toString());
   }
 
+  /** Up to Grails 7, both fixtures' version, {@code \${} is an expression and the {@code \} text: its code compiles and maps. */
+  @Test
+  void anEscapedExpressionIsCodeUpToGrails7() throws Exception {
+    CompileResult result = compile(page(), "<p>\n  <span>\\${new NoSuchType()}</span>\n</p>\n");
+    assertEquals(List.of("2:12 " + io.github.vdassios.grailsls.api.Diagnostic.ERROR), severities(result), result.diagnostics.toString());
+  }
+
   @Test
   void aPageTheGspCompilerRejectsHasOneError() throws Exception {
     CompileResult result = compile(page(), "<p>\n<g:if test=\"${true}\">\n<p>x</p>\n");

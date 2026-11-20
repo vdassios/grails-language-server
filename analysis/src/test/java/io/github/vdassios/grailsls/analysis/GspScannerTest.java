@@ -17,9 +17,13 @@ class GspScannerTest {
         .map(a -> " " + a.name + (a.value == null ? "" : "=" + a.value)).collect(Collectors.joining())).collect(Collectors.toList());
   }
 
-  /** The code regions' text. */
+  /** The code regions' text, as Grails 4 to 7 find them ({@code \${} is an expression). */
   private static List<String> code(String text) {
-    return GspScanner.code(text).stream().map(region -> text.substring(region[0], region[1])).collect(Collectors.toList());
+    return code(text, false);
+  }
+
+  private static List<String> code(String text, boolean escapes) {
+    return GspScanner.code(text, escapes).stream().map(region -> text.substring(region[0], region[1])).collect(Collectors.toList());
   }
 
   @Test
@@ -79,22 +83,32 @@ class GspScannerTest {
   void codeRegionsOfEveryKindTrimmed() {
     String text = "<p title=\"a ${ x.y } b\">${z}</p>\n<% def a = 1 %>\n<%= a %>\n%{\n  a++\n}%\n<g:if test=\"${a}\">x</g:if>";
     assertEquals(List.of("x.y", "z", "def a = 1", "a", "a++", "a"), code(text));
-    int[] first = GspScanner.code(text).get(0);
+    int[] first = GspScanner.code(text, false).get(0);
     assertEquals(text.indexOf("x.y"), first[0]);
     assertEquals(text.indexOf("x.y") + 3, first[1]);
   }
 
   @Test
   void commentsDirectivesDeclarationsAndEmptyBodiesHoldNoCode() {
-    assertEquals(List.of(), code("<%-- ${a} --%> %{-- ${b} --}% <%@ page import=\"x.Y\" %> <%! int c %> ${} ${ } <% %> %{ }% \\${d}"));
+    assertEquals(List.of(), code("<%-- ${a} --%> %{-- ${b} --}% <%@ page import=\"x.Y\" %> <%! int c %> <%!int d%> ${} ${ } <% %> %{ }%"));
   }
 
   @Test
   void anExpressionNotClosedRunsToTheEnd() {
     String text = "<p>${a}</p>\n${book.\n</p>\n";
     assertEquals(List.of("a", "book.\n</p>"), code(text));
-    assertEquals(text.indexOf("${book"), GspScanner.unclosedExpression(text));
-    assertEquals(-1, GspScanner.unclosedExpression("${a} ${'}'} ${[b: {}]}"), "strings and nested braces");
-    assertFalse(GspScanner.unclosedExpression("${\"}\"") < 0, "the } in a string closes nothing");
+    assertEquals(text.indexOf("${book"), GspScanner.unclosedExpression(text, false));
+    assertEquals(-1, GspScanner.unclosedExpression("${a} ${'}'} ${[b: {}]}", false), "strings and nested braces");
+    assertFalse(GspScanner.unclosedExpression("${\"}\"", false) < 0, "the } in a string closes nothing");
+    assertEquals(1, GspScanner.unclosedExpression("\\${a", false));
+    assertEquals(-1, GspScanner.unclosedExpression("\\${a", true), "escaped: text");
+  }
+
+  /** Grails 8 takes {@code \${} for text; up to Grails 7 the {@code \} is text and the expression code. */
+  @Test
+  void anEscapedExpressionIsTextOnGrails8Only() {
+    String text = "<p>\\${a}</p>";
+    assertEquals(List.of("a"), code(text, false));
+    assertEquals(List.of(), code(text, true));
   }
 }

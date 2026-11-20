@@ -1,10 +1,13 @@
 package io.github.vdassios.grailsls.analysis;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.io.StringWriter;
 import java.io.Writer;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -79,7 +82,8 @@ final class GspTranslation {
       unusable(reports, e);
       return null;
     }
-    Marks marks = new Marks(text);
+    boolean escapes = escapes(loader);
+    Marks marks = new Marks(text, escapes);
     try {
       Object instance = construct(parser, loader, className(path), path, marks.text);
       Writer out = new StringWriter();
@@ -100,7 +104,7 @@ final class GspTranslation {
       String message = marks.unmark(String.valueOf(cause.getMessage()).trim(), new ArrayList<>());
       int line = lineOf(cause);
       // the parser gives the line where the token before the ${ starts, often lines above it
-      int unclosed = message.endsWith("Unclosed GSP expression") ? GspScanner.unclosedExpression(text) : -1;
+      int unclosed = message.endsWith("Unclosed GSP expression") ? GspScanner.unclosedExpression(text, escapes) : -1;
       if (unclosed >= 0) {
         int at = (int) text.substring(0, unclosed).chars().filter(c -> c == '\n').count();
         message = message.replaceFirst(":" + (line + 1) + "] ", ":" + (at + 1) + "] ");
@@ -110,6 +114,21 @@ final class GspTranslation {
     } catch (ReflectiveOperationException | LinkageError | RuntimeException e) {
       unusable(reports, e);
       return null;
+    }
+  }
+
+  private static final String SCANNER = "org/grails/gsp/compiler/GroovyPageScanner.class";
+
+  /**
+   * Whether the loader's GSP scanner takes {@code \${} for text: Grails 8's has {@code isEscapedGExpression}, up to
+   * Grails 7 none does. Read from the class file, which names its methods, so that it needs no JVM that loads the
+   * class.
+   */
+  static boolean escapes(ClassLoader loader) {
+    try (InputStream in = loader.getResourceAsStream(SCANNER)) {
+      return in != null && new String(in.readAllBytes(), StandardCharsets.ISO_8859_1).contains("isEscapedGExpression");
+    } catch (IOException e) {
+      return false;
     }
   }
 
@@ -318,8 +337,9 @@ final class GspTranslation {
   /**
    * The page with each piece of code marked by a comment at its start ({@code /*gls<n>*}{@code /}, a prefix the page
    * does not hold), which keeps every line where it is and takes the same path through the parser as the code alone:
-   * Grails never looks at what an expression or scriptlet starts with. The one place it looks at the end, a
-   * {@code ${a?}} it compiles as {@code (a)?}, is left out of the piece.
+   * Grails never looks at what an expression or scriptlet starts with, and the brackets of a {@code [...]} attribute
+   * value it does look at stay outside the piece. The one place it looks at the end, a {@code ${a?}} it compiles as
+   * {@code (a)?}, is left out of the piece.
    */
   private static final class Marks {
     final String text;
@@ -327,14 +347,14 @@ final class GspTranslation {
     private final String prefix;
     private final List<int[]> code;
 
-    Marks(String page) {
+    Marks(String page, boolean escapes) {
       this.page = page;
       String prefix = "/*gls";
       while (page.contains(prefix)) {
         prefix += "_";
       }
       this.prefix = prefix;
-      this.code = GspScanner.code(page);
+      this.code = GspScanner.code(page, escapes);
       StringBuilder marked = new StringBuilder(page.length() + code.size() * (prefix.length() + 4));
       int copied = 0;
       for (int n = 0; n < code.size(); n++) {

@@ -71,14 +71,18 @@ final class GspScanner {
   }
 
   private final String text;
+  /** Whether {@code \${} is text, as on Grails 8 ({@link #code}). */
+  private final boolean escapes;
   private final List<Tag> tags = new ArrayList<>();
 
-  private GspScanner(String text) {
+  private GspScanner(String text, boolean escapes) {
     this.text = text;
+    this.escapes = escapes;
   }
 
+  /** The page's tags; {@code \${} outside a tag is taken for text, as Grails 8 takes it. */
   static List<Tag> scan(String text) {
-    GspScanner scanner = new GspScanner(text);
+    GspScanner scanner = new GspScanner(text, true);
     scanner.run();
     return scanner.tags;
   }
@@ -87,54 +91,54 @@ final class GspScanner {
    * The Groovy code of a page, as {@code {start, end, open}} offsets in text order: the body of each expression
    * ({@code ${ }}, in attribute values too) and scriptlet ({@code <% %>}, {@code <%= %>}, {@code %{ }%}), without the
    * surrounding white space, which the GSP compiler drops, and where the construct opens ({@code open}, the offset of
-   * its {@code ${}, {@code <%} or {@code %{}). Comments, directives ({@code <%@ %>}), declarations ({@code <%! %>},
-   * which Grails rejects) and escaped expressions ({@code \${}) hold none; an empty body is left out.
+   * its {@code ${}, {@code <%} or {@code %{}). Comments, directives ({@code <%@ %>}) and declarations ({@code <%! %>},
+   * which Grails rejects) hold none; an empty body is left out. {@code escapes}: {@code \${} is text, not an expression
+   * (Grails 8; up to Grails 7 the {@code \} is text and the expression code).
    */
-  static List<int[]> code(String text) {
-    GspScanner scanner = new GspScanner(text);
+  static List<int[]> code(String text, boolean escapes) {
+    GspScanner scanner = new GspScanner(text, escapes);
     List<int[]> regions = new ArrayList<>();
     int i = 0;
     while (i < text.length()) {
-      int skipped = scanner.skipGsp(i);
+      int skipped = scanner.skipGsp(i, escapes);
       if (skipped == i) {
         i++;
         continue;
       }
-      int start = -1;
-      int end = -1;
       if (text.startsWith("${", i)) {
-        start = i + 2;
-        end = text.charAt(skipped - 1) == '}' ? skipped - 1 : skipped;
+        scanner.add(regions, i + 2, text.charAt(skipped - 1) == '}' ? skipped - 1 : skipped, i);
       } else if (text.startsWith("<%", i) && !text.startsWith("<%--", i) && !text.startsWith("<%@", i) && !text.startsWith("<%!", i)) {
-        start = text.startsWith("<%=", i) ? i + 3 : i + 2;
-        end = text.startsWith("%>", skipped - 2) ? skipped - 2 : skipped;
+        scanner.add(regions, text.startsWith("<%=", i) ? i + 3 : i + 2, text.startsWith("%>", skipped - 2) ? skipped - 2 : skipped, i);
       } else if (text.startsWith("%{", i) && !text.startsWith("%{--", i)) {
-        start = i + 2;
-        end = text.startsWith("}%", skipped - 2) ? skipped - 2 : skipped;
-      }
-      while (start >= 0 && start < end && Character.isWhitespace(text.charAt(start))) {
-        start++;
-      }
-      while (start >= 0 && end > start && Character.isWhitespace(text.charAt(end - 1))) {
-        end--;
-      }
-      if (start >= 0 && end > start) {
-        regions.add(new int[] { start, end, i });
+        scanner.add(regions, i + 2, text.startsWith("}%", skipped - 2) ? skipped - 2 : skipped, i);
       }
       i = skipped;
     }
     return regions;
   }
 
-  /** The offset of the first {@code ${} that no {@code }} closes, else -1. */
-  static int unclosedExpression(String text) {
-    GspScanner scanner = new GspScanner(text);
+  /** Adds a region without its surrounding white space, unless that leaves it empty. */
+  private void add(List<int[]> regions, int start, int end, int open) {
+    while (start < end && Character.isWhitespace(text.charAt(start))) {
+      start++;
+    }
+    while (end > start && Character.isWhitespace(text.charAt(end - 1))) {
+      end--;
+    }
+    if (end > start) {
+      regions.add(new int[] { start, end, open });
+    }
+  }
+
+  /** The offset of the first {@code ${} that no {@code }} closes, else -1; {@code escapes} as for {@link #code}. */
+  static int unclosedExpression(String text, boolean escapes) {
+    GspScanner scanner = new GspScanner(text, escapes);
     int i = 0;
     while (i < text.length()) {
       if (text.startsWith("${", i) && scanner.expressionClose(i + 2) < 0) {
         return i;
       }
-      int skipped = scanner.skipGsp(i);
+      int skipped = scanner.skipGsp(i, escapes);
       i = skipped == i ? i + 1 : skipped;
     }
     return -1;
@@ -153,7 +157,7 @@ final class GspScanner {
   private void run() {
     int i = 0;
     while (i < text.length()) {
-      int skipped = skipGsp(i);
+      int skipped = skipGsp(i, escapes);
       if (skipped != i) {
         i = skipped;
         continue;
@@ -166,9 +170,12 @@ final class GspScanner {
     }
   }
 
-  /** After the GSP construct starting at {@code i} (expression, scriptlet, comment), or {@code i} when none starts there. */
-  private int skipGsp(int i) {
-    if (text.startsWith("\\${", i)) {
+  /**
+   * After the GSP construct starting at {@code i} (expression, scriptlet, comment), or {@code i} when none starts there;
+   * with {@code escape}, {@code \${} is text.
+   */
+  private int skipGsp(int i, boolean escape) {
+    if (escape && text.startsWith("\\${", i)) {
       return i + 3;
     }
     if (text.startsWith("${", i)) {
@@ -274,7 +281,7 @@ final class GspScanner {
       if (c == '<' && !text.startsWith("<%", i)) {
         break; // an unfinished tag, followed by the next one
       }
-      int skipped = skipGsp(i);
+      int skipped = skipGsp(i, false);
       if (skipped != i) {
         i = skipped;
         continue;
@@ -313,7 +320,7 @@ final class GspScanner {
     int valueStart = i + 1;
     i = valueStart;
     while (i < text.length() && text.charAt(i) != quote) {
-      int skipped = skipGsp(i);
+      int skipped = skipGsp(i, false);
       i = skipped != i ? skipped : i + 1;
     }
     int valueEnd = Math.min(i, text.length());
