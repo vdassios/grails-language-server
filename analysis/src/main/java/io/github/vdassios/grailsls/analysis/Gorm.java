@@ -234,11 +234,11 @@ public final class Gorm {
           for (FinderName.Condition condition : name.conditions) {
             Property property = properties.get(condition.property);
             ClassNode type = property == null ? ClassHelper.OBJECT_TYPE : property.type;
-            String comparator = condition.comparator == null ? "Equal" : condition.comparator;
+            String comparator = condition.comparator == null ? "" : condition.comparator;
             if (comparator.equals("Between")) {
               parameters.add(new Parameter(type, condition.property + "From"));
               parameters.add(new Parameter(type, condition.property + "To"));
-            } else if (comparator.equals("InList")) {
+            } else if (comparator.endsWith("InList")) {
               parameters.add(new Parameter(ClassHelper.LIST_TYPE.getPlainNodeReference(), condition.property));
             } else if (comparator.equals("InRange")) {
               parameters.add(new Parameter(ClassHelper.RANGE_TYPE.getPlainNodeReference(), condition.property));

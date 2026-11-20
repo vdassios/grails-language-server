@@ -1,5 +1,6 @@
-# Dynamic finder names read against the properties: title, isbn, author, pages, pHash, orderNote, andOr
+# Dynamic finder names read against the properties: title, isbn, author, pages, pHash, orderNote, andOr, URL, titleAndAuthor
 # name | prefix | conditions (property[!][:Comparator], joined by the connector) | arguments | problems
+# GORM's verdict: FinderTableTest (server) runs each name through GORM's own DynamicFinder on each fixture's class path.
 findByTitle | findBy | title | 1 |
 findAllByTitle | findAllBy | title | 1 |
 countByTitle | countBy | title | 1 |
@@ -15,23 +16,28 @@ findAllByAuthorIsNull | findAllBy | author:IsNull | 0 |
 findAllByAuthorIsNotNull | findAllBy | author:IsNotNull | 0 |
 findAllByAuthorIsNotNullAndTitle | findAllBy | author:IsNotNull And title | 1 |
 findAllByTitleInList | findAllBy | title:InList | 1 |
-findAllByTitleNotInList | findAllBy | title!:InList | 1 |
+findAllByTitleNotInList | findAllBy | title:NotInList | 1 |
 findAllByPagesInRange | findAllBy | pages:InRange | 1 |
 findAllByTitleNotEqual | findAllBy | title:NotEqual | 1 |
 findAllByTitleNot | findAllBy | title! | 1 |
-findAllByTitleEqual | findAllBy | title:Equal | 1 |
+findAllByTitleEqual | findAllBy | titleEqual? | 1 | property
 findAllByTitleRlike | findAllBy | title:Rlike | 1 |
 findByPHash | findBy | pHash | 1 |
 findBypHash | | | |
 findByOrderNote | findBy | orderNote | 1 |
-findByOrderNoteOrTitle | findBy | orderNote Or title | 2 |
+findByOrderNoteOrTitle | findBy | orderNote Or title | 2 | connector
 findByAndOr | findBy | andOr | 1 |
-findByAndOrAndTitle | findBy | andOr And title | 2 |
+findByAndOrAndTitle | findBy | andOr And title | 2 | connector
 findByTitleAndIsbnAndPages | findBy | title And isbn And pages | 3 |
 findByTitleAndIsbnOrPages | findBy | title And isbn Or pages | 3 | mix
 findByTitel | findBy | titel? | 1 | property
 findByTitleAndPublisherLike | findBy | title And publisher?:Like | 2 | property
 findByTitelOrIsbn | findBy | titel? Or isbn | 2 | property
+findByTitleAndAndIsbn | findBy | title And ? And isbn | 3 | property
+findByNot | findBy | ?! | 1 | property
+findByURL | findBy | uRL? | 1 | property
+findByTitleAndAuthor | findBy | title And author | 2 |
+findByTitleAndIsbnAnd | findBy | title And isbn | 2 |
 findOrCreateByTitleAndIsbn | findOrCreateBy | title And isbn | 2 |
 findOrSaveByTitle | findOrSaveBy | title | 1 |
 findOrCreateByTitleLike | findOrCreateBy | title:Like | 1 | only

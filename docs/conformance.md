@@ -71,7 +71,7 @@ Every feature of the [Grails VS Code extension](https://github.com/Johan070119/G
 | Domain members (`DomainMembersProvider`, `GrailsArtifactNonCodeMemberProcessor`) | covered | From Grails's own transformations, not from a table |
 | Domain descriptor: persistent properties, `hasMany`, `belongsTo`, `transients` (`DomainDescriptor`, `DomainClassUtils`) | covered | |
 | Dynamic finder grammar and completion (`GormDynamicFinderCompletionProvider`) | covered | |
-| Finder diagnostics: unknown property, mixed `And`/`Or`, argument count | covered | Warnings |
+| Finder diagnostics: unknown property, mixed `And`/`Or`, argument count | covered | Warnings, checked against GORM's own `DynamicFinder` on each fixture |
 | GORM static API and named arguments (`DomainStaticMemberCompletionProvider`, `Gorm*NamedArgumentProvider`) | covered | Query settings (`max`, `sort`, ...) as argument keys |
 | Criteria blocks (`references/domain/criteria/*`) | covered | Root class per block, switching at association blocks |
 | `namedQueries` | not covered | |

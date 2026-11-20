@@ -53,8 +53,11 @@ tasks.withType(Test).configureEach {
   def oldAsmJars = configurations.testGroovyOldAsm
   def jarFiles = serverJar.map { it.outputs.files }
   def serverVersion = project.version.toString()
+  // the analysis tests' finder table, which FinderTableTest checks against each fixture's GORM
+  def finderNames = project(":analysis").file("src/test/resources/finder-names.txt")
+  inputs.file(finderNames).withPropertyName("finderNames")
   jvmArgumentProviders.add({ ["-Dgls.testGroovy=${groovyJars.singleFile}", "-Dgls.testGroovyOldAsm=${oldAsmJars.singleFile}",
-      "-Dgls.serverJar=${jarFiles.get().singleFile}", "-Dgls.version=${serverVersion}"] } as CommandLineArgumentProvider)
+      "-Dgls.serverJar=${jarFiles.get().singleFile}", "-Dgls.version=${serverVersion}", "-Dgls.finderNames=${finderNames}"] } as CommandLineArgumentProvider)
 }
 
 test {
