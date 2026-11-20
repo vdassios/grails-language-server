@@ -180,32 +180,6 @@ public class GroovyASTUtils {
         }, null);
     }
 
-    public static ASTNode getTypeDefinition(ASTNode node, ASTNodeVisitor astVisitor) {
-        ASTNode definitionNode = getDefinition(node, false, astVisitor);
-        if (definitionNode == null) {
-            return null;
-        }
-        if (definitionNode instanceof MethodNode) {
-            MethodNode method = (MethodNode) definitionNode;
-            return tryToResolveOriginalClassNode(method.getReturnType(), true, astVisitor);
-        } else if (definitionNode instanceof Variable) {
-            Variable variable = (Variable) definitionNode;
-            return tryToResolveOriginalClassNode(variable.getOriginType(), true, astVisitor);
-        }
-        return null;
-    }
-
-    public static List<ASTNode> getReferences(ASTNode node, ASTNodeVisitor ast) {
-        ASTNode definitionNode = getDefinition(node, true, ast);
-        if (definitionNode == null) {
-            return Collections.emptyList();
-        }
-        return ast.getNodes().stream().filter(otherNode -> {
-            ASTNode otherDefinition = getDefinition(otherNode, false, ast);
-            return definitionNode.equals(otherDefinition) && node.getLineNumber() != -1 && node.getColumnNumber() != -1;
-        }).collect(Collectors.toList());
-    }
-
     private static ClassNode tryToResolveOriginalClassNode(ClassNode node, boolean strict, ASTNodeVisitor ast) {
         for (ClassNode originalNode : ast.getClassNodes()) {
             if (originalNode.equals(node)) {

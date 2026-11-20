@@ -65,7 +65,7 @@ class ASTNodeVisitorTest {
     }
 
     ASTNodeVisitor visitor = new ASTNodeVisitor();
-    visitor.visitCompilationUnit(unit);
+    visitor.visitDocument(unit, uri);
     for (ExpressionStatement statement : added) {
       assertSame(statement, visitor.getParent(statement.getExpression()));
       assertEquals(uri, visitor.getURI(statement.getExpression()));

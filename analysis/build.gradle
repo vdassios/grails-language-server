@@ -1,7 +1,6 @@
 // Runs inside a class loader per project module, next to the project's own Groovy and Grails jars,
 // so Groovy is compileOnly: compiled against the lowest supported API (2.5), never bundled.
-// Only `api` types cross into `server`. The lsp4j types in the providers under net.prominic are inherited from
-// groovy-language-server; they are ported to `api` data objects with the features that use them (milestone M1).
+// Only `api` types cross into `server`.
 def groovyApi = "org.codehaus.groovy:groovy:2.5.23"
 
 dependencies {
@@ -9,10 +8,6 @@ dependencies {
   compileOnly project(":api")
   testImplementation groovyApi
   testImplementation project(":api")
-  implementation "org.eclipse.lsp4j:org.eclipse.lsp4j:0.12.0"
-  implementation "org.eclipse.lsp4j:org.eclipse.lsp4j.jsonrpc:0.12.0"
-  implementation "com.google.code.gson:gson:2.13.1"
-  implementation "io.github.classgraph:classgraph:4.8.179"
 }
 
 // The same tests on Groovy 3 (Grails 5, 6), 4 (Grails 7) and 5 (Grails 8): the jar compiled against 2.5 must also

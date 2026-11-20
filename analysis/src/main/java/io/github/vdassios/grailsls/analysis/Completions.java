@@ -78,13 +78,9 @@ public final class Completions {
    *
    * @param classpath classes of the classpath to offer, or null for those of the compile only
    * @param conventions names Grails resolves by convention, or null
+   * @param tags tags called as methods, or null
    * @param typed the text of the line before the position
    */
-  public static Completions at(ASTNodeVisitor ast, URI document, ClasspathTypes classpath, Conventions conventions, int line, int column, String typed) {
-    return at(ast, document, classpath, conventions, null, line, column, typed);
-  }
-
-  /** As {@link #at(ASTNodeVisitor, URI, ClasspathTypes, Conventions, int, int, String)}, with tags called as methods. */
   static Completions at(ASTNodeVisitor ast, URI document, ClasspathTypes classpath, Conventions conventions, TagCalls tags, int line, int column, String typed) {
     ASTNode offsetNode = ast.getNodeAtLineAndColumn(document, line, column);
     if (offsetNode == null) {

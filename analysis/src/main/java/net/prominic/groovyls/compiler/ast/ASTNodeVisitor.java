@@ -21,7 +21,6 @@ package net.prominic.groovyls.compiler.ast;
 
 import java.net.URI;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
@@ -170,14 +169,6 @@ public class ASTNodeVisitor extends ClassCodeVisitorSupport {
 		return nodes == null ? Collections.emptyList() : nodes;
 	}
 
-	public List<ASTNode> getNodes() {
-		List<ASTNode> result = new ArrayList<>();
-		for (List<ASTNode> nodes : nodesByURI.values()) {
-			result.addAll(nodes);
-		}
-		return result;
-	}
-
 	public List<ASTNode> getNodes(URI uri) {
 		List<ASTNode> nodes = nodesByURI.get(uri);
 		if (nodes == null) {
@@ -275,15 +266,6 @@ public class ASTNodeVisitor extends ClassCodeVisitorSupport {
 		return module.getContext().getSource().getURI();
 	}
 
-	public void visitCompilationUnit(CompilationUnit unit) {
-		nodesByURI.clear();
-		classNodesByURI.clear();
-		lookup.clear();
-		unit.iterator().forEachRemaining(sourceUnit -> {
-			visitSourceUnit(sourceUnit);
-		});
-	}
-
 	/**
 	 * Visits one source of a unit: only its nodes get parents and positions. The classes of the other sources are known
 	 * (getClassNodes, getURI) without visiting their bodies, which costs as much as the compile when a document pulls in
@@ -300,23 +282,6 @@ public class ASTNodeVisitor extends ClassCodeVisitorSupport {
 			} else if (sourceUnit.getAST() != null) {
 				classNodesByURI.put(uri, new ArrayList<>(sourceUnit.getAST().getClasses()));
 			}
-		});
-	}
-
-	public void visitCompilationUnit(CompilationUnit unit, Collection<URI> uris) {
-		uris.forEach(uri -> {
-			// clear all old nodes so that they may be replaced
-			nodesByURI.remove(uri);
-			// synthetic nodes too, which are in the lookup only
-			lookup.values().removeIf(data -> uri.equals(data.uri));
-			classNodesByURI.remove(uri);
-		});
-		unit.iterator().forEachRemaining(sourceUnit -> {
-			URI uri = sourceUnit.getSource().getURI();
-			if (!uris.contains(uri)) {
-				return;
-			}
-			visitSourceUnit(sourceUnit);
 		});
 	}
 
