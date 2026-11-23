@@ -261,7 +261,7 @@ public final class CompileService {
   }
 
   private void schedule(Path path, long delay) {
-    Pending next = new Pending();
+    Pending next = new Pending(path);
     Pending previous = pending.put(path, next);
     if (previous != null) {
       previous.cancel();
@@ -334,17 +334,26 @@ public final class CompileService {
 
   /** One scheduled or running compile of a document. */
   private final class Pending {
+    final Path path;
     final AtomicBoolean cancelled = new AtomicBoolean();
     final AtomicBoolean started = new AtomicBoolean();
     /** Completes when the compile is over or will never run. */
     final CompletableFuture<Void> done = new CompletableFuture<>();
     volatile ScheduledFuture<?> scheduled;
 
+    Pending(Path path) {
+      this.path = path;
+    }
+
+    /**
+     * Stops the compile at its next phase. One that never ran is over at once and leaves {@code pending}: a query
+     * waiting for it must not find it there again.
+     */
     void cancel() {
       cancelled.set(true);
       ScheduledFuture<?> delay = scheduled;
       if (delay != null && delay.cancel(false) && started.compareAndSet(false, true)) {
-        done.complete(null); // never ran
+        finish(path, this);
       }
     }
 

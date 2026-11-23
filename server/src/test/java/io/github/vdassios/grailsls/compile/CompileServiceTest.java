@@ -320,6 +320,51 @@ class CompileServiceTest {
     assertFalse(queuedRan.get(), "the cancelled query waiting for the thread is skipped");
   }
 
+  /**
+   * A query on a document whose compile waits out its debounce delay, while the workspace is replaced (the old one
+   * still closing), answers. It used to wait on the cancelled compile again and again until the stack overflowed.
+   */
+  @Test
+  void aQueryDuringAWorkspaceSwapAnswers() throws Exception {
+    CompileService slow = new CompileService(published::add, 60_000);
+    try {
+      slow.setWorkspace(workspace());
+      slow.open(uri("A.groovy"), "class A {}\n", 1);
+      slow.open(uri("B.groovy"), "class B {}\n", 1);
+      assertEquals(List.of("CLASS A"), symbols(slow, "A.groovy"));
+      assertEquals(List.of("CLASS B"), symbols(slow, "B.groovy"));
+      slow.change(uri("B.groovy"), List.of(new TextDocumentContentChangeEvent("class B { int n }\n")), 2);
+      // a query holds the module's thread, so closing the old workspace waits for it
+      CountDownLatch holding = new CountDownLatch(1);
+      CountDownLatch release = new CountDownLatch(1);
+      slow.query(uri("A.groovy"), null, (analyzer, path) -> {
+        holding.countDown();
+        try {
+          release.await(30, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+          Thread.currentThread().interrupt();
+        }
+        return null;
+      });
+      assertTrue(holding.await(10, TimeUnit.SECONDS));
+      Workspace old = slow.workspace();
+      Thread swap = new Thread(() -> slow.setWorkspace(workspace()));
+      swap.start();
+      try {
+        while (slow.workspace() == old) {
+          Thread.sleep(10);
+        }
+        Thread.sleep(200); // the pending compiles are cancelled; the old workspace is closing
+        symbols(slow, "B.groovy"); // empty or B's: it answers
+      } finally {
+        release.countDown();
+        swap.join(30_000);
+      }
+    } finally {
+      slow.shutdown();
+    }
+  }
+
   /** A query right after an edit answers about the edited text: it ends the debounce delay instead of waiting it out. */
   @Test
   void aQueryRunsThePendingCompileAtOnce() throws Exception {
