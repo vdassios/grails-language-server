@@ -233,6 +233,20 @@ final class GspConventions {
     }
   }
 
+  /** A literal model map in an action's code, and the view or template it is given to. */
+  private static final class ActionModel {
+    final Conventions.Kind kind;
+    /** The view or template, as named. */
+    final String name;
+    final MapExpression map;
+
+    ActionModel(Conventions.Kind kind, String name, MapExpression map) {
+      this.kind = kind;
+      this.name = name;
+      this.map = map;
+    }
+  }
+
   /**
    * The literal model maps given to a view or a template: for a view, the actions that render it: {@code render(view:
    * 'show', model: [book: b])}, {@code respond x, model: [...]} (its view the action's name unless named), and a map the
@@ -271,9 +285,9 @@ final class GspConventions {
       }
       Conventions.actions(type).forEach((action, node) -> {
         Statement code = node instanceof MethodNode ? ((MethodNode) node).getCode() : ((ClosureExpression) ((PropertyNode) node).getInitialExpression()).getCode();
-        for (Object[] model : modelsOf(code, action)) {
-          if (model[0] == kind && Conventions.viewPaths(new Conventions.Reference(kind, (String) model[1], null, name)).contains(relative)) {
-            for (MapEntryExpression entry : ((MapExpression) model[2]).getMapEntryExpressions()) {
+        for (ActionModel model : modelsOf(code, action)) {
+          if (model.kind == kind && Conventions.viewPaths(new Conventions.Reference(kind, model.name, null, name)).contains(relative)) {
+            for (MapEntryExpression entry : model.map.getMapEntryExpressions()) {
               found.add(new ModelEntry(entry, node, type, file.toString(), null));
             }
           }
@@ -357,9 +371,9 @@ final class GspConventions {
     return null;
   }
 
-  /** {@code {kind, view or template, map}} of each literal model in an action's code. */
-  private static List<Object[]> modelsOf(Statement code, String action) {
-    List<Object[]> models = new ArrayList<>();
+  /** Each literal model in an action's code. */
+  private static List<ActionModel> modelsOf(Statement code, String action) {
+    List<ActionModel> models = new ArrayList<>();
     if (code == null) {
       return models;
     }
@@ -387,9 +401,9 @@ final class GspConventions {
             view = action;
           }
           if (view != null && !view.isEmpty() && model instanceof MapExpression) {
-            models.add(new Object[] { Conventions.Kind.VIEW, view, model });
+            models.add(new ActionModel(Conventions.Kind.VIEW, view, (MapExpression) model));
           } else if (template != null && !template.isEmpty() && model instanceof MapExpression) {
-            models.add(new Object[] { Conventions.Kind.TEMPLATE, template, model });
+            models.add(new ActionModel(Conventions.Kind.TEMPLATE, template, (MapExpression) model));
           }
         }
         super.visitMethodCallExpression(call);
@@ -405,7 +419,7 @@ final class GspConventions {
       @Override
       public void visitReturnStatement(ReturnStatement statement) {
         if (closures == 0 && statement.getExpression() instanceof MapExpression) {
-          models.add(new Object[] { Conventions.Kind.VIEW, action, statement.getExpression() });
+          models.add(new ActionModel(Conventions.Kind.VIEW, action, (MapExpression) statement.getExpression()));
         }
         super.visitReturnStatement(statement);
       }
@@ -414,7 +428,7 @@ final class GspConventions {
     List<Statement> statements = code instanceof BlockStatement ? ((BlockStatement) code).getStatements() : List.of(code);
     Statement last = statements.isEmpty() ? null : statements.get(statements.size() - 1);
     if (last instanceof ExpressionStatement && ((ExpressionStatement) last).getExpression() instanceof MapExpression) {
-      models.add(new Object[] { Conventions.Kind.VIEW, action, ((ExpressionStatement) last).getExpression() });
+      models.add(new ActionModel(Conventions.Kind.VIEW, action, (MapExpression) ((ExpressionStatement) last).getExpression()));
     }
     return models;
   }
