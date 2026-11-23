@@ -153,4 +153,10 @@ GLS_PERF_PROJECT=<built project> GLS_PERF_JDK=<project JDK> GLS_PERF_DETAILS=<er
 
 This writes `sweep.txt`, `static.txt`, `latency.txt` and `memory.txt`. For RSS, run the memory test alone: add `--tests '*LatencyTest.keptFilesRepeatsAndClose'`. `GLS_PERF_HEAP` (e.g. `4g`) sets the heap; `GLS_PERF_FILES` the latency sample (40).
 
-The cold-start client (a Python script driving the fat jar from `./gradlew :server:shadowJar` as described above) is not in the repository. Run measurements on mains power with sleep prevented (`caffeinate -i` on macOS), and with no other measurement running.
+The cold starts (the fat jar from `./gradlew :server:shadowJar`, driven as described above):
+
+```sh
+python3 benchmarks/cold-start.py --project <built project> --java <project JDK>/bin/java
+```
+
+`--files` sets the sample per group (20), `--repeat` the timed runs per file (1). Run measurements on mains power with sleep prevented (`caffeinate -i` on macOS), and with no other measurement running.
