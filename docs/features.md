@@ -18,8 +18,8 @@ A domain class is any class the compile gave GORM's entity trait, from source or
 - **Warnings** for a finder GORM would reject: a condition on no property of the class, `And` mixed with `Or`, a property whose name holds the connector GORM splits at (`findByOrderNoteOrTitle`), too few arguments. Arguments after those the conditions need (a map of query settings, a closure of further criteria) are allowed.
 - **Criteria blocks** (`Book.withCriteria { }`, `Book.createCriteria().list { }`): calls in the block resolve against the closure's `@DelegatesTo` type, so `eq`, `like` and `order` complete, hover and show signatures. The same holds for any method whose closure parameter declares `@DelegatesTo` with a class. A string that names a property (`eq('title', x)`) completes and goes to the property, through association blocks too (`books { like('title', x) }`).
 - **`where` blocks** (`Book.where { title == wanted }`, `find` and `findAll` with a closure): GORM rewrites these closures at compile time and leaves no node of the original code, so the names are read from the text. Property names complete, hover and go to their declaration, along association paths (`author.name`).
-- **`constraints` and `mapping` blocks**: an entry (`title blank: false`) goes to its property, and the constraint names complete after it.
-- **Query settings**: `max`, `offset`, `sort`, `order` and the others complete as argument keys of a query, and the value of `sort:` completes and resolves as a property name.
+- **`constraints` and `mapping` blocks**: an entry (`title blank: false`) goes to its property, and the constraint names complete after it, the scaffolding ones (`display`, `widget`, `password`, ...) included.
+- **Query settings**: `max`, `offset`, `sort`, `order` and the others complete as argument keys of `list`, `listDistinct`, `findAll` and of a finder after its conditions' values (not of `get`), and the value of `sort:` completes and resolves as a property name.
 
 Named queries (`static namedQueries`) are not covered.
 

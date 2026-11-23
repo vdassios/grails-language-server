@@ -55,9 +55,13 @@ public final class Gorm {
   /** Those of them whose closure GORM rewrites at compile time: bare names in it are properties. */
   private static final Set<String> WHERE_METHODS = Set.of("where", "whereAny", "whereLazy", "find", "findAll");
   /** Keys of the settings map a query takes: {@code Book.list(max: 10, sort: 'title')}. */
-  static final List<String> QUERY_SETTINGS = List.of("max", "offset", "sort", "order", "fetch", "readOnly", "cache", "ignoreCase");
+  static final List<String> QUERY_SETTINGS = List.of("max", "offset", "sort", "order", "fetch", "readOnly", "cache", "ignoreCase", "fetchSize",
+      "timeout", "flushMode");
+  /** The queries that take that map anywhere in their arguments; finders take it after their conditions' values. */
+  private static final Set<String> SETTINGS_METHODS = Set.of("list", "listDistinct", "findAll");
+  private static final Set<String> SETTINGS_FINDERS = Set.of("findBy", "findAllBy", "listOrderBy");
   static final List<String> CONSTRAINTS = List.of("nullable", "blank", "size", "maxSize", "minSize", "min", "max", "inList", "matches", "email", "url", "unique",
-      "validator", "range", "scale", "notEqual", "creditCard");
+      "validator", "range", "scale", "notEqual", "creditCard", "bindable", "display", "widget", "password", "editable", "format");
   /** Bean properties GORM never maps ({@code ClassPropertyFetcher.EXCLUDED_PROPERTIES}). */
   private static final Set<String> NOT_PERSISTENT = Set.of("class", "metaClass", "properties");
   /** Key of the finder a call names, kept on the call: one method node per call, however often it is asked for. */
@@ -670,12 +674,37 @@ public final class Gorm {
         return List.of();
       }
       keys = CONSTRAINTS;
-    } else if (queried(call, ast) != null) {
+    } else if (queried(call, ast) != null && takesSettings(call, typed, ast)) {
       keys = QUERY_SETTINGS;
     } else {
       return List.of();
     }
     return unusedKeys(keys, (TupleExpression) call.getArguments());
+  }
+
+  /**
+   * Whether a query takes its settings map where a name is typed: {@code list}, {@code listDistinct} and
+   * {@code findAll} anywhere, a finder after its conditions' values ({@code findByTitle('x', ma)}), other calls
+   * ({@code get}) nowhere.
+   */
+  private static boolean takesSettings(MethodCallExpression call, VariableExpression typed, ASTNodeVisitor ast) {
+    if (SETTINGS_METHODS.contains(call.getMethodAsString())) {
+      return true;
+    }
+    Finder finder = finder(call, ast);
+    if (finder == null || !SETTINGS_FINDERS.contains(finder.name.prefix)) {
+      return false;
+    }
+    int before = 0;
+    for (Expression argument : ((TupleExpression) call.getArguments()).getExpressions()) {
+      if (argument == typed) {
+        break;
+      }
+      if (!(argument instanceof MapExpression)) {
+        before++;
+      }
+    }
+    return before >= finder.name.arguments();
   }
 
   /** The keys not given yet among a call's named arguments. */

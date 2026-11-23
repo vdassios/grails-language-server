@@ -333,6 +333,18 @@ abstract class GormTest {
       assertTrue(sort.containsAll(List.of(app.first, app.second)), sort.toString());
       List<String> settings = labels(workspace, service(), serviceWith("D.list(ma)"), "list(ma");
       assertTrue(settings.contains("max"), settings.toString());
+      for (String key : List.of("fetchSize", "timeout", "flushMode")) {
+        String typed = "list(" + key.substring(0, 3);
+        List<String> offered = labels(workspace, service(), serviceWith("D." + typed + ")"), typed);
+        assertTrue(offered.contains(key), key + ": " + offered);
+      }
+      // get takes no settings, and a finder takes them only after its conditions' values
+      List<String> get = labels(workspace, service(), serviceWith("D.get(ma)"), "get(ma");
+      assertTrue(!get.contains("max"), get.toString());
+      List<String> value = labels(workspace, service(), serviceWith("D.findByFirst(ma)"), "First(ma");
+      assertTrue(!value.contains("max"), value.toString());
+      List<String> after = labels(workspace, service(), serviceWith("D.findByFirst(wanted, ma)"), "wanted, ma");
+      assertTrue(after.contains("max"), after.toString());
     }
   }
 
@@ -348,6 +360,11 @@ abstract class GormTest {
       assertTrue(hover != null && hover.contains("String " + app.first), String.valueOf(hover));
       List<String> keys = labels(workspace, domain, saved.replace(entry, entry + ", nu"), entry + ", nu");
       assertTrue(keys.contains("nullable") && !keys.contains("blank"), keys.toString());
+      for (String key : List.of("bindable", "display", "widget", "password", "editable", "format")) {
+        String typed = entry + ", " + key.substring(0, 3);
+        List<String> offered = labels(workspace, domain, saved.replace(entry, typed), typed);
+        assertTrue(offered.contains(key), key + ": " + offered);
+      }
     }
   }
   @Test
