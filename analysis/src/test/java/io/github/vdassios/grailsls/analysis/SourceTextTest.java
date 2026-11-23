@@ -128,4 +128,24 @@ class SourceTextTest {
     assertEquals("11:6", at(groovy, List.of("Renders"), "render", true, List.of("String")));
     assertEquals("12:15", at(groovy, List.of("Renders"), "first", true, List.of("List")));
   }
+
+  @Test
+  void aListLiteralsItemsAndASlashyStringHideNoDeclaration() {
+    String groovy = String.join("\n",
+        "class Lists {",
+        "  def order = [",
+        "    'a',",
+        "    total,",
+        "    2",
+        "  ]",
+        "  def path = /src\\/*.groovy/",
+        "  int total",                                                    // 7
+        "  /** Counts. */",
+        "  int count",                                                    // 9
+        "}",
+        "");
+    assertEquals("7:6", at(groovy, List.of("Lists"), "total", false, List.of()), "not the item of order's list");
+    assertEquals("9:6 /** Counts. */", at(groovy, List.of("Lists"), "count", false, List.of()), "no comment opens in the slashy string");
+    assertEquals("def half = total / 2 / count; ~      ; f(   ); return      ", SourceText.code("def half = total / 2 / count; ~/a\\/*/; f(/x/); return /\\d+/"));
+  }
 }

@@ -34,7 +34,10 @@ final class SourceText {
   private final String text;
   /** The text with comments and literals blanked: same offsets. */
   private final String code;
-  /** Nesting of braces and of parentheses before each character of {@link #code}. */
+  /**
+   * Nesting of braces, and of parentheses and brackets, before each character of {@link #code}: a list literal's items,
+   * like a call's arguments, are not declarations.
+   */
   private final int[] braces;
   private final int[] parens;
   /** Start and end offsets of the documentation comments. */
@@ -52,7 +55,7 @@ final class SourceText {
       parens[i] = paren;
       char c = code.charAt(i);
       brace += c == '{' ? 1 : c == '}' && brace > 0 ? -1 : 0;
-      paren += c == '(' ? 1 : c == ')' && paren > 0 ? -1 : 0;
+      paren += c == '(' || c == '[' ? 1 : (c == ')' || c == ']') && paren > 0 ? -1 : 0;
     }
     braces[code.length()] = brace;
     parens[code.length()] = paren;
@@ -248,11 +251,33 @@ final class SourceText {
   }
 
   /**
-   * Groovy or Java source with comments and string and character literals replaced by spaces, line ends kept: every
+   * Groovy or Java source with comments and string and character literals (slashy ones too) replaced by spaces, line ends kept: every
    * offset, line and column still points at the same code, and a name in a string or a comment is gone.
    */
   static String code(String source) {
     return blank(source, null);
+  }
+
+  /** Keywords after which a {@code /} starts a slashy string, not a division. */
+  private static final Set<String> BEFORE_A_VALUE = Set.of("return", "case", "in", "assert", "else", "throw", "yield");
+
+  /**
+   * Whether a {@code /} after {@code last} (at {@code lastAt}) starts a slashy string: at the start, after an operator
+   * or an opening bracket, or after a keyword that a value follows; not after a value (a name, a literal, a closing
+   * bracket), where it divides.
+   */
+  private static boolean slashyMayStart(String source, char last, int lastAt) {
+    if (last == 0) {
+      return true;
+    }
+    if (Character.isJavaIdentifierPart(last)) {
+      int start = lastAt;
+      while (start > 0 && Character.isJavaIdentifierPart(source.charAt(start - 1))) {
+        start--;
+      }
+      return BEFORE_A_VALUE.contains(source.substring(start, lastAt + 1));
+    }
+    return "=([{,:;~!&|?+-*%<>^".indexOf(last) >= 0;
   }
 
   /** Blanks comments and string and character literals, keeping line ends; notes the documentation comments, unless null. */
@@ -260,9 +285,13 @@ final class SourceText {
     char[] chars = source.toCharArray();
     int n = chars.length;
     int i = 0;
+    // the last character of code before i that is not white space (a literal counts as '"'), and its offset
+    char last = 0;
+    int lastAt = -1;
     while (i < n) {
       char c = chars[i];
       int end;
+      boolean comment = source.startsWith("//", i) || source.startsWith("/*", i);
       if (source.startsWith("//", i)) {
         end = source.indexOf('\n', i);
         end = end < 0 ? n : end;
@@ -282,9 +311,23 @@ final class SourceText {
           end += chars[end] == '\\' ? 2 : 1;
         }
         end = Math.min(end < n && chars[end] == c ? end + 1 : end, n);
+      } else if (c == '/' && slashyMayStart(source, last, lastAt)) {
+        end = i + 1;
+        while (end < n && chars[end] != '/') {
+          end += chars[end] == '\\' ? 2 : 1;
+        }
+        end = Math.min(end + 1, n);
       } else {
+        if (!Character.isWhitespace(c)) {
+          last = c;
+          lastAt = i;
+        }
         i++;
         continue;
+      }
+      if (!comment) {
+        last = '"';
+        lastAt = end - 1;
       }
       for (int k = i; k < end; k++) {
         if (chars[k] != '\n' && chars[k] != '\r') {
