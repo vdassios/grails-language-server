@@ -333,9 +333,18 @@ public final class GroovyAnalyzer implements Analyzer {
     return node == null ? null : TagCalls.at(node, kept.ast(), namespaces(kept.lookup), page);
   }
 
-  /** The tags of a namespace by name, null when no taglib declares it: for {@link TagCalls}. */
+  /**
+   * The tags of a namespace by name, null when no taglib declares it: for {@link TagCalls}. For one request: the tags
+   * are read on the first call ({@link Taglibs#all} reads every taglib) and kept for the next.
+   */
   Function<String, Map<String, Taglibs.Tag>> namespaces(SourceLookup lookup) {
-    return namespace -> taglibs.all(lookup).get(namespace);
+    List<Map<String, Map<String, Taglibs.Tag>>> read = new ArrayList<>(1);
+    return namespace -> {
+      if (read.isEmpty()) {
+        read.add(taglibs.all(lookup));
+      }
+      return read.get(0).get(namespace);
+    };
   }
 
   @Override

@@ -509,6 +509,38 @@ class GroovyAnalyzerTest {
     assertTrue(labels(complete(path, text, 2, 6)).contains("substring"), "not cancelled: String's methods");
   }
 
+  /**
+   * Reading the tags walks the taglib directories and reads every project taglib: a request's tag lookups ({@code g.},
+   * page tags, a tag's attributes) read them once.
+   */
+  @Test
+  void aRequestsTagLookupsReadTheTaglibsOnce() throws IOException {
+    write("app/grails-app/taglib/demo/XTagLib.groovy", "package demo\nclass XTagLib {\n  static namespace = 'x'\n  def one = { attrs -> }\n}\n");
+    grailsApps.add(tmp.resolve("app/grails-app").toString());
+    AtomicInteger reads = new AtomicInteger();
+    SourceLookup counting = new SourceLookup() {
+      @Override
+      public String fileOf(String className) {
+        return null;
+      }
+
+      @Override
+      public String openText(String path) {
+        return null;
+      }
+
+      @Override
+      public List<String> grailsAppDirs() {
+        reads.incrementAndGet();
+        return grailsApps;
+      }
+    };
+    Function<String, Map<String, Taglibs.Tag>> namespaces = analyzer.namespaces(counting);
+    assertEquals(List.of("one"), new ArrayList<>(namespaces.apply("x").keySet()));
+    assertNull(namespaces.apply("y"));
+    assertEquals(1, reads.get());
+  }
+
   @Test
   void forgetDropsTheKeptCompile() {
     String path = tmp.resolve("A.groovy").toString();
