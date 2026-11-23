@@ -18,6 +18,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -487,6 +488,25 @@ class GroovyAnalyzerTest {
     CompileResult result = analyzer.compile(new CompileRequest(path, "class A {}\n", lookup, () -> true));
     assertTrue(result.cancelled);
     assertNull(analyzer.compiledClass(path, "A"));
+  }
+
+  /**
+   * After a typed dot completion compiles a copy of the text; a cancelled request (the server sets the flag on
+   * {@code $/cancelRequest}) stops that compile before its first phase and gives nothing.
+   */
+  @Test
+  void aCancelledCompletionStopsItsCompileOfACopy() {
+    String path = tmp.resolve("A.groovy").toString();
+    String text = "class A {\n  def run(String s) {\n    s.\n  }\n}\n";
+    compile(path, text);
+    AtomicInteger polls = new AtomicInteger();
+    CompletionList cancelled = analyzer.completion(new CompileRequest(path, text, lookup, () -> {
+      polls.incrementAndGet();
+      return true;
+    }), 2, 6);
+    assertEquals(List.of(), labels(cancelled));
+    assertEquals(1, polls.get(), "stopped at its first check, and no second copy was compiled");
+    assertTrue(labels(complete(path, text, 2, 6)).contains("substring"), "not cancelled: String's methods");
   }
 
   @Test
