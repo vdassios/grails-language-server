@@ -7,10 +7,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
@@ -47,14 +49,24 @@ abstract class GspTest {
     final String namespace;
     final String tag;
     final String taglib;
+    /** Logical names of the fixture's other controllers. */
+    final List<String> otherControllers;
+    /** The fixture's pages other than the controller's {@code index} and {@code _row} and the layout {@code main}, below {@code views/}. */
+    final List<String> otherPages;
 
     App(String fixture, String jdkVariable, String controller, String namespace, String tag, String taglib) {
+      this(fixture, jdkVariable, controller, namespace, tag, taglib, List.of(), List.of());
+    }
+
+    App(String fixture, String jdkVariable, String controller, String namespace, String tag, String taglib, List<String> otherControllers, List<String> otherPages) {
       this.fixture = fixture;
       this.jdkVariable = jdkVariable;
       this.controller = controller;
       this.namespace = namespace;
       this.tag = tag;
       this.taglib = taglib;
+      this.otherControllers = otherControllers;
+      this.otherPages = otherPages;
     }
   }
 
@@ -160,7 +172,9 @@ abstract class GspTest {
         found.put(views.relativize(view).toString(), hints(compile(view, Files.readString(view))));
       }
     }
-    assertEquals(3, found.size(), found.toString());
+    Set<String> pages = new TreeSet<>(app().otherPages);
+    pages.addAll(List.of(app().controller + "/_row.gsp", app().controller + "/index.gsp", "layouts/main.gsp"));
+    assertEquals(pages, found.keySet());
     found.values().forEach(list -> assertEquals(List.of(), list, found.toString()));
   }
 
@@ -288,7 +302,10 @@ abstract class GspTest {
     assertEquals(List.of("main"), labels(completion("<meta name=\"layout\" content=\"\">", "content=\"")));
     assertEquals(List.of("main.css"), labels(completion("<asset:stylesheet src=\"\"/>", "src=\"")));
     assertEquals(List.of("app.js", "main.css"), labels(completion("<asset:image src=\"\"/>", "src=\"")));
-    assertEquals(List.of(c), labels(completion("<g:link controller=\"\">", "controller=\"")));
+    List<String> controllers = new ArrayList<>(app().otherControllers);
+    controllers.add(c);
+    controllers.sort(null);
+    assertEquals(controllers, labels(completion("<g:link controller=\"\">", "controller=\"")));
     List<String> actions = labels(completion("<g:link controller=\"" + c + "\" action=\"\">", "action=\""));
     assertTrue(actions.containsAll(List.of("index", "show")), actions.toString());
     assertEquals(actions, labels(completion("<g:form action=\"\">", "action=\"")), "the view's controller");

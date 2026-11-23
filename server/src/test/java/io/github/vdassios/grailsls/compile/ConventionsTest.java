@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -41,12 +42,22 @@ abstract class ConventionsTest {
     final String packageName;
     /** Logical name of the fixture's controller, whose views exist. */
     final String controller;
+    /** The controller's views other than {@code index}, by name, in name order. */
+    final List<String> otherViews;
+    /** Logical names of the fixture's other controllers. */
+    final List<String> otherControllers;
 
     App(String fixture, String jdkVariable, String packageName, String controller) {
+      this(fixture, jdkVariable, packageName, controller, List.of(), List.of());
+    }
+
+    App(String fixture, String jdkVariable, String packageName, String controller, List<String> otherViews, List<String> otherControllers) {
       this.fixture = fixture;
       this.jdkVariable = jdkVariable;
       this.packageName = packageName;
       this.controller = controller;
+      this.otherViews = otherViews;
+      this.otherControllers = otherControllers;
     }
   }
 
@@ -220,13 +231,21 @@ abstract class ConventionsTest {
       found.put("mapped action", labels(workspace, mappings, mappings().replace("action: 'show'", "action: ''"), "action: '"));
 
       Map<String, List<String>> expected = new TreeMap<>();
-      String absolute = "/" + app().controller + "/index";
-      expected.put("view", List.of("index", absolute, "/layouts/main"));
+      // relative names, then absolute ones
+      List<String> views = new ArrayList<>(List.of("index"));
+      views.addAll(app().otherViews);
+      views.add("/" + app().controller + "/index");
+      app().otherViews.forEach(view -> views.add("/" + app().controller + "/" + view));
+      views.add("/layouts/main");
+      expected.put("view", views);
       expected.put("template", List.of("row"));
       expected.put("layout", List.of("main"));
       expected.put("own action", List.of("show"));
       expected.put("unclosed", List.of("index"));
-      expected.put("mapped controller", List.of(app().controller));
+      List<String> controllers = new ArrayList<>(app().otherControllers);
+      controllers.add(app().controller);
+      controllers.sort(null);
+      expected.put("mapped controller", controllers);
       List<String> actions = Files.readAllLines(controller()).stream().map(String::trim).filter(l -> l.startsWith("def ") && l.contains("("))
           .map(l -> l.substring(4, l.indexOf('('))).collect(Collectors.toList());
       expected.put("mapped action", actions);
