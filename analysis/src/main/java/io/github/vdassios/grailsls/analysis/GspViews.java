@@ -22,7 +22,7 @@ import io.github.vdassios.grailsls.api.SourceLookup;
  * GSP pages, without compiling them: completion of tag names after {@code <ns:} and of attribute names inside a tag,
  * hover and definition of tags, and hints for an unknown tag in a namespace some taglib declares and for a missing
  * attribute its taglib documents as {@code REQUIRED}. Attribute values Grails resolves by convention (plan B3) go
- * through {@link Conventions}: definition, value completion, and hints for a template, view, layout or asset that does
+ * through {@link GspConventions}: definition, value completion, and hints for a template, view, layout or asset that does
  * not exist. A page's "compile" only reads its tags.
  */
 final class GspViews {
@@ -31,10 +31,10 @@ final class GspViews {
 
   private final Taglibs taglibs;
   /** Conventions for a lookup and a page path. */
-  private final BiFunction<SourceLookup, String, Conventions> conventions;
+  private final BiFunction<SourceLookup, String, GspConventions> conventions;
   private final Map<String, Page> pages = new ConcurrentHashMap<>();
 
-  GspViews(Taglibs taglibs, BiFunction<SourceLookup, String, Conventions> conventions) {
+  GspViews(Taglibs taglibs, BiFunction<SourceLookup, String, GspConventions> conventions) {
     this.taglibs = taglibs;
     this.conventions = conventions;
   }
@@ -66,7 +66,7 @@ final class GspViews {
     List<Diagnostic> hints = new ArrayList<>();
     Taglibs.Index index = taglibs.index(request.lookup);
     Map<String, Map<String, Taglibs.Tag>> all = index.tags;
-    Conventions files = conventions.apply(request.lookup, request.path);
+    GspConventions files = conventions.apply(request.lookup, request.path);
     String controller = viewController(viewDir(request.path));
     for (GspScanner.Tag tag : page.tags) {
       if (tag.attribute("plugin") != null || tag.attribute("contextPath") != null) {
@@ -199,7 +199,7 @@ final class GspViews {
     GspScanner.Attribute attribute = tag == null ? null : valueAt(tag, offset);
     if (attribute != null) {
       Conventions.Reference reference = reference(tag, attribute, attribute.value, viewController(viewDir(path)));
-      return reference == null ? null : conventions.apply(page.lookup, path).definition(reference, null);
+      return reference == null ? null : conventions.apply(page.lookup, path).definition(reference);
     }
     Taglibs.Tag known = tagNamed(page, tag, offset);
     return known == null ? null : known.docs().location;
@@ -287,7 +287,7 @@ final class GspViews {
       String typed = page.text.substring(attribute.valueStart, offset);
       Conventions.Reference reference = reference(tag, attribute, typed, viewController(viewDir(request.path)));
       if (reference != null) {
-        items.addAll(conventions.apply(request.lookup, request.path).candidates(reference, null, typed, page.lines.range(attribute.valueStart, offset)));
+        items.addAll(conventions.apply(request.lookup, request.path).candidates(reference, typed, page.lines.range(attribute.valueStart, offset)));
       }
     } else if (!tag.closing) {
       Map<String, Taglibs.Tag> namespace = all.get(tag.namespace);

@@ -46,7 +46,7 @@ import io.github.vdassios.grailsls.api.Location;
  * queries type them (plan B4 2.6):
  * <ul>
  * <li>model variables: the keys of the literal model maps of the actions rendering the view, or of the actions and
- * pages rendering the template ({@link Conventions#models}), typed when the controller's code states the value's type
+ * pages rendering the template ({@link GspConventions#models}), typed when the controller's code states the value's type
  * (a typed declaration or parameter, {@code new}, a cast, a literal), else by a compile of the file holding the map;
  * their definition is the map entry;
  * <li>{@code g:set var} variables, typed after the compile by their {@code value} ({@link #link}); their definition is
@@ -73,10 +73,10 @@ final class PageVariables {
    * whether a qualified class name resolves in the page's module, {@code compiled} types a model entry the parse does
    * not (null when it cannot).
    */
-  static PageVariables of(String path, GspScanner.Scan page, Conventions conventions, Set<String> taken, Predicate<String> resolves, Function<Conventions.ModelEntry, String> compiled) {
+  static PageVariables of(String path, GspScanner.Scan page, GspConventions conventions, Set<String> taken, Predicate<String> resolves, Function<GspConventions.ModelEntry, String> compiled) {
     Map<String, String> types = new LinkedHashMap<>();
     Map<String, Location> definitions = new LinkedHashMap<>();
-    for (Conventions.ModelEntry model : conventions.models(path)) {
+    for (GspConventions.ModelEntry model : conventions.models(path)) {
       Expression key = model.entry.getKeyExpression();
       String name = key instanceof ConstantExpression && ((ConstantExpression) key).getValue() instanceof String ? (String) ((ConstantExpression) key).getValue() : null;
       if (!declarable(name, taken)) {
@@ -219,7 +219,7 @@ final class PageVariables {
   // model types, from the controller's parse
 
   /** The qualified type of a model entry's value when the controller's code states it, else null. */
-  private static String typeOf(Conventions.ModelEntry model, Predicate<String> resolves) {
+  private static String typeOf(GspConventions.ModelEntry model, Predicate<String> resolves) {
     Expression value = model.entry.getValueExpression();
     if (value instanceof ConstantExpression) {
       Object constant = ((ConstantExpression) value).getValue();
@@ -248,7 +248,7 @@ final class PageVariables {
    * The declared type of a name at a model entry: the last typed declaration of it in the action before the entry, else
    * a typed parameter of the action, else a typed field or property of the controller.
    */
-  private static ClassNode declaredType(String name, Conventions.ModelEntry model) {
+  private static ClassNode declaredType(String name, GspConventions.ModelEntry model) {
     Statement code = model.action instanceof MethodNode ? ((MethodNode) model.action).getCode() : ((ClosureExpression) ((PropertyNode) model.action).getInitialExpression()).getCode();
     int line = model.entry.getLineNumber();
     ClassNode[] found = new ClassNode[1];

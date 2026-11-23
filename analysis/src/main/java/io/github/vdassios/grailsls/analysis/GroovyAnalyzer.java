@@ -126,7 +126,7 @@ public final class GroovyAnalyzer implements Analyzer {
     this.caches = new TransformCaches(GroovyAnalyzer.class.getClassLoader(), reports);
     this.lateTransforms = new LateTransforms(parent);
     this.taglibs = new Taglibs((path, text) -> parserCache.parsing(() -> parsedClasses(path, text)), reports, parent);
-    this.gsp = new GspViews(taglibs, this::conventions);
+    this.gsp = new GspViews(taglibs, (lookup, path) -> new GspConventions(conventions(lookup, path)));
     try {
       this.output = Files.createTempDirectory("grails-ls-output");
     } catch (IOException e) {
@@ -268,9 +268,9 @@ public final class GroovyAnalyzer implements Analyzer {
     }
   }
 
-  /** {@link Conventions} whose parses are kept while a file's text stays the same (open text, else the file). */
-  private Conventions modelConventions(SourceLookup lookup, String documentPath) {
-    return new Conventions(lookup, documentPath, file -> {
+  /** {@link GspConventions} whose parses are kept while a file's text stays the same (open text, else the file). */
+  private GspConventions modelConventions(SourceLookup lookup, String documentPath) {
+    return new GspConventions(new Conventions(lookup, documentPath, file -> {
       String text = textOf(file, lookup);
       if (text == null) {
         return List.of();
@@ -281,7 +281,7 @@ public final class GroovyAnalyzer implements Analyzer {
         controllerParses.put(file, parsed);
       }
       return parsed.classes;
-    }, file -> textOf(file, lookup), snippet -> parserCache.parsing(() -> parsedClasses("model.groovy", snippet)), escapes());
+    }), file -> textOf(file, lookup), snippet -> parserCache.parsing(() -> parsedClasses("model.groovy", snippet)), escapes());
   }
 
   /** Texts of files read from disk, with the modification time and size they were read at: each page compile reads every controller. */
@@ -339,7 +339,7 @@ public final class GroovyAnalyzer implements Analyzer {
   }
 
   /** A model value's key in {@link CompiledModels#types}: its position in a controller; template, tag and key in a page. */
-  private static String modelKey(Conventions.ModelEntry model) {
+  private static String modelKey(GspConventions.ModelEntry model) {
     Expression value = model.entry.getValueExpression();
     return model.render == null ? value.getLineNumber() + ":" + value.getColumnNumber()
         : model.render.template + "#" + model.render.index + ":" + model.entry.getKeyExpression().getText();
@@ -351,7 +351,7 @@ public final class GroovyAnalyzer implements Analyzer {
    * with its current text: compiling the pages that render a template took seconds per page on the corpus). Null when
    * none is known or the compile is cancelled.
    */
-  private String compiledType(Conventions.ModelEntry model, SourceLookup lookup, java.util.function.BooleanSupplier cancelled) {
+  private String compiledType(GspConventions.ModelEntry model, SourceLookup lookup, java.util.function.BooleanSupplier cancelled) {
     String text = model.render != null ? model.render.pageText : textOf(model.path, lookup);
     CompiledModels known = text == null ? null : compiledModels.get(model.path);
     if (text != null && model.render == null && (known == null || !known.text.equals(text))) {
@@ -366,7 +366,7 @@ public final class GroovyAnalyzer implements Analyzer {
   }
 
   /** The types of a controller's map values, from a compile of it (the kept one if it is of this text); null when cancelled. */
-  private Map<String, String> controllerModelTypes(Conventions.ModelEntry model, String text, SourceLookup lookup, java.util.function.BooleanSupplier cancelled) {
+  private Map<String, String> controllerModelTypes(GspConventions.ModelEntry model, String text, SourceLookup lookup, java.util.function.BooleanSupplier cancelled) {
     if (!resolves(model.controller.getName(), lookup)) {
       // another module's controller, whose classes this module may not see
       return Map.of();
