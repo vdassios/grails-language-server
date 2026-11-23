@@ -26,6 +26,7 @@ import org.codehaus.groovy.ast.ASTNode;
 import org.codehaus.groovy.ast.AnnotatedNode;
 import org.codehaus.groovy.ast.AnnotationNode;
 import org.codehaus.groovy.ast.ClassNode;
+import org.codehaus.groovy.ast.ImportNode;
 import org.codehaus.groovy.ast.MethodNode;
 import org.codehaus.groovy.ast.ModuleNode;
 import org.codehaus.groovy.ast.decompiled.AsmDecompiler;
@@ -278,13 +279,15 @@ public final class GroovyAnalyzer implements Analyzer {
 
   /**
    * Canonicalization, where Grails's transformations have run; instruction selection when the document has statically
-   * compiled code (C2): the static type checker runs there and records the types it infers on the nodes.
+   * compiled or type-checked code (C2): the static type checker runs there and records the types it infers on the nodes.
    */
   private static int lastPhase(SourceUnit document) {
     ModuleNode module = document.getAST();
     if (module != null) {
       for (ClassNode type : module.getClasses()) {
-        if (isStatic(type) || type.getMethods().stream().anyMatch(GroovyAnalyzer::isStatic)) {
+        if (isChecked(module, type)
+            || type.getMethods().stream().anyMatch(method -> isChecked(module, method))
+            || type.getDeclaredConstructors().stream().anyMatch(constructor -> isChecked(module, constructor))) {
           return Phases.INSTRUCTION_SELECTION;
         }
       }
@@ -292,11 +295,19 @@ public final class GroovyAnalyzer implements Analyzer {
     return Phases.CANONICALIZATION;
   }
 
-  /** Marked {@code @CompileStatic} or {@code @GrailsCompileStatic}, by simple name: annotations are not resolved yet. */
-  private static boolean isStatic(AnnotatedNode node) {
+  /** The annotations that run the static type checker, by simple name. */
+  private static final Set<String> CHECKED =
+      Set.of("CompileStatic", "GrailsCompileStatic", "TypeChecked", "GrailsTypeChecked");
+
+  /**
+   * Marked with one of {@link #CHECKED}, by simple name (annotations are not resolved yet), after following an aliased
+   * import ({@code import groovy.transform.CompileStatic as Checked}).
+   */
+  private static boolean isChecked(ModuleNode module, AnnotatedNode node) {
     for (AnnotationNode annotation : node.getAnnotations()) {
       String name = annotation.getClassNode().getNameWithoutPackage();
-      if (name.equals("CompileStatic") || name.equals("GrailsCompileStatic")) {
+      ImportNode imported = module.getImport(name);
+      if (CHECKED.contains(imported != null ? imported.getType().getNameWithoutPackage() : name)) {
         return true;
       }
     }

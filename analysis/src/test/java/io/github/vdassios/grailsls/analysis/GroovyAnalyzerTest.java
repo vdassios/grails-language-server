@@ -1241,6 +1241,28 @@ class GroovyAnalyzerTest {
   }
 
   /**
+   * The type checker runs for every annotation that runs it ({@code @TypeChecked}, Grails's {@code @GrailsTypeChecked}
+   * and {@code @GrailsCompileStatic} too), under an aliased import, and on a constructor.
+   */
+  @Test
+  void typeCheckedCodeGoesToTheTypeChecker() {
+    String path = tmp.resolve("A.groovy").toString();
+    Map<String, String> sources = new java.util.LinkedHashMap<>();
+    sources.put("TypeChecked", "@groovy.transform.TypeChecked\nclass A {\n  int run() { 'x'.nope() }\n}\n");
+    sources.put("aliased", "import groovy.transform.CompileStatic as Checked\n@Checked\nclass A {\n  int run() { 'x'.nope() }\n}\n");
+    sources.put("aliased TypeChecked", "import groovy.transform.TypeChecked as TC\nclass A {\n  @TC int run() { 'x'.nope() }\n}\n");
+    sources.put("constructor", "class A {\n  @groovy.transform.CompileStatic\n  A() { 'x'.nope() }\n}\n");
+    Map<String, Integer> found = new java.util.LinkedHashMap<>();
+    for (Map.Entry<String, String> source : sources.entrySet()) {
+      found.put(source.getKey(), errors(compile(path, source.getValue())).size());
+    }
+    assertEquals(Map.of("TypeChecked", 1, "aliased", 1, "aliased TypeChecked", 1, "constructor", 1), found);
+    // Grails's annotations, by name (no Grails here: an annotation of that name stands in)
+    compile(path, "@interface GrailsTypeChecked {}\n@GrailsTypeChecked\nclass A {}\n");
+    assertEquals(Phases.INSTRUCTION_SELECTION, analyzer.phase(path));
+  }
+
+  /**
    * A transformation that adds statically compiled members (Grails's controller traits, here a trait's) does not make
    * the class statically compiled: it stops at canonicalization, as the document's own annotations say.
    */
