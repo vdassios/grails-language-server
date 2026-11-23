@@ -486,10 +486,10 @@ public final class GroovyAnalyzer implements Analyzer {
       return pages.signatureHelp(request, line, column);
     }
     Kept kept = current(request);
-    if (kept != null && kept.ast().getNodeAtLineAndColumn(kept.uri, line, column) != null) {
+    if (kept != null && kept.parsed && kept.ast().getNodeAtLineAndColumn(kept.uri, line, column) != null) {
       return Signatures.at(kept.ast(), kept.uri, kept.lookup, line, column);
     }
-    // an unfinished call, "render(", does not parse
+    // an unfinished call, "render(", does not parse (Groovy 2.5 keeps a partial AST of it, without the call)
     Kept copy = compileCopy(request, line, column, ")");
     return copy == null ? null : Signatures.at(copy.ast(), copy.uri, copy.lookup, line, column);
   }

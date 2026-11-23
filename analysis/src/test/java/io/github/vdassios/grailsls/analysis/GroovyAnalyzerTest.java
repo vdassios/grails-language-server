@@ -1377,4 +1377,21 @@ class GroovyAnalyzerTest {
     assertEquals(0, named.activeSignature, "named arguments are one map");
     assertEquals(0, named.activeParameter);
   }
+
+  /** After {@code show('x', }, with or without a statement on the next line, signature help is of the copy {@code show('x', )}. */
+  @Test
+  void signatureHelpAfterAnArgumentAndAComma() {
+    String path = tmp.resolve("A.groovy").toString();
+    String text = "class A {\n  void show(Map options) {}\n  void show(String text, int times) {}\n  def run() {\n    show('x', \n  }\n}\n";
+    compile(path, text);
+    SignatureHelp help = analyzer.signatureHelp(new CompileRequest(path, text, lookup, () -> false), 4, 14);
+    assertNotNull(help);
+    assertEquals(1, help.activeSignature);
+    assertEquals(1, help.activeParameter);
+    String next = text.replace("show('x', \n", "show('x',\n    println 'y'\n");
+    compile(path, next); // Groovy 2.5 keeps a partial AST of what it could not parse: a list, not the call
+    SignatureHelp before = analyzer.signatureHelp(new CompileRequest(path, next, lookup, () -> false), 4, 13);
+    assertNotNull(before, "a statement on the next line");
+    assertEquals(1, before.activeParameter);
+  }
 }
