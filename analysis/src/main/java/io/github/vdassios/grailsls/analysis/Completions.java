@@ -57,6 +57,7 @@ import io.github.vdassios.grailsls.api.CompletionDetail;
 import io.github.vdassios.grailsls.api.CompletionList;
 import io.github.vdassios.grailsls.api.Range;
 import io.github.vdassios.grailsls.api.SourceLookup;
+import io.github.vdassios.grailsls.api.Symbol;
 import io.github.vdassios.grailsls.api.TextEdit;
 
 /**
@@ -71,7 +72,8 @@ public final class Completions {
   private static final Pattern CONSTRUCTOR_CALL = Pattern.compile(".*new \\w*$");
 
   private final ASTNodeVisitor ast;
-  private final ClasspathTypes classpath;
+  /** Its {@link SourceLookup#types()} are the project's classes to offer; null: those of the compile only. */
+  private final SourceLookup sources;
   private final Conventions conventions;
   /** The tags of a namespace, for tags called as methods ({@link TagCalls}); null: none are offered. */
   private final Function<String, Map<String, Taglibs.Tag>> namespaces;
@@ -86,9 +88,9 @@ public final class Completions {
   /** Leaves out the private members of the type itself too: it is seen from another class. */
   private boolean fromOutside;
 
-  private Completions(ASTNodeVisitor ast, ClasspathTypes classpath, Conventions conventions, Function<String, Map<String, Taglibs.Tag>> namespaces, boolean page) {
+  private Completions(ASTNodeVisitor ast, SourceLookup sources, Conventions conventions, Function<String, Map<String, Taglibs.Tag>> namespaces, boolean page) {
     this.ast = ast;
-    this.classpath = classpath;
+    this.sources = sources;
     this.conventions = conventions;
     this.namespaces = namespaces;
     this.page = page && namespaces != null;
@@ -97,19 +99,19 @@ public final class Completions {
   /**
    * The candidates at a position, or null when the compile has no node there (the text does not parse).
    *
-   * @param classpath classes of the classpath to offer, or null for those of the compile only
+   * @param sources the lookup whose {@link SourceLookup#types()} are offered besides the compile's classes, or null
    * @param conventions names Grails resolves by convention, or null
    * @param namespaces the tags of a namespace, for tags called as methods ({@link TagCalls}), or null
    * @param page whether the document is page code
    * @param typed the text of the line before the position
    */
-  static Completions at(ASTNodeVisitor ast, URI document, ClasspathTypes classpath, Conventions conventions, Function<String, Map<String, Taglibs.Tag>> namespaces, boolean page,
+  static Completions at(ASTNodeVisitor ast, URI document, SourceLookup sources, Conventions conventions, Function<String, Map<String, Taglibs.Tag>> namespaces, boolean page,
       int line, int column, String typed) {
     ASTNode offsetNode = ast.getNodeAtLineAndColumn(document, line, column);
     if (offsetNode == null) {
       return null;
     }
-    Completions completions = new Completions(ast, classpath, conventions, namespaces, page);
+    Completions completions = new Completions(ast, sources, conventions, namespaces, page);
     completions.populate(offsetNode, line, column, typed);
     return completions;
   }
@@ -468,7 +470,10 @@ public final class Completions {
     return declarations.size() - 1;
   }
 
-  /** Classes of the compile, then of the classpath, whose simple name starts with the prefix; with an import when needed. */
+  /**
+   * Classes of the compile, then of the project ({@link SourceLookup#types()}, read only here: after a dot none are
+   * needed), whose simple name starts with the prefix; with an import when needed.
+   */
   private void types(ASTNode offsetNode, String prefix, Set<String> names) {
     ModuleNode module = (ModuleNode) GroovyASTUtils.getEnclosingNodeOfType(offsetNode, ModuleNode.class, ast);
     Seen seen = new Seen(module);
@@ -483,15 +488,18 @@ public final class Completions {
             remember(type)));
       }
     }
-    if (classpath == null) {
+    if (sources == null) {
       return;
     }
-    for (ClasspathTypes.Type type : classpath.types()) {
+    for (Symbol type : sources.types()) {
       if (!roomFor(names)) {
         return;
       }
-      if (type.simpleName.startsWith(prefix) && names.add(type.name)) {
-        items.add(new Completion(type.simpleName, type.kind, type.packageName, null, null, importEdits(type.name, type.packageName, seen, importAt), -1));
+      int dot = type.name.lastIndexOf('.');
+      if (type.name.startsWith(prefix, dot + 1) && names.add(type.name)) {
+        String packageName = dot < 0 ? "" : type.name.substring(0, dot);
+        Completion.Kind kind = type.kind == Symbol.Kind.INTERFACE ? Completion.Kind.INTERFACE : type.kind == Symbol.Kind.ENUM ? Completion.Kind.ENUM : Completion.Kind.CLASS;
+        items.add(new Completion(type.name.substring(dot + 1), kind, packageName, null, null, importEdits(type.name, packageName, seen, importAt), -1));
       }
     }
   }

@@ -380,7 +380,6 @@ final class GspAnalyzer {
       }
       return tags;
     }
-    ClasspathTypes types = GroovyAnalyzer.sourceTypes(request.lookup);
     Function<String, Map<String, Taglibs.Tag>> namespaces = groovy.namespaces(request.lookup);
     String placeholder = Completions.placeholder(GroovyAnalyzer.lineBefore(request.text, line, column));
     for (String insert : new String[] { "", placeholder, placeholder + "}" }) {
@@ -389,7 +388,7 @@ final class GspAnalyzer {
         continue;
       }
       int[] at = compiled.at;
-      Completions found = Completions.at(compiled.kept.ast(), compiled.kept.uri, types, null, namespaces, true, at[0], at[1], GroovyAnalyzer.lineBefore(compiled.translation.groovy, at[0], at[1]));
+      Completions found = Completions.at(compiled.kept.ast(), compiled.kept.uri, request.lookup, null, namespaces, true, at[0], at[1], GroovyAnalyzer.lineBefore(compiled.translation.groovy, at[0], at[1]));
       if (found != null) {
         groovy.completions.put(request.path, new LastCompletion(found, compiled.kept));
         return onPage(found.list(), compiled.translation);

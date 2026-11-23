@@ -48,7 +48,6 @@ import io.github.vdassios.grailsls.api.Analyzer;
 import io.github.vdassios.grailsls.api.CompileRequest;
 import io.github.vdassios.grailsls.api.CompileResult;
 import io.github.vdassios.grailsls.api.CompiledClass;
-import io.github.vdassios.grailsls.api.Completion;
 import io.github.vdassios.grailsls.api.CompletionDetail;
 import io.github.vdassios.grailsls.api.CompletionList;
 import io.github.vdassios.grailsls.api.Diagnostic;
@@ -370,20 +369,19 @@ public final class GroovyAnalyzer implements Analyzer {
     if (imported != null) {
       return importCompletion(request, imported, line, column);
     }
-    ClasspathTypes types = sourceTypes(request.lookup);
     Kept kept = current(request);
     Conventions conventions = conventions(request.lookup, request.path);
     Function<String, Map<String, Taglibs.Tag>> tags = namespaces(request.lookup);
-    Completions found = kept == null ? null : Completions.at(kept.ast(), kept.uri, types, conventions, tags, false, line, column, typed);
+    Completions found = kept == null ? null : Completions.at(kept.ast(), kept.uri, request.lookup, conventions, tags, false, line, column, typed);
     if (found == null) {
       kept = compileCopy(request, line, column, Completions.placeholder(typed));
-      found = kept == null ? null : Completions.at(kept.ast(), kept.uri, types, conventions, tags, false, line, column, typed);
+      found = kept == null ? null : Completions.at(kept.ast(), kept.uri, request.lookup, conventions, tags, false, line, column, typed);
     }
     String close = Completions.closeString(typed);
     if (found == null && close != null) {
       // inside a string not closed yet: render(view: 'sh
       kept = compileCopy(request, line, column, Completions.placeholder(typed) + close);
-      found = kept == null ? null : Completions.at(kept.ast(), kept.uri, types, conventions, tags, false, line, column, typed);
+      found = kept == null ? null : Completions.at(kept.ast(), kept.uri, request.lookup, conventions, tags, false, line, column, typed);
     }
     if (found == null) {
       completions.remove(request.path);
@@ -514,19 +512,6 @@ public final class GroovyAnalyzer implements Analyzer {
     } catch (GroovyBugError | RuntimeException | LinkageError e) {
       return null;
     }
-  }
-
-  /** The top-level classes of the request's lookup, for completion; the compile's own classes come first anyway. */
-  static ClasspathTypes sourceTypes(SourceLookup lookup) {
-    List<ClasspathTypes.Type> types = new ArrayList<>();
-    for (Symbol symbol : lookup.types()) {
-      int dot = symbol.name.lastIndexOf('.');
-      String packageName = dot < 0 ? "" : symbol.name.substring(0, dot);
-      Completion.Kind kind = symbol.kind == Symbol.Kind.INTERFACE ? Completion.Kind.INTERFACE
-          : symbol.kind == Symbol.Kind.ENUM ? Completion.Kind.ENUM : Completion.Kind.CLASS;
-      types.add(new ClasspathTypes.Type(symbol.name, symbol.name.substring(dot + 1), packageName, kind));
-    }
-    return () -> types;
   }
 
   @Override
