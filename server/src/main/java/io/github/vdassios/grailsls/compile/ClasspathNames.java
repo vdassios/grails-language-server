@@ -8,28 +8,26 @@ import java.lang.module.ModuleReader;
 import java.lang.module.ModuleReference;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipFile;
 
 /**
- * The packages and top-level classes of jars and of the JDK, for import completion. Each jar is read once, on the
- * first import completion of a context holding it, and shared by every context; the JDK's are its modules' exported
- * packages, read once per server. Entries under {@code META-INF/} (other releases of a multi-release jar),
+ * The packages and top-level classes of jars and of the JDK, for import completion. Each jar's come from its entries,
+ * read once per workspace ({@link JarEntries}); the JDK's are its modules' exported packages, read once per server. Entries under {@code META-INF/} (other releases of a multi-release jar),
  * {@code module-info}, {@code package-info} and names with a {@code $} (nested and generated classes) are left out.
  */
 final class ClasspathNames {
-  /** Top-level classes by package, per jar; an unreadable jar has none. */
-  private final Map<Path, Map<String, List<String>>> jars = new ConcurrentHashMap<>();
+  private final JarEntries jars;
   private static volatile Map<String, List<String>> jdk;
+
+  ClasspathNames(JarEntries jars) {
+    this.jars = jars;
+  }
 
   /** The packages directly below {@code parent} that lead to classes in these jars or the JDK, sorted. */
   List<String> packages(List<Path> classpath, String parent) {
@@ -59,22 +57,9 @@ final class ClasspathNames {
 
   private List<Map<String, List<String>>> sources(List<Path> classpath) {
     List<Path> jarFiles = classpath.stream().filter(entry -> entry.getFileName() != null && entry.getFileName().toString().endsWith(".jar")).collect(Collectors.toList());
-    List<Map<String, List<String>>> sources = jarFiles.parallelStream().map(jar -> jars.computeIfAbsent(jar, ClasspathNames::read)).collect(Collectors.toList());
+    List<Map<String, List<String>>> sources = jarFiles.parallelStream().map(jar -> jars.of(jar).classes).collect(Collectors.toList());
     sources.add(jdk());
     return sources;
-  }
-
-  private static Map<String, List<String>> read(Path jar) {
-    Map<String, List<String>> names = new HashMap<>();
-    try (ZipFile zip = new ZipFile(jar.toFile())) {
-      Enumeration<? extends ZipEntry> entries = zip.entries();
-      while (entries.hasMoreElements()) {
-        add(names, entries.nextElement().getName());
-      }
-    } catch (IOException e) {
-      // not a jar: the class path skips it too
-    }
-    return names;
   }
 
   private static Map<String, List<String>> jdk() {
@@ -104,7 +89,7 @@ final class ClasspathNames {
   }
 
   /** Records a class file entry ({@code a/b/C.class}) under its package. */
-  private static void add(Map<String, List<String>> names, String entry) {
+  static void add(Map<String, List<String>> names, String entry) {
     int slash = entry.lastIndexOf('/');
     if (slash <= 0 || !entry.endsWith(".class") || entry.startsWith("META-INF/") || entry.indexOf('$') >= 0 || entry.indexOf('-') >= 0) {
       return;

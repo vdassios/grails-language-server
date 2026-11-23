@@ -36,10 +36,14 @@ final class ModuleClassLoader extends URLClassLoader {
   static final List<String> EXTENSION_DESCRIPTORS = List.of("META-INF/groovy/org.codehaus.groovy.runtime.ExtensionModule",
       "META-INF/services/org.codehaus.groovy.runtime.ExtensionModule");
 
-  ModuleClassLoader(String name, List<URL> urls, Map<String, Path> javaClasses, Map<String, List<Path>> resources) {
+  /** The workspace's jar entries, which {@link #index} is built from. */
+  private final JarEntries jars;
+
+  ModuleClassLoader(String name, List<URL> urls, Map<String, Path> javaClasses, Map<String, List<Path>> resources, JarEntries jars) {
     super(name, urls.toArray(new URL[0]), BoundaryLoader.INSTANCE);
     this.javaClasses = javaClasses;
     this.resources = Map.copyOf(resources);
+    this.jars = jars;
   }
 
   @Override
@@ -83,7 +87,7 @@ final class ModuleClassLoader extends URLClassLoader {
       synchronized (indexLock) {
         current = index;
         if (current == null) {
-          index = current = JarIndex.of(getURLs());
+          index = current = JarIndex.of(getURLs(), jars);
         }
       }
     }

@@ -42,7 +42,7 @@ class JarIndexTest {
     for (int i = 0; i < entries.length; i++) {
       urls[i] = entries[i].toUri().toURL();
     }
-    return JarIndex.of(urls);
+    return JarIndex.of(urls, new JarEntries());
   }
 
   @Test
@@ -77,7 +77,7 @@ class JarIndexTest {
   @Test
   void aClassDirectoryBuiltAfterTheIndexIsLookedAt() throws IOException {
     Path classes = tmp.resolve("build/classes");
-    JarIndex index = JarIndex.of(new URL[] {new URL(classes.toUri() + "/")});
+    JarIndex index = JarIndex.of(new URL[] {new URL(classes.toUri() + "/")}, new JarEntries());
     assertFalse(index.mayHave("a/B.class"));
     Files.createDirectories(classes.resolve("a"));
     Files.writeString(classes.resolve("a/B.class"), "");
@@ -113,7 +113,7 @@ class JarIndexTest {
 
   @Test
   void aUrlThatIsNoFileIsNotIndexed() throws IOException {
-    JarIndex index = JarIndex.of(new URL[] {jar(tmp.resolve("a.jar"), new String[] {"a/B.class"}).toUri().toURL(), new URL("http://localhost/lib.jar")});
+    JarIndex index = JarIndex.of(new URL[] {jar(tmp.resolve("a.jar"), new String[] {"a/B.class"}).toUri().toURL(), new URL("http://localhost/lib.jar")}, new JarEntries());
     assertTrue(index.mayHave("a/C.class"), "anything may be behind a URL that is not a file");
   }
 }

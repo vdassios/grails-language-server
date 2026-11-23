@@ -1,7 +1,6 @@
 package io.github.vdassios.grailsls.compile;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.Reader;
 import java.io.UncheckedIOException;
 import java.net.URL;
@@ -16,7 +15,6 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.EnumSet;
-import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -33,7 +31,6 @@ import java.util.function.Function;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
-import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
 import io.github.vdassios.grailsls.api.Analyzer;
@@ -76,8 +73,8 @@ public final class Workspace implements AutoCloseable {
   private final Set<Path> pages = ConcurrentHashMap.newKeySet();
   /** Per context, how to read the class files it serves from build output again. */
   private final Map<CompileContext, ClassOutput> classOutputs = new HashMap<>();
-  /** What each jar of the contexts' class paths holds, read once. */
-  private final Map<Path, JarContents> jars = new ConcurrentHashMap<>();
+  /** The entries of the jars of the contexts' class paths and of {@link #pageJars}, each read once. */
+  private final JarEntries jars = new JarEntries();
   /** Per context, {@link SourceLookup#pluginFiles()}. */
   private final Map<CompileContext, Set<String>> pluginFiles = new ConcurrentHashMap<>();
   /**
@@ -87,7 +84,7 @@ public final class Workspace implements AutoCloseable {
    */
   private final Map<CompileContext, List<Path>> pageJars = new HashMap<>();
   /** Packages and classes of the jars, for import completion. */
-  private final ClasspathNames classpathNames = new ClasspathNames();
+  private final ClasspathNames classpathNames = new ClasspathNames(jars);
   /**
    * Per context, the one that parses its files for the symbol index: the first context of the same Groovy jar. Parsing
    * needs no class path, so the index starts one loader per Groovy jar, not one per source set.
@@ -127,7 +124,7 @@ public final class Workspace implements AutoCloseable {
       }
       for (SourceSetRecord sourceSet : module.sourceSets) {
         if (!ownRoots(sourceSet, buildDirs).isEmpty()) {
-          CompileContext context = context(model, module, sourceSet, buildDirs, analysisJar, classOutputs, reporter);
+          CompileContext context = context(model, module, sourceSet, buildDirs, analysisJar, jars, classOutputs, reporter);
           contexts.add(context);
           probes.putIfAbsent(module.groovyVersion, context);
           Path groovyJar = groovyJar(context.classpath());
@@ -405,8 +402,8 @@ public final class Workspace implements AutoCloseable {
     return found;
   }
 
-  private JarContents contents(Path jar) {
-    return jars.computeIfAbsent(jar, JarContents::read);
+  private JarEntries.Jar contents(Path jar) {
+    return jars.of(jar);
   }
 
   /** A class file in one of the context's {@link #pageJars}, as a {@code jar:} URL; null when none holds it. */
@@ -421,62 +418,6 @@ public final class Workspace implements AutoCloseable {
       }
     }
     return null;
-  }
-
-  /** What a jar holds that the analysis asks for by name: its taglib classes and the {@code grails-app} files it supplies. */
-  static final class JarContents {
-    private static final JarContents NONE = new JarContents(List.of(), List.of());
-    private static final String VIEWS = "gsp/views.properties";
-    private static final String ASSETS = "META-INF/assets/";
-
-    /** Binary names of the classes named {@code *TagLib}. */
-    final List<String> taglibs;
-    /** {@link SourceLookup#pluginFiles()} of this jar. */
-    final List<String> pluginFiles;
-
-    private JarContents(List<String> taglibs, List<String> pluginFiles) {
-      this.taglibs = taglibs;
-      this.pluginFiles = pluginFiles;
-    }
-
-    static JarContents read(Path jar) {
-      List<String> taglibs = new ArrayList<>();
-      List<String> files = new ArrayList<>();
-      try (ZipFile zip = new ZipFile(jar.toFile())) {
-        Enumeration<? extends ZipEntry> entries = zip.entries();
-        while (entries.hasMoreElements()) {
-          ZipEntry entry = entries.nextElement();
-          String name = entry.getName();
-          if (name.endsWith("TagLib.class") && !name.contains("$") && !name.endsWith("/TagLib.class") && !name.startsWith("META-INF/")) {
-            taglibs.add(name.substring(0, name.length() - ".class".length()).replace('/', '.'));
-          } else if (name.startsWith(ASSETS) && !entry.isDirectory() && name.length() > ASSETS.length()) {
-            files.add("assets/" + name.substring(ASSETS.length()));
-          } else if (name.equals(VIEWS)) {
-            files.addAll(views(zip, entry));
-          }
-        }
-      } catch (IOException e) {
-        // not a jar: the class path skips it too
-        return NONE;
-      }
-      return new JarContents(List.copyOf(taglibs), List.copyOf(files));
-    }
-
-    /** A plugin's precompiled views: {@code /WEB-INF/grails-app/views/login/auth.gsp=gsp_..._loginauth_gsp} → {@code views/login/auth.gsp}. */
-    private static List<String> views(ZipFile zip, ZipEntry entry) throws IOException {
-      Properties properties = new Properties();
-      try (InputStream in = zip.getInputStream(entry)) {
-        properties.load(in);
-      }
-      List<String> views = new ArrayList<>();
-      for (String key : properties.stringPropertyNames()) {
-        int at = key.indexOf("grails-app/");
-        if (at >= 0) {
-          views.add(key.substring(at + "grails-app/".length()));
-        }
-      }
-      return views;
-    }
   }
 
   /** Class lookup for compiles in {@code context}: the declaration index over its search roots, and open text. */
@@ -633,7 +574,7 @@ public final class Workspace implements AutoCloseable {
   }
 
   private static CompileContext context(ProjectModel model, ModuleRecord module, SourceSetRecord sourceSet, Set<Path> buildDirs,
-      Path analysisJar, Map<CompileContext, ClassOutput> classOutputs, BiConsumer<Boolean, String> reporter) {
+      Path analysisJar, JarEntries jars, Map<CompileContext, ClassOutput> classOutputs, BiConsumer<Boolean, String> reporter) {
     SourceSetRecord main = sourceSet.name.equals("main") ? null : module.sourceSet("main");
     List<ModuleRecord> siblings = siblings(model, module);
 
@@ -698,7 +639,7 @@ public final class Workspace implements AutoCloseable {
     }
     String name = module.path + " " + sourceSet.name;
     CompileContext context = new CompileContext(name, own, new ArrayList<>(search), new ArrayList<>(classpath), classFiles, descriptors, notBuilt,
-        classesTask(module.path, sourceSet.name), reporter);
+        classesTask(module.path, sourceSet.name), jars, reporter);
     classOutputs.put(context, output);
     return context;
   }
