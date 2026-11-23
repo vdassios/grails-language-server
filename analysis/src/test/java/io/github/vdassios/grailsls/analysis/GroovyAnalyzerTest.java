@@ -861,6 +861,28 @@ class GroovyAnalyzerTest {
     assertEquals(List.of(), analyzer.symbols(path), "the copy is not kept");
   }
 
+  /**
+   * The copy is repaired once, as the line needs: in a string the line leaves open the string is closed too, else only
+   * a name is typed. Counted with a cancelling flag: each copy compiled checks it once, then stops.
+   */
+  @Test
+  void completionCompilesOneCopy() {
+    String path = tmp.resolve("A.groovy").toString();
+    for (String line : List.of("    render(view: 'sh", "    def s = \"sh", "    name.", "    def s = 'a' + name.", "    render(view: 'a' + name.")) {
+      String text = "class A {\n  String name\n  def run() {\n" + line + "\n  }\n}\n";
+      compile(path, text);
+      AtomicInteger polls = new AtomicInteger();
+      analyzer.completion(new CompileRequest(path, text, lookup, () -> {
+        polls.incrementAndGet();
+        return true;
+      }), 3, line.length());
+      assertEquals(1, polls.get(), line);
+    }
+    String closed = "class A {\n  String name\n  def run() {\n    def s = \"${name.}\" + 'x'\n  }\n}\n";
+    int column = closed.split("\n")[3].indexOf('}');
+    assertTrue(labels(complete(path, closed, 3, column)).contains("toUpperCase"), "a string the line closes later is not closed again");
+  }
+
   /** groovy-language-server #94: members of superclasses and traits were missing. */
   @Test
   void membersComeFromTheWholeTypeHierarchyTraitsIncluded() throws IOException {

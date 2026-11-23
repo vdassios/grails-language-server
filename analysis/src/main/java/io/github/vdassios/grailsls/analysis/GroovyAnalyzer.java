@@ -384,13 +384,9 @@ public final class GroovyAnalyzer implements Analyzer {
     Function<String, Map<String, Taglibs.Tag>> tags = namespaces(request.lookup);
     Completions found = kept == null ? null : Completions.at(kept.ast(), kept.uri, request.lookup, conventions, tags, false, line, column, typed);
     if (found == null) {
-      kept = compileCopy(request, line, column, Completions.placeholder(typed));
-      found = kept == null ? null : Completions.at(kept.ast(), kept.uri, request.lookup, conventions, tags, false, line, column, typed);
-    }
-    String close = Completions.closeString(typed);
-    if (found == null && close != null) {
-      // inside a string not closed yet: render(view: 'sh
-      kept = compileCopy(request, line, column, Completions.placeholder(typed) + close);
+      // the text does not parse at the position: a copy with a name typed there, and a string closed that the line
+      // leaves open (render(view: 'sh)
+      kept = compileCopy(request, line, column, Completions.repair(typed, lineAfter(request.text, line, column)));
       found = kept == null ? null : Completions.at(kept.ast(), kept.uri, request.lookup, conventions, tags, false, line, column, typed);
     }
     if (found == null) {
@@ -468,6 +464,13 @@ public final class GroovyAnalyzer implements Analyzer {
 
   static String lineBefore(String text, int line, int column) {
     return new Lines(text).before(line, column);
+  }
+
+  /** The text of a line after a position. */
+  private static String lineAfter(String text, int line, int column) {
+    int offset = new Lines(text).offset(line, column);
+    int end = text.indexOf('\n', offset);
+    return text.substring(offset, end < 0 ? text.length() : end);
   }
 
   @Override

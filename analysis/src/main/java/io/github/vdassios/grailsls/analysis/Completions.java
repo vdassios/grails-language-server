@@ -125,15 +125,30 @@ public final class Completions {
   }
 
   /** The text to insert at the position when it does not parse: a name, or a constructor call after {@code new}. */
-  public static String placeholder(String lineBeforePosition) {
+  static String placeholder(String lineBeforePosition) {
     return CONSTRUCTOR_CALL.matcher(lineBeforePosition).matches() ? "a()" : "a";
+  }
+
+  /**
+   * What a copy of the text gets at the position when the text does not parse there: a name ({@link #placeholder}), and
+   * when the position is in a string that nothing after it on the line closes, what closes the string
+   * ({@link #closeString}). A triple-quoted string is not closed: it may end on a later line.
+   */
+  static String repair(String lineBeforePosition, String lineAfterPosition) {
+    String name = placeholder(lineBeforePosition);
+    String close = closeString(lineBeforePosition);
+    if (close == null) {
+      return name;
+    }
+    char quote = close.charAt(0);
+    return lineAfterPosition.indexOf(quote) >= 0 || lineBeforePosition.contains(String.valueOf(new char[] { quote, quote, quote })) ? name : name + close;
   }
 
   /**
    * When a line's text leaves a string open, what closes it and the parentheses and brackets opened before it on the
    * line ({@code render(view: 'sh} → {@code ')}); else null. Triple quotes and escapes are not considered.
    */
-  public static String closeString(String lineBeforePosition) {
+  static String closeString(String lineBeforePosition) {
     char quote = 0;
     StringBuilder open = new StringBuilder();
     for (char c : lineBeforePosition.toCharArray()) {
