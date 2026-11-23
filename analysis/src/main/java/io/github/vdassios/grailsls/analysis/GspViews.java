@@ -21,7 +21,7 @@ import io.github.vdassios.grailsls.api.SourceLookup;
 /**
  * GSP pages, without compiling them: completion of tag names after {@code <ns:} and of attribute names inside a tag,
  * hover and definition of tags, and hints for an unknown tag in a namespace some taglib declares and for a missing
- * attribute its taglib documents as {@code REQUIRED}. Attribute values Grails resolves by convention (plan B3) go
+ * attribute its taglib documents as {@code REQUIRED}. Attribute values Grails resolves by convention go
  * through {@link GspConventions}: definition, value completion, and hints for a template, view, layout or asset that does
  * not exist. The template a {@code tmpl:} tag names and a {@code g:render} template below its {@code contextPath} are
  * followed for definition only: they get no hint. A page's "compile" only reads its tags.

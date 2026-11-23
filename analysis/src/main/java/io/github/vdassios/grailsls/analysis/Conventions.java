@@ -41,7 +41,7 @@ import io.github.vdassios.grailsls.api.Range;
 import io.github.vdassios.grailsls.api.SourceLookup;
 
 /**
- * Strings Grails resolves by convention (plan B3's table, B4 2.5): views, templates and layouts under
+ * Strings Grails resolves by convention: views, templates and layouts under
  * {@code grails-app/views}, controllers by logical name and their actions. Definition, value completion and hints for
  * views and templates that do not exist. Files are looked up in every module's {@code grails-app}, the document's own
  * module first ({@link SourceLookup#grailsAppDirs}).

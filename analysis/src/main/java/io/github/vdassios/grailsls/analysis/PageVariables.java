@@ -43,7 +43,7 @@ import io.github.vdassios.grailsls.api.Location;
 
 /**
  * Names a GSP page uses without declaring them, made properties of its translation so that completion offers them and
- * queries type them (plan B4 2.6):
+ * queries type them:
  * <ul>
  * <li>model variables: the keys of the literal model maps of the actions rendering the view, or of the actions and
  * pages rendering the template ({@link GspConventions#models}), typed when the controller's code states the value's type
