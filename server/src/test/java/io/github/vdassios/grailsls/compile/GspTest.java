@@ -678,6 +678,30 @@ abstract class GspTest {
   }
 
   @Test
+  void modelValuesTheActionsDisagreeOnStayUntyped() throws Exception {
+    String c = app().controller;
+    open = Map.of(controllerPath(), "package fixture." + app().namespace + "\n\nclass " + controllerFile().replace(".groovy", "") + " {\n"
+        + "    def shown() {\n        render view: 'shown', model: [value: 'text', same: 'a']\n    }\n\n"
+        + "    def again() {\n        render view: 'shown', model: [value: 1L, same: 'b']\n    }\n}\n");
+    Path shown = views.resolve(c).resolve("shown.gsp");
+    String page = "<p>${value} ${same}</p>\n";
+    assertEquals(List.of(), hints(compile(shown, page)));
+    String value = hoverAt(shown, page, "${value}", 3);
+    assertTrue(value != null && value.contains("Object value"), "two actions give two types: " + value);
+    String same = hoverAt(shown, page, "${same}", 3);
+    assertTrue(same != null && same.contains("String same"), "both give a String: " + same);
+  }
+
+  @Test
+  void anEachStatusIsAnInt() throws Exception {
+    Path shown = views.resolve(app().controller).resolve("shown.gsp");
+    String page = "<g:each in=\"${['a', 'b']}\" var=\"word\" status=\"i\">${i}</g:each>\n";
+    assertEquals(List.of(), hints(compile(shown, page)));
+    String hover = hoverAt(shown, page, "${i}", 2);
+    assertTrue(hover != null && hover.contains("int i"), "the loop's index: " + hover);
+  }
+
+  @Test
   void itInAnEachWithoutVarIsTheElement() throws Exception {
     String c = app().controller;
     open = Map.of(controllerPath(), "package fixture." + app().namespace + "\n\nclass " + controllerFile().replace(".groovy", "") + " {\n"
