@@ -169,8 +169,7 @@ class LatencyTest {
           write(report(), "sweep.txt");
         }
       }
-      System.gc();
-      count("heap MB after the sweep, after GC", (int) ((Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) >> 20));
+      count("heap MB after the sweep, after GC", heapMb());
     }
     if (details != null) {
       Files.writeString(Path.of(details), errorsOut);
@@ -524,8 +523,7 @@ class LatencyTest {
       workspace.symbols().search(query);
       record("workspace symbol search", start);
     }
-    System.gc();
-    count("heap MB after the symbol index, after GC", (int) ((Runtime.getRuntime().totalMemory() - Runtime.getRuntime().freeMemory()) >> 20));
+    count("heap MB after the symbol index, after GC", heapMb());
   }
 
   private void measure(Workspace workspace, CompileContext context, Path file) throws Exception {
