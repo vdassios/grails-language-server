@@ -112,7 +112,18 @@ public final class Conventions {
         return controller != null && field != null && field.isStatic() && field.getName().equals("allowedMethods") ? new Reference(Kind.ACTION, value, string, controller) : null;
       }
       MethodCallExpression call = callOf(entry, ast);
-      return call == null ? null : argument(call, entry.getKeyExpression().getText(), value, string, controller, urlMappings(owner));
+      if (call != null) {
+        return argument(call, entry.getKeyExpression().getText(), value, string, controller, urlMappings(owner));
+      }
+      // "/book"(controller: 'book', action: [GET: 'show', POST: 'save']): actions by HTTP method
+      ASTNode map = ast.getParent(entry);
+      ASTNode outer = map == null ? null : ast.getParent(map);
+      if (outer instanceof MapEntryExpression && ((MapEntryExpression) outer).getValueExpression() == map
+          && "action".equals(((MapEntryExpression) outer).getKeyExpression().getText()) && urlMappings(owner)) {
+        MethodCallExpression mapped = callOf((MapEntryExpression) outer, ast);
+        return mapped == null ? null : argument(mapped, "action", value, string, controller, true);
+      }
+      return null;
     }
     FieldNode field = field(parent);
     if (controller != null && field != null && field.isStatic() && field.getName().equals("layout")) {
@@ -127,6 +138,10 @@ public final class Conventions {
       switch (key) {
         case "controller":
           return new Reference(Kind.CONTROLLER, value, node, null);
+        case "resources":
+        case "resource":
+          // "/books"(resources: 'book'): a REST controller
+          return urlMappings ? new Reference(Kind.CONTROLLER, value, node, null) : null;
         case "action":
           String named = argumentValue(call, "controller");
           return new Reference(Kind.ACTION, value, node, named == null ? (urlMappings ? null : controller) : named.isEmpty() ? null : named);

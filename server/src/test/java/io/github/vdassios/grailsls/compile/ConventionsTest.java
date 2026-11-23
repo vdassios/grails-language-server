@@ -193,6 +193,13 @@ abstract class ConventionsTest {
       found.put("respond view", definition(workspace, controller(), respond, "'index'"));
       String mappedViews = mappings().replace(fill("view: '/ctrl/index'"), fill("controller: 'ctrl', view: 'index'"));
       found.put("mapped view of a controller", definition(workspace, mappings, mappedViews, "'index'"));
+      // REST mappings name the controller by resources: or resource:, and actions by HTTP method
+      for (String key : List.of("resources", "resource")) {
+        String rest = mappings().replace(fill("controller: 'ctrl', action: 'show'"), fill(key + ": 'ctrl'"));
+        found.put(key + " controller", definition(workspace, mappings, rest, "'" + app().controller + "'"));
+      }
+      String byMethod = mappings().replace("action: 'show'", "action: [GET: 'show']");
+      found.put("action by method", definition(workspace, mappings, byMethod, "'show'"));
 
       Map<String, String> expected = new TreeMap<>();
       String views = "views/" + app().controller + "/";
@@ -210,6 +217,9 @@ abstract class ConventionsTest {
       expected.put("inherited action", "../src/main/groovy/" + app().packageName.replace('.', '/') + "/Paging.groovy:5");
       expected.put("respond view", views + "index.gsp:1");
       expected.put("mapped view of a controller", views + "index.gsp:1");
+      expected.put("resources controller", declared("class " + cap() + "Controller"));
+      expected.put("resource controller", declared("class " + cap() + "Controller"));
+      expected.put("action by method", declared("def show("));
       assertEquals(expected, found);
     }
   }
@@ -229,6 +239,7 @@ abstract class ConventionsTest {
       Path mappings = controllers().resolve("UrlMappings.groovy");
       found.put("mapped controller", labels(workspace, mappings, mappings().replace(fill("controller: 'ctrl'"), "controller: ''"), "controller: '"));
       found.put("mapped action", labels(workspace, mappings, mappings().replace("action: 'show'", "action: ''"), "action: '"));
+      found.put("action by method", labels(workspace, mappings, mappings().replace("action: 'show'", "action: [GET: '']"), "GET: '"));
 
       Map<String, List<String>> expected = new TreeMap<>();
       // relative names, then absolute ones
@@ -249,6 +260,7 @@ abstract class ConventionsTest {
       List<String> actions = Files.readAllLines(controller()).stream().map(String::trim).filter(l -> l.startsWith("def ") && l.contains("("))
           .map(l -> l.substring(4, l.indexOf('('))).collect(Collectors.toList());
       expected.put("mapped action", actions);
+      expected.put("action by method", actions);
       assertEquals(expected, found);
 
       Completion view = completion(workspace, controller(), text, text.replace("view: 'index'", "view: 'in'"), "view: 'in").get(0);

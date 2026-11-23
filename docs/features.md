@@ -32,8 +32,8 @@ Strings that name a view, template, layout, controller or action go to that file
 | `render(view: 'show')`, `respond x, view: 'show'` in a controller | `views/<controller>/show.gsp` (then `.jsp`, `.gson`); `'/a/b'` is `views/a/b.gsp` from anywhere |
 | `render(template: 'row')` | `views/<controller>/_row.gsp` (then `_row.gson`); `'/a/row'` is `views/a/_row.gsp` |
 | `static layout = 'main'` in a controller | `views/layouts/main.gsp` |
-| `controller:` in `redirect`, `chain`, `forward`, `createLink`, `link` and in `UrlMappings` | the controller class (`'book'` or, as Grails's URL converter reads it, `'Book'`) |
-| `action:` in the same calls; keys of `static allowedMethods` | the action in the named controller, else in the current one: a public method that is not static, or a property assigned a closure, declared in the controller or in a superclass from the project's sources |
+| `controller:` in `redirect`, `chain`, `forward`, `createLink`, `link` and in `UrlMappings`; `resources:` and `resource:` in `UrlMappings` | the controller class (`'book'` or, as Grails's URL converter reads it, `'Book'`) |
+| `action:` in the same calls, and each value of an `action: [GET: 'show']` map in `UrlMappings`; keys of `static allowedMethods` | the action in the named controller, else in the current one: a public method that is not static, or a property assigned a closure, declared in the controller or in a superclass from the project's sources |
 | `view:` in `UrlMappings` | an absolute view, or one of the `controller:` given beside it |
 
 - **Completion** of these strings offers the views and templates of the controller first, then every one by absolute path, the layouts, the controllers by logical name and the actions of the controller. The keys of `render` and `redirect` complete as named arguments.

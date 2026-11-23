@@ -69,7 +69,7 @@ Every feature of the [Grails VS Code extension](https://github.com/Johan070119/G
 | `controller` attribute of a tag outside the `g:` namespace (`<sec:link controller="book">`) | Lua only: this server reads `controller` and `action` only on `g:` tags, since other namespaces use the names for their own ends |
 | `respond(..., view:)` | this server only |
 | a key of `static allowedMethods` | this server only |
-| `controller:` in `UrlMappings` | this server only |
+| `controller:`, `resources:` and `resource:` in `UrlMappings`, actions by HTTP method (`action: [GET: 'show']`) | this server only |
 
 ## Other features (Grails VS Code extension)
 
