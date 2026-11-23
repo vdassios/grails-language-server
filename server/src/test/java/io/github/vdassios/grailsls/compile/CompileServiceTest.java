@@ -264,6 +264,26 @@ class CompileServiceTest {
     assertTrue(Gc.collected(loader), "the old module loader (and the Groovy it loaded) is garbage");
   }
 
+  /**
+   * An edit cancels the compile of the text before it (which stops at its next phase), and that compile publishes
+   * nothing: the first diagnostics are of the edited text. The first text is long, so its compile is still running
+   * when the edit comes.
+   */
+  @Test
+  void aCompileAnEditReplacedPublishesNothing() throws Exception {
+    StringBuilder stale = new StringBuilder("class A {\n  Stale stale\n");
+    for (int i = 0; i < 2000; i++) {
+      stale.append("  int m").append(i).append("(int a) { a + ").append(i).append(" }\n");
+    }
+    service.open(uri("A.groovy"), stale.append("}\n").toString(), 1);
+    service.change(uri("A.groovy"), List.of(new TextDocumentContentChangeEvent("class A {\n  Fresh fresh\n}\n")), 2);
+    PublishDiagnosticsParams first = next();
+    assertEquals(2, first.getVersion());
+    assertEquals(1, first.getDiagnostics().size(), messages(first).toString());
+    assertTrue(messages(first).get(0).contains("Fresh"), messages(first).toString());
+    assertNull(published.poll(1, TimeUnit.SECONDS), "nothing from the compile of version 1");
+  }
+
   /** A query right after an edit answers about the edited text: it ends the debounce delay instead of waiting it out. */
   @Test
   void aQueryRunsThePendingCompileAtOnce() throws Exception {
