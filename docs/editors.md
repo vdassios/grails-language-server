@@ -23,6 +23,22 @@ The server itself needs Java 11 or later, Grails 7 and 8 need 17. It supports Gr
 
 The server does nothing until the client sends `initializationOptions.trusted = true` (see [Trust](how-it-works.md#trust)). The workspace root must be the Gradle root, the directory with `gradlew`; the server reads the project model from there. It never runs a wrapper from a parent directory: opening a sub-module fails with a message naming the folder to open.
 
+## What the server reports
+
+- **Version.** `initialize` answers with `serverInfo.version`, the server's version (`serverInfo.name` is `grails-language-server`), so a client can tell which jar it started.
+- **Its own checks.** The server checks the project itself before it serves anything, whatever the client checked: the workspace is trusted, every module is on Groovy 2.5 or later, and the project's Groovy can read the class files of the JDK the server runs on. Each one that fails is a `failed` status naming the reason, not errors on every file.
+- **Status.** `grails/status` ([protocol](how-it-works.md#protocol)) carries a state and a message:
+
+| State | Message |
+|---|---|
+| `resolving` | `reading the Gradle build in <root>` |
+| `indexing` | `<n> modules`, with ` (cached)` when the model came from the cache and `, <k> unresolved dependencies` when Gradle could not resolve some |
+| `ready` | the same, plus `, <j> Java files not built (run Gradle <tasks>)` when Java sources of a module have no class files yet |
+| `failed` | the reason: `workspace not trusted: ...`, `no workspace folder`, `Groovy <version> (module <path>) is not supported: ...`, the JDK the project's Groovy cannot read (both versions named), or Gradle's error (naming the wrapper's Gradle version and the JDK) |
+
+  A `failed` reload after `ready` keeps the previous model: the server goes on answering from it.
+- **Cancelled requests.** A request the client cancels with `$/cancelRequest` is answered with LSP's `RequestCancelled` error: a query still waiting for its module's compile thread never runs, and a compile of the document's copy the query started (completion, signature help) stops at its next phase. `grails/downloadSources` still running or queued at `shutdown` is answered with `{ "available": 0, "unavailable": 0, "failed": 0, "message": "cancelled" }`.
+
 ## Editor setup
 
 **Changes outside the editor.** The server follows files changed outside the editor (a checkout, a generator): through the client's file watcher when the client offers one (VS Code, Neovim on macOS), otherwise with a watcher of its own (Neovim on Linux, where it uses inotify: one watch per source directory). If it logs that a directory cannot be watched, raise `fs.inotify.max_user_watches`; until then it reads the source roots again on every save. The request `grails/reindex` makes it read them again at any time, without Gradle. After a build file changes, the server says the project model is stale; `grails/reloadProject` reads it again.
