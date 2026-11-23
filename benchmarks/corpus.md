@@ -10,7 +10,7 @@ Public Grails projects the server is measured on, besides its own fixtures. They
 | [MauroDataMapper/mdm-core](https://github.com/MauroDataMapper/mdm-core) | `a5ec88aeb0b7` | 5.3.2 / 3.0.11 | 17 | Apache-2.0 | Grails 5; 16 Gradle builds, 12 with `grails-app`, plugin modules depending on `mdm-core`, `mdm-security` and each other; 132 controllers; 3 Java files compiled with Groovy |
 | [folio-org/mod-agreements](https://github.com/folio-org/mod-agreements) (`service/`) | `2f6bd141ee5f` | 6.2.3 / 3.0.23 | 17 | Apache-2.0 | Grails 6; heavy GORM use (61 domain classes, Hibernate with schema multi-tenancy) |
 | [rundeck/rundeck](https://github.com/rundeck/rundeck) | `21f4101fcf98` | 7.2.2 / 4.0.33 | 17 | Apache-2.0 | Grails 7 on Groovy 4; largest: 49 Gradle builds, 1787 Groovy files, 1251 Java files (48 inside `src/main/groovy`); all four artefact kinds, taglibs (9) and GSP (260) |
-| [xh/hoist-core](https://github.com/xh/hoist-core) | `95fa3b3c6429` | 8.0.0 / 5.1.3 | 21, toolchains 17 and 25 | Apache-2.0 | Grails 8 on Groovy 5 (newer than the server's tested range); a Grails plugin, not an app; 14 Java files compiled with Groovy |
+| [xh/hoist-core](https://github.com/xh/hoist-core) | `95fa3b3c6429` | 8.0.0 / 5.1.3 | 21, toolchains 17 and 25 | Apache-2.0 | Grails 8 on Groovy 5; a Grails plugin, not an app; 14 Java files compiled with Groovy |
 
 Artefact counts (Groovy files under `grails-app/`, all modules):
 

@@ -21,7 +21,7 @@ Every feature of the [Grails VS Code extension](https://github.com/Johan070119/G
 | Completion inside `constraints`, `mapping`, criteria and `where` | covered | Constraint names, criteria methods, properties in `where`; `mapping` keys are not offered |
 | Service methods after `fooService.` (typed or `def`) | covered | `def fooService` is typed as `FooService` from `grails-app/services` |
 | Actions after `FooController.`, methods after `FooService.` (by class name) | covered | Members of the compiled class |
-| Unimported class names (`Swagger` → `SwaggerController`) | covered | With an import edit, unless the class is in the file's package, a star import, a Groovy default import or the default package; it goes after the imports, else the package line, else below a shebang and header comment |
+| Unimported class names (`Swagger` → `SwaggerController`) | covered | The project's own classes only; a jar or JDK class is not offered until imported. With an import edit, unless the class is in the file's package, a star import, a Groovy default import or the default package; it goes after the imports, else the package line, else below a shebang and header comment |
 | Controller scope variables (`params`, `request`, `response`, `session`, `flash`, `grailsApplication`, `servletContext`, `controllerName`, `actionName`) | covered | Members Grails's controller traits add |
 | `render(` / `redirect(` named arguments | covered | |
 | View names after `view: "` (with folders) | covered | |
@@ -70,6 +70,7 @@ Every feature of the [Grails VS Code extension](https://github.com/Johan070119/G
 | `respond(..., view:)` | this server only |
 | a key of `static allowedMethods` | this server only |
 | `controller:`, `resources:` and `resource:` in `UrlMappings`, actions by HTTP method (`action: [GET: 'show']`) | this server only |
+
 
 ## Other features (Grails VS Code extension)
 
