@@ -150,6 +150,18 @@ class GspScannerTest {
     assertEquals(List.of("a", "c"), code("<my-ns:x a=\"<% a %>\" b=\"[b]\" c=\"${c}\"/>"), "HTML: scriptlets are code, a list is text");
   }
 
+  /**
+   * A {@code tmpl:} tag's name is the template's: Grails's scanner reads it up to white space, {@code />} or {@code >},
+   * so it may be a path ({@code <tmpl:/shared/footer/>}).
+   */
+  @Test
+  void aTemplateTagIsNamedByItsPath() {
+    assertEquals(List.of("tmpl:row", "tmpl:/shared/footer", "tmpl:part/row a=1", "/tmpl:part/row"),
+        tags("<tmpl:row/><tmpl:/shared/footer/><tmpl:part/row a=\"1\"></tmpl:part/row>"));
+    GspScanner.Tag footer = GspScanner.scan("<tmpl:/shared/footer />", false).tags.get(0);
+    assertEquals("<tmpl:/shared/footer />".indexOf(" />"), footer.nameEnd);
+  }
+
   /** Grails 8 takes {@code \${} outside a GSP tag for text; up to Grails 7 the {@code \} is text and the expression code. */
   @Test
   void anEscapedExpressionIsTextOnGrails8Only() {

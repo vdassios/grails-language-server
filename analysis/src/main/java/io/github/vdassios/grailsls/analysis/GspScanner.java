@@ -9,7 +9,8 @@ import java.util.regex.Pattern;
  * {@code </ns:name>}, {@code <ns:name/>}): their namespace, name and attributes, by offset; a namespace is a letter,
  * then letters, digits or {@code _}, as Grails's scanner takes one (any other tag is HTML). Expressions
  * ({@code ${ }}), scriptlets ({@code <% %>}, {@code %{ }%}) and comments ({@code <%-- --%>}, {@code %{-- --}%}) hide
- * tags, also inside attribute values. A tag not closed by the end of the text ends there (one being typed). Of plain
+ * tags, also inside attribute values. A {@code tmpl:} tag's name is a template path and may hold {@code /}. A tag not
+ * closed by the end of the text ends there (one being typed). Of plain
  * HTML tags only {@code <meta>} is reported (namespace {@code ""}), for the layout a page names.
  */
 final class GspScanner {
@@ -310,7 +311,7 @@ final class GspScanner {
     if (i > nsStart && i < text.length() && text.charAt(i) == ':' && NAMESPACE.matcher(text.substring(nsStart, i)).matches()) {
       namespace = text.substring(nsStart, i);
       nameStart = i + 1;
-      nameEnd = nameEnd(nameStart);
+      nameEnd = TEMPLATE_NAMESPACE.equals(namespace) ? templateNameEnd(nameStart) : nameEnd(nameStart);
     } else if (!closing && text.regionMatches(true, nsStart, "meta", 0, 4) && i == nsStart + 4) {
       namespace = "";
       nameStart = nsStart;
@@ -380,9 +381,21 @@ final class GspScanner {
   /** A namespace as Grails's scanner takes one ({@code isTagNameSpacePattern}); any other is HTML. */
   private static final Pattern NAMESPACE = Pattern.compile("\\p{Alpha}\\w*");
 
+  /** The namespace whose tags render the template they are named after ({@code <tmpl:row/>}). */
+  static final String TEMPLATE_NAMESPACE = "tmpl";
+
   private int nameEnd(int from) {
     int i = from;
     while (i < text.length() && isNameChar(text.charAt(i))) {
+      i++;
+    }
+    return i;
+  }
+
+  /** The end of a {@code tmpl:} tag's name, a template path ({@code <tmpl:/shared/footer/>}): name characters and {@code /}, not that of {@code />}. */
+  private int templateNameEnd(int from) {
+    int i = from;
+    while (i < text.length() && (isNameChar(text.charAt(i)) || text.charAt(i) == '/' && !text.startsWith("/>", i))) {
       i++;
     }
     return i;

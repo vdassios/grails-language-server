@@ -23,7 +23,8 @@ import io.github.vdassios.grailsls.api.SourceLookup;
  * hover and definition of tags, and hints for an unknown tag in a namespace some taglib declares and for a missing
  * attribute its taglib documents as {@code REQUIRED}. Attribute values Grails resolves by convention (plan B3) go
  * through {@link GspConventions}: definition, value completion, and hints for a template, view, layout or asset that does
- * not exist. A page's "compile" only reads its tags.
+ * not exist. The template a {@code tmpl:} tag names and a {@code g:render} template below its {@code contextPath} are
+ * followed for definition only: they get no hint. A page's "compile" only reads its tags.
  */
 final class GspViews {
   private static final Set<String> ASSET_TAGS = Set.of("stylesheet", "javascript", "image", "assetPath", "link");
@@ -166,6 +167,23 @@ final class GspViews {
     }
   }
 
+  /**
+   * A {@code g:render} template reference below the tag's {@code contextPath}, joined as Grails joins them
+   * ({@code GrailsResourceUtils.appendPiecesForUri}: one {@code /} between the parts, none doubled); null when the
+   * context path is not a literal. Any other reference as it is.
+   */
+  private static Conventions.Reference inContextPath(GspScanner.Tag tag, Conventions.Reference reference) {
+    GspScanner.Attribute contextPath = tag.attribute("contextPath");
+    if (reference == null || reference.kind != Conventions.Kind.TEMPLATE || contextPath == null || contextPath.value == null || contextPath.value.isEmpty()) {
+      return reference;
+    }
+    if (contextPath.value.contains("${") || contextPath.value.contains("<%")) {
+      return null;
+    }
+    String joined = (contextPath.value + "/" + reference.value).replaceAll("/{2,}", "/");
+    return new Conventions.Reference(reference.kind, joined, null, reference.base);
+  }
+
   /** The tag attribute whose value holds an offset, or null. */
   private static GspScanner.Attribute valueAt(GspScanner.Tag tag, int offset) {
     for (GspScanner.Attribute attribute : tag.attributes) {
@@ -197,9 +215,14 @@ final class GspViews {
     int offset = page.lines.offset(line, column);
     GspScanner.Tag tag = GspScanner.at(page.tags, offset);
     GspScanner.Attribute attribute = tag == null ? null : valueAt(tag, offset);
+    String controller = viewController(viewDir(path));
     if (attribute != null) {
-      Conventions.Reference reference = reference(tag, attribute, attribute.value, viewController(viewDir(path)));
+      Conventions.Reference reference = inContextPath(tag, reference(tag, attribute, attribute.value, controller));
       return reference == null ? null : conventions.apply(page.lookup, path).definition(reference);
+    }
+    if (tag != null && !tag.closing && tag.namespace.equals(GspScanner.TEMPLATE_NAMESPACE) && !tag.name.isEmpty() && offset >= tag.nameStart && offset <= tag.nameEnd) {
+      // <tmpl:row/> is <g:render template="row"/>
+      return conventions.apply(page.lookup, path).definition(new Conventions.Reference(Conventions.Kind.TEMPLATE, tag.name, null, controller));
     }
     Taglibs.Tag known = tagNamed(page, tag, offset);
     return known == null ? null : known.docs().location;

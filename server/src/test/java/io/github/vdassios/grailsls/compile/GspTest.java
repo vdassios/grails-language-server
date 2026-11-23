@@ -259,6 +259,27 @@ abstract class GspTest {
     assertNull(definitionOf(page, "template=\"${", 12), "a name no code declares, in an expression");
   }
 
+  /**
+   * A {@code tmpl:} tag renders the template it is named after, and {@code g:render}'s {@code contextPath} is put
+   * before the template's name, as Grails joins them ({@code GrailsResourceUtils.appendPiecesForUri}). Neither gets a
+   * hint when its template does not exist.
+   */
+  @Test
+  void templateTagsAndContextPathsLeadToTheirTemplates() throws Exception {
+    String c = app().controller;
+    String row = "views/" + c + "/_row.gsp:0";
+    String page = "<tmpl:row/>\n<tmpl:/" + c + "/row />\n<tmpl:gone/>\n<g:render contextPath=\"/\" template=\"" + c + "/row\"/>\n"
+        + "<g:render contextPath=\"/layouts\" template=\"row\"/>\n<g:render contextPath=\"${p}\" template=\"row\"/>\n";
+    assertEquals(List.of(), hints(compile(page(), page)), "Grails's parser takes the template paths; no hint for a missing one");
+    assertEquals(row, definitionOf(page, "tmpl:row", 6));
+    assertEquals(row, definitionOf(page, "tmpl:/", 7));
+    assertNull(definitionOf(page, "tmpl:gone", 6));
+    assertNull(definitionOf(page, "tmpl:row", 2), "the namespace");
+    assertEquals(row, definitionOf(page, "template=\"" + c, 11), "below the context path, not the controller's views");
+    assertNull(definitionOf(page, "/layouts\" template=\"row", 21), "views/layouts/_row.gsp does not exist");
+    assertNull(definitionOf(page, "${p}\" template=\"row", 17), "a context path in an expression");
+  }
+
   @Test
   void conventionValuesComplete() throws Exception {
     String c = app().controller;

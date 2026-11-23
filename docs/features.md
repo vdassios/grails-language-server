@@ -56,7 +56,7 @@ The server reads a page's tags and attributes, then translates the page to Groov
 
 | Where | Names |
 |---|---|
-| `<g:render template="row">` | `views/<controller>/_row.gsp`; `"/a/row"` is `views/a/_row.gsp` |
+| `<g:render template="row">`, `<tmpl:row/>` | `views/<controller>/_row.gsp`; `"/a/row"` and `<tmpl:/a/row/>` are `views/a/_row.gsp`; a `contextPath` goes before the name (`contextPath="/a" template="row"` is `/a/row`) |
 | `<g:include view="show">` | `views/<controller>/show.gsp` (then `.jsp`, `.gson`), or a view of the tag's `controller` |
 | `<meta name="layout" content="main">`, `<g:applyLayout name="main">` | `views/layouts/main.gsp` |
 | `src` or `href` of `asset:stylesheet`, `javascript`, `image`, `assetPath`, `link` | the file below any `grails-app/assets/*/` directory; a stylesheet or script name also matches the extensions asset-pipeline compiles (`.scss`, `.less`, `.ts`, ...) |
@@ -64,7 +64,7 @@ The server reads a page's tags and attributes, then translates the page to Groov
 
   A page's controller is the first directory below `views/` (`views/book/show.gsp` and `views/book/part/x.gsp` belong to `book`), which is how Grails resolves relative names. A value holding `${ }` or a URL names nothing. Hints: a template, view, layout or asset that does not exist; none for a tag with a `plugin` or `contextPath` attribute, nor for a view, template or layout a plugin jar lists as precompiled (`gsp/views.properties`) or an asset below a jar's `META-INF/assets/`.
 
-Not covered: assets that come from plugin jars (`META-INF/assets`), `contextPath` and `plugin` attributes of `g:render` (no definition; no hint either).
+Not covered: assets that come from plugin jars (`META-INF/assets`), the `plugin` attribute of `g:render` (no definition; no hint either). `<tmpl:row/>` and a `g:render` with a `contextPath` go to their template but get no hint when it does not exist, and value completion does not apply the `contextPath`.
 
 ## Library sources
 
