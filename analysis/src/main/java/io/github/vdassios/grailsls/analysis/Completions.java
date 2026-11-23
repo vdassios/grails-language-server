@@ -103,16 +103,16 @@ public final class Completions {
    * @param conventions names Grails resolves by convention, or null
    * @param namespaces the tags of a namespace, for tags called as methods ({@link TagCalls}), or null
    * @param page whether the document is page code
-   * @param typed the text of the line before the position
+   * @param text the text the position is in
    */
   static Completions at(ASTNodeVisitor ast, URI document, SourceLookup sources, Conventions conventions, Function<String, Map<String, Taglibs.Tag>> namespaces, boolean page,
-      int line, int column, String typed) {
+      int line, int column, String text) {
     ASTNode offsetNode = ast.getNodeAtLineAndColumn(document, line, column);
     if (offsetNode == null) {
       return null;
     }
     Completions completions = new Completions(ast, sources, conventions, namespaces, page);
-    completions.populate(offsetNode, line, column, typed);
+    completions.populate(offsetNode, line, column, text);
     return completions;
   }
 
@@ -194,10 +194,18 @@ public final class Completions {
     return new CompletionDetail(Navigation.signature(declaration, ast), documentation);
   }
 
-  private void populate(ASTNode offsetNode, int line, int column, String typed) {
+  private void populate(ASTNode offsetNode, int line, int column, String text) {
     ASTNode parentNode = ast.getParent(offsetNode);
     if (fromPropertyName(offsetNode, line, column) || fromConvention(offsetNode, line, column)) {
       return;
+    }
+    if (offsetNode instanceof PropertyExpression || parentNode instanceof PropertyExpression) {
+      // a path GORM's transformation left alone in a where block (it names no property yet): read from the text
+      ASTNode block = GroovyASTUtils.getEnclosingNodeOfType(offsetNode, ClosureExpression.class, ast);
+      if (block != null && Gorm.whereDomain((ClosureExpression) block, ast) != null) {
+        fromWhereBlock((ClosureExpression) block, text, line, column);
+        return;
+      }
     }
     if (offsetNode instanceof PropertyExpression) {
       fromPropertyExpression((PropertyExpression) offsetNode, line, column);
@@ -243,31 +251,45 @@ public final class Completions {
     } else if (offsetNode instanceof MethodNode || offsetNode instanceof Statement) {
       fromScope(offsetNode, "");
     } else if (offsetNode instanceof ClosureExpression) {
-      fromWhereBlock((ClosureExpression) offsetNode, typed);
+      fromWhereBlock((ClosureExpression) offsetNode, text, line, column);
     }
   }
 
   /**
-   * In a {@code where} block the names are properties of its class. GORM's transformation leaves no node of the
-   * block's own code, so the name being typed is read from the text.
+   * In a {@code where} block the names are properties of its class, and after an association and a dot those of the
+   * associated class ({@code author.na}). GORM's transformation leaves no node of the block's own code, so the name
+   * being typed is read from the text; nothing is offered in a string or a comment.
    */
-  private void fromWhereBlock(ClosureExpression block, String typed) {
+  private void fromWhereBlock(ClosureExpression block, String text, int line, int column) {
     ClassNode domain = Gorm.whereDomain(block, ast);
-    if (domain == null) {
+    if (domain == null || text == null) {
       return;
     }
+    // a character put at the position is blanked with the text when the position is in a string or a comment
+    String code = SourceText.code(text.substring(0, Math.min(new Lines(text).offset(line, column), text.length())) + "x");
+    if (!code.endsWith("x")) {
+      return;
+    }
+    String typed = code.substring(code.lastIndexOf('\n') + 1, code.length() - 1);
     int start = typed.length();
     while (start > 0 && Character.isJavaIdentifierPart(typed.charAt(start - 1))) {
       start--;
     }
-    if (start > 0 && typed.charAt(start - 1) == '.') {
-      return;
-    }
     String prefix = typed.substring(start);
     Set<String> names = new HashSet<>();
-    for (String property : Gorm.properties(domain).keySet()) {
-      add(property, Completion.Kind.FIELD, null, prefix, names);
+    if (start > 0 && typed.charAt(start - 1) == '.') {
+      int pathStart = start - 1;
+      while (pathStart > 0 && (Character.isJavaIdentifierPart(typed.charAt(pathStart - 1)) || typed.charAt(pathStart - 1) == '.')) {
+        pathStart--;
+      }
+      Gorm.Property association = Gorm.path(domain, typed.substring(pathStart, start - 1));
+      ClassNode associated = association == null ? null : association.association();
+      if (associated != null) {
+        Gorm.properties(associated).keySet().forEach(property -> add(property, Completion.Kind.FIELD, null, prefix, names));
+      }
+      return;
     }
+    Gorm.properties(domain).keySet().forEach(property -> add(property, Completion.Kind.FIELD, null, prefix, names));
     fromScope(block, prefix);
   }
 

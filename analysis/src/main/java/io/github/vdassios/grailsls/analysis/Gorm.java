@@ -491,14 +491,15 @@ public final class Gorm {
   /**
    * The property a name in a {@code where} block refers to: {@code Book.where { author.name == wanted }}. GORM's
    * transformation replaces the block's code with criteria calls that have no position, so the name is read from the
-   * text: the identifier at the position and those before it, joined by dots, as a path from the block's class.
+   * text without its strings and comments: the identifier at the position and those before it, joined by dots, as a
+   * path from the block's class.
    */
   private static Property whereProperty(ClosureExpression block, ASTNodeVisitor ast, String text, int line, int column) {
     ClassNode domain = whereDomain(block, ast);
     if (domain == null || text == null) {
       return null;
     }
-    String[] lines = text.split("\n", -1);
+    String[] lines = SourceText.code(text).split("\n", -1);
     String source = line < lines.length ? lines[line] : "";
     int end = Math.min(column, source.length());
     while (end < source.length() && Character.isJavaIdentifierPart(source.charAt(end))) {
@@ -508,8 +509,13 @@ public final class Gorm {
     while (start > 0 && (Character.isJavaIdentifierPart(source.charAt(start - 1)) || source.charAt(start - 1) == '.')) {
       start--;
     }
+    return path(domain, source.substring(start, end));
+  }
+
+  /** The property a dotted path names from a domain class ({@code author.name}: through the association), or null. */
+  static Property path(ClassNode domain, String path) {
     Property property = null;
-    for (String name : source.substring(start, end).split("\\.")) {
+    for (String name : path.split("\\.", -1)) {
       property = domain == null ? null : properties(domain).get(name);
       if (property == null) {
         return null;

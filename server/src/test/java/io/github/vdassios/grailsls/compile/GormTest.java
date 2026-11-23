@@ -363,9 +363,19 @@ abstract class GormTest {
       List<String> names = labels(workspace, service(), serviceWith("D.where { " + app.first.substring(0, 2) + " }.list()"), "{ " + app.first.substring(0, 2));
       assertTrue(names.contains(app.first) && !names.contains(app.second), names.toString());
       if (app.fixture.equals("grails4")) {
-        // along an association: the Grails 7 fixture has no to-one association
+        // along a to-one association: the Grails 7 fixture has none
         assertEquals("Author.groovy:4", definition(workspace, service(), serviceWith("Book.where { author.name == wanted }.list()"), "author.name", 8));
       }
+      // along a hasMany association
+      assertEquals(declared(app.domain, " " + app.first), definition(workspace, service(), serviceWith("O.where { MANY.first == wanted }.list()"), "MANY.first", app.many.length() + 2));
+      List<String> associated = labels(workspace, service(), serviceWith("O.where { MANY." + app.first.substring(0, 2) + " }.list()"), "MANY." + app.first.substring(0, 2));
+      assertTrue(associated.contains(app.first) && !associated.contains(app.ownerProperty) && !associated.contains("wanted"), associated.toString());
+      // a name in a string or a comment is no property
+      String quoted = serviceWith("D.where { first == 'second' || first == wanted // second", "}.list()");
+      assertEquals(null, definition(workspace, service(), quoted, "'second'", 2));
+      assertEquals(null, definition(workspace, service(), quoted, "// second", 4));
+      List<String> inString = labels(workspace, service(), serviceWith("D.where { first == 'se' }.list()"), "'se");
+      assertTrue(!inString.contains(app.first) && !inString.contains(app.second), inString.toString());
       List<String> scope = labels(workspace, service(), serviceWith("D.where { first == wa }.list()"), "== wa");
       assertTrue(scope.contains("wanted"), scope.toString());
     }

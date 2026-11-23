@@ -407,7 +407,7 @@ public final class GroovyAnalyzer implements Analyzer {
     Kept kept = current(request);
     Conventions conventions = conventions(request.lookup, request.path);
     Function<String, Map<String, Taglibs.Tag>> tags = namespaces(request.lookup);
-    Completions found = kept == null ? null : Completions.at(kept.ast(), kept.uri, request.lookup, conventions, tags, false, line, column, typed);
+    Completions found = kept == null ? null : Completions.at(kept.ast(), kept.uri, request.lookup, conventions, tags, false, line, column, request.text);
     // the text does not parse at the position: a copy with a name typed there, and a string closed that the line
     // leaves open (render(view: 'sh)
     String repair = Completions.repair(typed, lineAfter(request.text, line, column));
@@ -422,7 +422,7 @@ public final class GroovyAnalyzer implements Analyzer {
     }
     if (found == null) {
       kept = compileCopy(request, line, column, repair);
-      found = kept == null ? null : Completions.at(kept.ast(), kept.uri, request.lookup, conventions, tags, false, line, column, typed);
+      found = kept == null ? null : Completions.at(kept.ast(), kept.uri, request.lookup, conventions, tags, false, line, column, request.text);
     }
     if (found == null) {
       completions.remove(request.path);

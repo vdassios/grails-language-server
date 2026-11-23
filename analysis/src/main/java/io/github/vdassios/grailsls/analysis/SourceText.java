@@ -42,7 +42,7 @@ final class SourceText {
 
   SourceText(String text) {
     this.text = text;
-    this.code = blank(text);
+    this.code = blank(text, comments);
     this.braces = new int[code.length() + 1];
     this.parens = new int[code.length() + 1];
     int brace = 0;
@@ -247,8 +247,16 @@ final class SourceText {
     return new Lines(text).range(offset, offset + length);
   }
 
-  /** Blanks comments and string and character literals, keeping line ends; notes the documentation comments. */
-  private String blank(String source) {
+  /**
+   * Groovy or Java source with comments and string and character literals replaced by spaces, line ends kept: every
+   * offset, line and column still points at the same code, and a name in a string or a comment is gone.
+   */
+  static String code(String source) {
+    return blank(source, null);
+  }
+
+  /** Blanks comments and string and character literals, keeping line ends; notes the documentation comments, unless null. */
+  private static String blank(String source, List<int[]> comments) {
     char[] chars = source.toCharArray();
     int n = chars.length;
     int i = 0;
@@ -261,7 +269,7 @@ final class SourceText {
       } else if (source.startsWith("/*", i)) {
         end = source.indexOf("*/", i + 2);
         end = end < 0 ? n : end + 2;
-        if (source.startsWith("/**", i) && end - i > 4) {
+        if (comments != null && source.startsWith("/**", i) && end - i > 4) {
           comments.add(new int[] { i, end });
         }
       } else if (source.startsWith("\"\"\"", i) || source.startsWith("'''", i)) {
