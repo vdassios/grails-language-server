@@ -1,15 +1,66 @@
 # Benchmark results
 
-Measurements of the server on the five projects of [corpus.md](corpus.md), against the C6 budget: first diagnostics within 3 s of a warm start, completion within 300 ms, resident memory under 1.5 GB with ten files open. The budget was set for the private project the server was developed against; these projects show where other and larger projects stand. That project's numbers are not published here.
+Measured figures for the server: first on its own fixtures, the latest numbers (2026-11-23, after the Stage 6 latency work), then on the five public projects of [corpus.md](corpus.md) (2026-11-18, server `7224fc6`). The corpus projects were not on the machine for the later measurements, so their figures predate the changes below and are not claimed for them.
+
+The server was developed against a target (C6): first diagnostics within 3 s of a warm start, completion within 300 ms, resident memory under 1.5 GB with ten files open. It is a target, not a promise: both fixtures are well within it; on the corpus, first diagnostics and completion after a typed dot miss it on the larger projects (mdm-core, mod-agreements, rundeck, hoist-core) and resident memory on rundeck, as the corpus sections give.
+
+## Fixtures, 2026-11-23: before and after the latency work
+
+- Before: server `d215979` (before any Stage 6 change). After: `a1c0741`. The fixtures: `grails4` (Grails 4, Groovy 2.5.14, JDK 11.0.28, 5 compile contexts, 111 jars) and `grails7` (Grails 7, Groovy 4, JDK 17.0.19, 5 contexts, 87 jars), Amazon Corretto. They hold a handful of files per artefact kind, so they show fixed costs (loaders, jars, the parser), not those that grow with a project.
+- MacBook Air, Apple M5 (fanless), 16 GB RAM; test heap 4096 MB. "Battery" is the first baseline, taken on battery; "mains" re-measures the same commit on mains power with sleep prevented, as every "after" figure is. Timings vary by about 30 % between runs; where a figure was measured more than once, every run is given.
+- Times are milliseconds, median / p90 (n is 2 or 3 for the latency sample, 10 per cold-start group, 50 for the repeats). Heap is MB after three collections; the battery baseline used a single collection, which varied from 38 to 78 MB for the same code, so its heap figures are left out.
+
+| grails4 | Before, battery | Before, mains | After, mains |
+|---|---|---|---|
+| Cold start, controllers (server mark) | 516 / 520 | 474 / 497; 499 / 551 | 542 / 554; 491 / 520; 502 / 528 |
+| Cold start, services | 482 / 497 | 449 / 463; 473 / 498 | 512 / 519; 467 / 490; 462 / 472 |
+| Compile, latency sample | 23 / 282 | 16 / 214; 22 / 309; 19 / 292 | 17 / 322; 28 / 391; 29 / 401 |
+| Completion after a typed dot | 19 / 31 | 17 / 35; 15 / 48; 17 / 39 | 1 / 7; 1 / 10; 2 / 20 |
+| Page code completion after a typed dot | 31 | 20 | 20 |
+| Compile a page | 229 / 253 | 166 / 203 | 164 / 211 |
+| Repeat x50, median file | 15 / 22 | 13 / 21 | 13 / 22 |
+| Symbol index, all files | 104 | 92; 130; 136 | 55; 82; 88 |
+| Loaders started by the symbol index | 5 | 5 | 1 |
+| Heap after the symbol index | - | 13; 13 | 8; 6; 6 |
+| Heap after compiling every file (sweep) | - | 46; 46 | 48; 48; 48 |
+
+| grails7 | Before, battery | Before, mains | After, mains |
+|---|---|---|---|
+| Cold start, controllers (server mark) | 649 / 657 | 631 / 661 | 635 / 687 |
+| Cold start, services | 620 / 641 | 597 / 620 | 598 / 628 |
+| Compile, latency sample | 186 / 186 | 187; 328; 294 | 324; 410; 375 |
+| Completion after a typed dot | 0 / 0 | 0 / 0 | 0 / 0 |
+| Page code completion after a typed dot | 29 | 40 | 28 |
+| Compile a page | 203 / 255 | 216 / 329 | 203 / 291 |
+| Repeat x50, median file | 12 / 20 | 12 / 19 | 12 / 16 |
+| Symbol index, all files | 120 | 126; 160; 168 | 128; 174; 160 |
+| Loaders started by the symbol index | 5 | 5 | 1 |
+| Heap after the symbol index | - | 13; 13 | 16; 14; 14 |
+| Heap after compiling every file (sweep) | - | 37; 37 | 39; 39; 39 |
+
+What changed and what it shows:
+
+- **Completion after a typed dot** is answered from the last compile that parsed when that is provably right, and otherwise compiles one repaired copy: grails4 median 17 → 1 ms, p90 35 to 48 → 7 to 20 ms.
+- **The symbol index parses in one loader per Groovy jar**, not in every source set: parsing needs no class path. It starts 1 loader instead of 5 on each fixture, and its heap on grails4 halves (13 → 6 to 8 MB); on grails7 it stays within the variation (13 → 14 to 16 MB). The cost moves to the first compile in a source set nobody had opened, which now starts that loader itself: the latency sample's p90 (its file in a source set not started yet) was 214, 309 and 292 ms before and 322, 391 and 401 ms after on grails4, and 187, 328 and 294 ms before and 324, 410 and 375 ms after on grails7. First diagnostics do not change (cold start, within the variation): the server starts the symbol index only after the open documents' first compiles.
+- **Each jar's entries are read once per workspace** (`JarEntries`), for every module loader's jar index, import completion and the page lookups. Before, each loader read every jar of its class path again: 11 to 21 ms per loader of about 100 jars on the fixtures; the taglib and plugin file lookups (12 ms) and import completion read them once more. The classes by package that import completion needs are now kept from the first read for every jar, about 2 MB on the fixtures (heap after the sweep +2 MB).
+- **Cold start and repeated compiles** are unchanged within the variation.
+
+### Decisions measured on the fixtures
+
+The shared parser cache (`AntlrLoader`, `SharedParser`) was deleted. It loaded the ANTLR runtime of a Groovy 3 or 4 jar once for all module loaders of that jar and pointed their parsers at one prediction cache, by writing a final field of Groovy's internals, which JEP 500 restricts. The rule was to keep it only if heap or p90 compile time improved by 15 % or more on the largest project measured. On grails7 (the only fixture with an ANTLR 4 parser), four runs each with the symbol index already in one loader: heap after the sweep 37, 37, 37, 37 MB with it and 38, 37, 38, 37 without; latency-sample compile p90 365, 344, 350, 345 ms with it and 368, 381, 378, 390 without (about 7 %). When it was added (2026-11-18) it cut the sweep's heap on mdm-core from 3372 to 2005 MB and on rundeck from 2561 to 1787 MB, with the symbol index then starting every source set; the fixtures, a few files per source set, cannot show whether such a gain remains, and the corpus figures below include it.
+
+`JarIndex` was kept: without it (every lookup searches the jars), compiles repeated 50 times on grails4 took 15 / 25, 15 / 25, 15 / 26 ms (median file) and 12 / 15, 12 / 18, 12 / 16 ms (slowest file) against 14 / 23, 14 / 21, 13 / 23 and 10 / 13, 10 / 13, 10 / 13 with it, three runs each; on grails7 the two were equal within the variation.
+
+Creating a class loader for each file the symbol index parses costs about 1 µs, against about 130 µs to parse and convert the grails4 fixture's controller with Groovy 2.5.14 (JDK 11, after warm-up): kept as it is.
+
+## Corpus, 2026-11-18: against the C6 target
 
 - Server: commit `7224fc6`.
 - Date: 2026-11-18 (first measured 2026-11-15 on `d28b216`: see "Changes since the 2026-11-15 measurements"). Machine: MacBook Air, Apple M5 (fanless), 16 GB RAM, macOS 26.5.
 - Test JVM heap 4096 MB (a quarter of RAM, what `java -jar` gets). Each project runs on its own build JDK (corpus.md): cherokeedictionary 11.0.28, mdm-core, mod-agreements and rundeck 17.0.19, hoist-core 21.0.13 (Amazon Corretto).
 - Times are milliseconds, given as median / p90 / max. Heap is MB after GC; RSS is the process's resident set in MB.
 
-## Verdict against the budget
-
-| Budget | Meets it | Misses it |
+| Target | Meets it | Misses it |
 |---|---|---|
 | First diagnostics within 3 s (warm start, one process per file) | cherokeedictionary: every file | mod-agreements: 17 of 20 controllers and 12 of 20 services within 3 s; rundeck: 10 and 8 of 20 (medians 7.7 and 12.9 s); hoist-core: 1 and 1 of 20 (medians 3.2 and 3.4 s); mdm-core: 0 and 4 of 20 |
 | Completion within 300 ms, compiled document | all five (max 8 ms) | |
@@ -19,7 +70,7 @@ Measurements of the server on the five projects of [corpus.md](corpus.md), again
 
 Errors on valid code: 0 on cherokeedictionary, mod-agreements and hoist-core; mdm-core 4 and rundeck 29 (sweep) and 1 (static test), all attributed below. Grails members (artefact traits and GORM methods) are found on every controller, domain class, taglib and `@Transactional` service of every project.
 
-## Measurement caveats
+## Corpus measurement caveats
 
 - Every run was on mains power with sleep prevented, in one sequence: the five full runs (all four perf tests in one JVM), then the memory test alone on each project, then the cold starts (2 hours in all, no sleep).
 - Timings vary by about 30 % between runs on this fanless machine. RSS varies more: mod-agreements' RSS with ten files was 1677, 927 and 1137 MB in three runs of the memory test alone, with the same live heap; the median is given.
@@ -151,7 +202,7 @@ GLS_PERF_PROJECT=<built project> GLS_PERF_JDK=<project JDK> GLS_PERF_DETAILS=<er
   ./gradlew :server:perfTest -PtestJavaHome=<project JDK>
 ```
 
-This writes `sweep.txt`, `static.txt`, `latency.txt` and `memory.txt`. For RSS, run the memory test alone: add `--tests '*LatencyTest.keptFilesRepeatsAndClose'`. `GLS_PERF_HEAP` (e.g. `4g`) sets the heap; `GLS_PERF_FILES` the latency sample (40).
+Without `GLS_PERF_PROJECT` the tests measure the `grails4` fixture; `GLS_PERF_PROJECT=$PWD/fixtures/grails7 GLS_PERF_JDK=<JDK 17>` measures `grails7` (the fixture figures above, with `--repeat 10` for the cold starts). This writes `sweep.txt`, `static.txt`, `latency.txt` and `memory.txt`. For RSS, run the memory test alone: add `--tests '*LatencyTest.keptFilesRepeatsAndClose'`. `GLS_PERF_HEAP` (e.g. `4g`) sets the heap; `GLS_PERF_FILES` the latency sample (40).
 
 The cold starts (the fat jar from `./gradlew :server:shadowJar`, driven as described above):
 
