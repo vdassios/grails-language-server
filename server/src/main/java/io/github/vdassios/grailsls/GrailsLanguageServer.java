@@ -585,7 +585,10 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
     @Override
     public void didChangeConfiguration(DidChangeConfigurationParams params) {}
 
-    /** Classes and members of every Groovy source file whose name contains the query, from the symbol index. */
+    /**
+     * Classes and members of every Groovy source file whose name contains the query, from the symbol index; for an empty
+     * query, {@link SymbolIndex#EMPTY_QUERY_LIMIT} at most.
+     */
     @Override
     public CompletableFuture<List<? extends SymbolInformation>> symbol(WorkspaceSymbolParams params) {
       Workspace current = compiles == null ? null : compiles.workspace();

@@ -507,7 +507,7 @@ class LatencyTest {
     workspace.indexSymbols().get(30, TimeUnit.MINUTES);
     record("symbol index, all contexts", start);
     count("symbol index files", workspace.symbols().files());
-    count("symbols", workspace.symbols().search("").size());
+    count("symbols", workspace.symbols().size());
     for (CompileContext context : workspace.contexts()) {
       List<Path> files = workspace.declarations().sources(context.ownRoots);
       for (int from = 0; from < files.size(); from += Workspace.SYMBOL_BATCH) {

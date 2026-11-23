@@ -30,8 +30,37 @@ public final class SymbolIndex {
     return files.size();
   }
 
-  /** Symbols whose name contains {@code query}, ignoring case; every symbol for an empty query. */
+  /** Symbols indexed so far. */
+  public int size() {
+    return files.values().stream().mapToInt(List::size).sum();
+  }
+
+  /**
+   * At most this many symbols answer an empty query: a client that lists everything (the first request of a symbol
+   * picker) would otherwise get every member of a large project.
+   */
+  public static final int EMPTY_QUERY_LIMIT = 1000;
+
+  /**
+   * Symbols whose name contains {@code query}, ignoring case. An empty query gets {@link #EMPTY_QUERY_LIMIT} symbols
+   * at most, classes before members.
+   */
   public List<Found> search(String query) {
+    if (query.isEmpty()) {
+      List<Found> types = new ArrayList<>();
+      List<Found> members = new ArrayList<>();
+      files.forEach((file, symbols) -> {
+        for (Symbol symbol : symbols) {
+          boolean type = symbol.kind == Symbol.Kind.CLASS || symbol.kind == Symbol.Kind.INTERFACE || symbol.kind == Symbol.Kind.ENUM;
+          List<Found> list = type ? types : members;
+          if (list.size() < EMPTY_QUERY_LIMIT) {
+            list.add(new Found(file, symbol));
+          }
+        }
+      });
+      types.addAll(members);
+      return types.size() > EMPTY_QUERY_LIMIT ? new ArrayList<>(types.subList(0, EMPTY_QUERY_LIMIT)) : types;
+    }
     String lowerCase = query.toLowerCase(Locale.ROOT);
     List<Found> found = new ArrayList<>();
     files.forEach((file, symbols) -> {
