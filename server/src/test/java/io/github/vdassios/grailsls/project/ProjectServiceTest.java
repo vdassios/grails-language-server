@@ -8,6 +8,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
@@ -74,6 +75,34 @@ class ProjectServiceTest {
       Files.writeString(root.resolve("build.gradle"), "// changed\n");
       service.buildFilesChanged();
       assertTrue(notices.poll(10, TimeUnit.SECONDS) != null, "a new model is checked again");
+    } finally {
+      service.stop();
+    }
+  }
+
+  /**
+   * {@code grails/reloadProject} is always answered, also when a later reload cancels it before it started: two reloads
+   * queued behind a sources download, then three in a row.
+   */
+  @Test
+  void everyReloadIsAnsweredWhenALaterOneCancelsIt() throws Exception {
+    Path root = tmp.resolve("project");
+    // the download waits until the file go exists; resolving writes a model at once
+    FakeWrapper.write(root, "case \"$*\" in *grailsLanguageServerSources*)\n"
+        + "while [ ! -f \"$(dirname \"$0\")/go\" ]; do sleep 0.05; done\n;;\n*)\n" + FakeWrapper.WRITES_MODEL + ";;\nesac\n");
+    Files.writeString(root.resolve("settings.gradle"), "");
+    ProjectService service = new ProjectService(new GradleBridge(tmp.resolve("cache"), GradleBridge.defaultJavaHome(), Duration.ofSeconds(30)), root, true,
+        status -> {}, model -> "", notice -> {});
+    try {
+      service.start().get(30, TimeUnit.SECONDS);
+      CompletableFuture<SourcesReport> download = service.downloadSources();
+      CompletableFuture<Void> first = service.reload();
+      CompletableFuture<Void> second = service.reload();
+      Files.writeString(root.resolve("go"), "");
+      download.get(30, TimeUnit.SECONDS);
+      CompletableFuture.allOf(first, second).get(30, TimeUnit.SECONDS);
+
+      CompletableFuture.allOf(service.reload(), service.reload(), service.reload()).get(30, TimeUnit.SECONDS);
     } finally {
       service.stop();
     }

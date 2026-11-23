@@ -5,6 +5,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -153,13 +154,15 @@ public final class ProjectService {
     if (running != null) {
       running.cancel(true); // kills its Gradle process; a cancelled run reports nothing
     }
-    running = executor.submit(() -> {
-      try {
-        resolve(force);
-      } finally {
+    // done when it ran, and when it is cancelled, also before it started: its request is answered either way
+    FutureTask<Void> run = new FutureTask<>(() -> resolve(force), null) {
+      @Override
+      protected void done() {
         done.complete(null);
       }
-    });
+    };
+    running = run;
+    executor.execute(run);
     return done;
   }
 
