@@ -7,7 +7,6 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -20,7 +19,6 @@ import io.github.vdassios.grailsls.StatusParams;
  * {@code onModel} (state {@code indexing}) before the project is reported ready.
  */
 public final class ProjectService {
-  static final int STOP_WAIT_SECONDS = 5;
   static final String UNTRUSTED = "workspace not trusted: the client must send initializationOptions.trusted = true";
 
   private final ExecutorService executor = Executors.newSingleThreadExecutor(r -> {
@@ -108,34 +106,50 @@ public final class ProjectService {
       return CompletableFuture.completedFuture(new SourcesReport(0, 0, 0, trusted ? "no workspace folder" : UNTRUSTED));
     }
     CompletableFuture<SourcesReport> done = new CompletableFuture<>();
-    executor.submit(() -> {
+    // done when it ran, and when it is cancelled, also before it started (stop): its request is answered either way
+    FutureTask<Void> download = new FutureTask<>(() -> {
       try {
         done.complete(bridge.downloadSources(workspaceRoot));
       } catch (InterruptedException e) {
         Thread.currentThread().interrupt();
-        done.complete(new SourcesReport(0, 0, 0, "cancelled"));
       } catch (BridgeException e) {
         done.complete(new SourcesReport(0, 0, 0, e.getMessage()));
       } catch (Throwable e) {
         done.complete(new SourcesReport(0, 0, 0, e.toString())); // an Error too: the request must complete
       }
-    });
+    }, null) {
+      @Override
+      protected void done() {
+        done.complete(new SourcesReport(0, 0, 0, "cancelled"));
+      }
+    };
+    execute(download);
     return done;
   }
 
   /**
-   * Cancels the running resolution or download and waits, at most {@link #STOP_WAIT_SECONDS}, until it has killed its
-   * Gradle process: the server may exit right after.
+   * For the exit: cancels the running resolution or download and every one still queued (their requests are answered),
+   * and kills the Gradle processes they started. Does not wait for the project's thread, which may be in work that
+   * ignores the interrupt (indexing). Requests made later are answered at once and run nothing.
    */
   public synchronized void stop() {
     if (running != null) {
       running.cancel(true);
     }
-    executor.shutdownNow();
+    for (Runnable queued : executor.shutdownNow()) {
+      if (queued instanceof Future) {
+        ((Future<?>) queued).cancel(false);
+      }
+    }
+    bridge.stop();
+  }
+
+  /** Runs {@code task} on the project's thread; after {@link #stop}, cancels it instead, which answers its request. */
+  private void execute(FutureTask<Void> task) {
     try {
-      executor.awaitTermination(STOP_WAIT_SECONDS, TimeUnit.SECONDS);
-    } catch (InterruptedException e) {
-      Thread.currentThread().interrupt();
+      executor.execute(task);
+    } catch (RejectedExecutionException e) {
+      task.cancel(false);
     }
   }
 
@@ -162,7 +176,7 @@ public final class ProjectService {
       }
     };
     running = run;
-    executor.execute(run);
+    execute(run);
     return done;
   }
 

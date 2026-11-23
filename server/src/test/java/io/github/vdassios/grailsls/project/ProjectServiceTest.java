@@ -10,6 +10,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
@@ -106,5 +107,68 @@ class ProjectServiceTest {
     } finally {
       service.stop();
     }
+  }
+
+  /**
+   * The exit does not wait for the project's thread: {@code stop} returns at once even while the resolution is in work
+   * that ignores the interrupt (indexing), and the Gradle process it started is killed by the time it returns.
+   */
+  @Test
+  void stopDoesNotWaitForTheProjectThread() throws Exception {
+    Path root = tmp.resolve("project");
+    FakeWrapper.write(root, FakeWrapper.WRITES_MODEL);
+    Files.writeString(root.resolve("settings.gradle"), "");
+    CountDownLatch indexing = new CountDownLatch(1);
+    CountDownLatch release = new CountDownLatch(1);
+    ProjectService service = new ProjectService(new GradleBridge(tmp.resolve("cache"), GradleBridge.defaultJavaHome(), Duration.ofSeconds(30)), root, true,
+        status -> {}, model -> {
+          indexing.countDown();
+          while (true) {
+            try {
+              release.await();
+              return "";
+            } catch (InterruptedException e) {
+              // indexing does not stop on an interrupt
+            }
+          }
+        }, notice -> {});
+    try {
+      service.start();
+      assertTrue(indexing.await(30, TimeUnit.SECONDS), "indexing never started");
+      long start = System.nanoTime();
+      service.stop();
+      long millis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+      assertTrue(millis < 1000, "stop took " + millis + " ms");
+    } finally {
+      release.countDown();
+    }
+  }
+
+  /**
+   * Requests are answered when {@code stop} runs: the running one, one still queued behind it, and those made after
+   * it. The Gradle process is killed by the time {@code stop} returns.
+   */
+  @Test
+  void stopAnswersEveryRequestAndKillsGradle() throws Exception {
+    Path root = tmp.resolve("project");
+    FakeWrapper.write(root, "echo $$ > \"$(dirname \"$0\")/wrapper.pid\"\nwhile true; do sleep 0.05; done\n");
+    Files.writeString(root.resolve("settings.gradle"), "");
+    ProjectService service = new ProjectService(new GradleBridge(tmp.resolve("cache"), GradleBridge.defaultJavaHome(), Duration.ofSeconds(60)), root, true,
+        status -> {}, model -> "", notice -> {});
+    CompletableFuture<Void> start = service.start();
+    Path pid = root.resolve("wrapper.pid");
+    for (int i = 0; i < 300 && (!Files.exists(pid) || Files.readString(pid).isBlank()); i++) {
+      Thread.sleep(50);
+    }
+    ProcessHandle gradle = ProcessHandle.of(Long.parseLong(Files.readString(pid).trim())).orElseThrow();
+    CompletableFuture<SourcesReport> queued = service.downloadSources();
+
+    service.stop();
+    gradle.onExit().get(2, TimeUnit.SECONDS);
+    start.get(2, TimeUnit.SECONDS);
+    assertEquals("cancelled", queued.get(2, TimeUnit.SECONDS).message);
+    service.reload().get(2, TimeUnit.SECONDS);
+    assertEquals("cancelled", service.downloadSources().get(2, TimeUnit.SECONDS).message);
+    assertEquals(1, FakeWrapper.runs(root), "no Gradle after stop");
   }
 }

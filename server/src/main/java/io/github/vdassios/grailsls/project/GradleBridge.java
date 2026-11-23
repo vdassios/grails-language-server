@@ -18,6 +18,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Properties;
 import java.util.Set;
@@ -52,6 +53,9 @@ public final class GradleBridge {
   private final Path cacheDir;
   private final Path javaHome;
   private final Duration timeout;
+  /** The Gradle processes running now, for {@link #stop}. Guarded by itself, as is {@link #stopped}. */
+  private final Set<Process> processes = new HashSet<>();
+  private boolean stopped;
 
   /**
    * @param cacheDir where models, logs and the init script are kept, one subdirectory per build
@@ -294,20 +298,33 @@ public final class GradleBridge {
     ProcessBuilder builder = new ProcessBuilder(command).directory(buildRoot.toFile()).redirectErrorStream(true).redirectOutput(log.toFile());
     builder.environment().put("JAVA_HOME", javaHome.toString());
     Process process;
-    try {
-      process = builder.start();
-      process.getOutputStream().close();
-    } catch (IOException e) {
-      throw new BridgeException("cannot start " + WRAPPER + ": " + e.getMessage(), e);
+    synchronized (processes) { // stop() either kills it or comes first and none starts
+      if (stopped) {
+        throw new InterruptedException("stopped");
+      }
+      try {
+        process = builder.start();
+      } catch (IOException e) {
+        throw new BridgeException("cannot start " + WRAPPER + ": " + e.getMessage(), e);
+      }
+      processes.add(process);
     }
     try {
+      process.getOutputStream().close();
       if (!process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS)) {
         kill(process);
         throw new BridgeException("Gradle did not finish within " + timeout.toSeconds() + " s (log: " + log + ")");
       }
+    } catch (IOException e) {
+      kill(process);
+      throw new BridgeException("cannot start " + WRAPPER + ": " + e.getMessage(), e);
     } catch (InterruptedException e) {
       kill(process);
       throw e;
+    } finally {
+      synchronized (processes) {
+        processes.remove(process);
+      }
     }
     if (process.exitValue() != 0) {
       throw new BridgeException(failure(buildRoot, log));
@@ -400,6 +417,19 @@ public final class GradleBridge {
       }
     }
     return "no output";
+  }
+
+  /**
+   * For the exit: kills the Gradle processes running now, before it returns, and starts none from then on (a run then
+   * throws {@link InterruptedException}). A Gradle daemon the run started is a child of its Gradle client and is killed
+   * with it. One reused from an earlier build is no descendant and stays: it sees the client go, cancels the build and
+   * goes idle (checked on Gradle 6.9).
+   */
+  public void stop() {
+    synchronized (processes) {
+      stopped = true;
+      processes.forEach(GradleBridge::kill);
+    }
   }
 
   private static void kill(Process process) {
