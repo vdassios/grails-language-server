@@ -15,15 +15,19 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
+import org.eclipse.lsp4j.CompletionContext;
 import org.eclipse.lsp4j.CompletionItem;
 import org.eclipse.lsp4j.CompletionItemKind;
 import org.eclipse.lsp4j.CompletionList;
 import org.eclipse.lsp4j.CompletionOptions;
 import org.eclipse.lsp4j.CompletionParams;
+import org.eclipse.lsp4j.CompletionTriggerKind;
 import org.eclipse.lsp4j.DidChangeConfigurationParams;
 import org.eclipse.lsp4j.DidChangeTextDocumentParams;
 import org.eclipse.lsp4j.DidChangeWatchedFilesParams;
@@ -203,9 +207,37 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
     capabilities.setHoverProvider(true);
     capabilities.setDocumentSymbolProvider(true);
     capabilities.setWorkspaceSymbolProvider(true);
-    capabilities.setCompletionProvider(new CompletionOptions(true, List.of(".")));
+    // ':' opens GSP tag names after `<g:` in clients that complete only on trigger characters; see answers()
+    capabilities.setCompletionProvider(new CompletionOptions(true, List.of(".", ":")));
     capabilities.setSignatureHelpProvider(new SignatureHelpOptions(List.of("(", ",")));
     return CompletableFuture.completedFuture(new InitializeResult(capabilities, new ServerInfo("grails-language-server", version())));
+  }
+
+  private static final Pattern TAG_NAMESPACE = Pattern.compile("<\\p{Alpha}\\w*:");
+
+  /**
+   * Whether a completion request can have an answer: a {@code :} trigger only right after a GSP tag's namespace
+   * ({@code <g:}); a {@code :} typed in a map, a ternary, a label or HTML asks for nothing.
+   */
+  static boolean answers(CompletionContext context, String path, String text, int line, int character) {
+    if (context == null || context.getTriggerKind() != CompletionTriggerKind.TriggerCharacter || !":".equals(context.getTriggerCharacter())) {
+      return true;
+    }
+    if (!path.endsWith(".gsp")) {
+      return false;
+    }
+    int start = 0;
+    for (int i = 0; i < line && start >= 0; i++) {
+      start = text.indexOf('\n', start);
+      start = start < 0 ? -1 : start + 1;
+    }
+    if (start < 0 || start + character > text.length()) {
+      return false;
+    }
+    String before = text.substring(start, start + character);
+    Matcher m = TAG_NAMESPACE.matcher(before);
+    int from = before.lastIndexOf('<');
+    return from >= 0 && m.region(from, before.length()).matches();
   }
 
   /**
@@ -456,7 +488,10 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
     public CompletableFuture<Either<List<CompletionItem>, CompletionList>> completion(CompletionParams params) {
       String uri = params.getTextDocument().getUri();
       Position at = params.getPosition();
-      return CompileService.mapped(compiles.queryText(uri, io.github.vdassios.grailsls.api.CompletionList.EMPTY, (analyzer, request) -> analyzer.completion(request, at.getLine(), at.getCharacter())),
+      io.github.vdassios.grailsls.api.CompletionList none = io.github.vdassios.grailsls.api.CompletionList.EMPTY;
+      return CompileService.mapped(compiles.queryText(uri, none, (analyzer, request) -> answers(params.getContext(), request.path, request.text, at.getLine(), at.getCharacter())
+          ? analyzer.completion(request, at.getLine(), at.getCharacter())
+          : none),
           list -> Either.forRight(completionList(uri, list)));
     }
 

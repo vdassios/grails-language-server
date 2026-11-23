@@ -22,8 +22,10 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 
 import org.eclipse.lsp4j.ClientCapabilities;
+import org.eclipse.lsp4j.CompletionContext;
 import org.eclipse.lsp4j.CompletionItem;
 import org.eclipse.lsp4j.CompletionParams;
+import org.eclipse.lsp4j.CompletionTriggerKind;
 import org.eclipse.lsp4j.DidChangeTextDocumentParams;
 import org.eclipse.lsp4j.DidChangeWatchedFilesCapabilities;
 import org.eclipse.lsp4j.DidChangeWatchedFilesParams;
@@ -35,6 +37,7 @@ import org.eclipse.lsp4j.FileEvent;
 import org.eclipse.lsp4j.Hover;
 import org.eclipse.lsp4j.HoverParams;
 import org.eclipse.lsp4j.InitializeParams;
+import org.eclipse.lsp4j.InitializeResult;
 import org.eclipse.lsp4j.InitializedParams;
 import org.eclipse.lsp4j.MessageActionItem;
 import org.eclipse.lsp4j.MessageParams;
@@ -131,10 +134,12 @@ class ProtocolTest {
       capabilities.setWorkspace(workspace);
       params.setCapabilities(capabilities);
     }
-    server.initialize(params).get(10, TimeUnit.SECONDS);
+    initializeResult = server.initialize(params).get(10, TimeUnit.SECONDS);
     beforeInitialized.accept(server);
     server.initialized(new InitializedParams());
   }
+
+  private InitializeResult initializeResult;
 
   @AfterEach
   void shutdown() throws Exception {
@@ -566,6 +571,36 @@ class ProtocolTest {
     SignatureHelp help = server.getTextDocumentService().signatureHelp(new SignatureHelpParams(new TextDocumentIdentifier(other), new Position(2, 21))).get(30, TimeUnit.SECONDS);
     assertEquals("public int count(String what)", help.getSignatures().get(0).getLabel());
     assertEquals(0, help.getActiveParameter());
+  }
+
+  /**
+   * Clients that complete only on trigger characters (Neovim's built-in completion) open GSP tag names after
+   * {@code <g:}; a {@code :} anywhere else asks for nothing, so it compiles nothing.
+   */
+  @Test
+  void aColonTriggersGspTagNamesOnly() throws Exception {
+    Path root = groovyProject();
+    start(root, trustedOptions());
+    assertEquals(List.of(".", ":"), initializeResult.getCapabilities().getCompletionProvider().getTriggerCharacters());
+    assertEquals(StatusParams.RESOLVING, next().state);
+    assertEquals(StatusParams.INDEXING, next().state);
+    assertEquals(StatusParams.READY, next().state);
+
+    String uri = root.resolve("src/A.groovy").toUri().toString();
+    server.getTextDocumentService().didOpen(new DidOpenTextDocumentParams(new TextDocumentItem(uri, "groovy", 1, "class A {\n  def run() {\n    def m = [a:\n  }\n}\n")));
+    CompletionParams colon = new CompletionParams(new TextDocumentIdentifier(uri), new Position(2, 15), new CompletionContext(CompletionTriggerKind.TriggerCharacter, ":"));
+    assertEquals(List.of(), server.getTextDocumentService().completion(colon).get(30, TimeUnit.SECONDS).getRight().getItems());
+
+    CompletionContext typed = new CompletionContext(CompletionTriggerKind.TriggerCharacter, ":");
+    assertTrue(GrailsLanguageServer.answers(typed, "/v/a.gsp", "<div>\n  <g:", 1, 5));
+    assertTrue(GrailsLanguageServer.answers(typed, "/v/a.gsp", "<ns2:", 0, 5));
+    assertTrue(GrailsLanguageServer.answers(null, "/v/a.gsp", "${a ? b :", 0, 9), "no context: invoked");
+    assertTrue(GrailsLanguageServer.answers(new CompletionContext(CompletionTriggerKind.Invoked), "/v/a.gsp", "${a ? b :", 0, 9));
+    assertTrue(GrailsLanguageServer.answers(new CompletionContext(CompletionTriggerKind.TriggerCharacter, "."), "/A.groovy", "a.", 0, 2));
+    assertEquals(false, GrailsLanguageServer.answers(typed, "/v/a.gsp", "${a ? b :", 0, 9), "page code");
+    assertEquals(false, GrailsLanguageServer.answers(typed, "/v/a.gsp", "<a href=\"http:", 0, 14), "html");
+    assertEquals(false, GrailsLanguageServer.answers(typed, "/v/a.gsp", "< g:", 0, 4), "no tag");
+    assertEquals(false, GrailsLanguageServer.answers(typed, "/A.groovy", "'<g:", 0, 4), "groovy");
   }
 
   @Test
