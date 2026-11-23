@@ -51,6 +51,26 @@ Every feature of the [Grails VS Code extension](https://github.com/Johan070119/G
 | GSP | `<asset:javascript src="application.js">` | the asset | covered (assets inside plugin jars are not looked up; they get no "missing" hint) |
 | GSP | `<meta name="layout" content="main">` | the layout | covered |
 
+## Navigation shared with the grails.nvim Lua server
+
+[grails.nvim](https://github.com/vdassios/grails.nvim) runs a small Lua server for go-to-definition until this server reports `ready`, then the Lua server goes silent. Every jump it offered must keep working, so both are run on one list of cases, `tests/definition_cases.lua` in grails.nvim, on `fixtures/grails4`: the Lua server alone, then this server once ready. A `both` case must give the same target from each. The list is the Lua server's frozen scope.
+
+| Case | Servers |
+|---|---|
+| `<g:render template="row">`, `template="/book/row"`, from a page in a directory below the controller's views (`views/book/part/`) | both |
+| `<tmpl:row/>`, `<tmpl:/book/row/>` | both |
+| `<g:render contextPath="/book" template="row">` | both |
+| `<g:include view="summary">` to a `.gson` view | both |
+| `<meta name="layout" content="main">`, `<g:applyLayout name="main">` | both |
+| `<asset:stylesheet src>`, `<asset:javascript src>` without an extension, `<asset:link href>` | both |
+| `controller` and `action` of a `g:` tag, the action in the named controller or in the view's own | both |
+| `render(view:)` relative and to a `.jsp` view, `render(template:)`, `static layout` | both |
+| `controller:` and `action:` of `redirect`, `chain`, `forward`, `createLink`, `g.link` | both |
+| `controller` attribute of a tag outside the `g:` namespace (`<sec:link controller="book">`) | Lua only: this server reads `controller` and `action` only on `g:` tags, since other namespaces use the names for their own ends |
+| `respond(..., view:)` | this server only |
+| a key of `static allowedMethods` | this server only |
+| `controller:` in `UrlMappings` | this server only |
+
 ## Other features (Grails VS Code extension)
 
 | Feature | Status | Notes |
