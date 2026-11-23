@@ -49,8 +49,6 @@ public final class CompileContext implements AutoCloseable {
   private volatile int javaFilesNotBuilt;
   /** Gradle task that builds this source set's classes, e.g. {@code :app:testClasses}. */
   public final String classesTask;
-  /** ANTLR's runtime, shared with the other contexts of the same Groovy jar; null when not shared. Owned by the workspace. */
-  private final AntlrLoader antlr;
   /** Where failures go: {@code true} to show to the user, {@code false} only to log. */
   private final BiConsumer<Boolean, String> reporter;
   /** Whether a failed compile has been shown to the user: later ones are only logged. */
@@ -62,7 +60,7 @@ public final class CompileContext implements AutoCloseable {
   private boolean closed;
 
   CompileContext(String name, List<Path> ownRoots, List<Path> searchRoots, List<Path> classpath, Map<String, Path> javaClasses,
-      Map<String, List<Path>> resources, int javaFilesNotBuilt, String classesTask, AntlrLoader antlr, BiConsumer<Boolean, String> reporter) {
+      Map<String, List<Path>> resources, int javaFilesNotBuilt, String classesTask, BiConsumer<Boolean, String> reporter) {
     this.name = name;
     this.ownRoots = List.copyOf(ownRoots);
     this.searchRoots = List.copyOf(searchRoots);
@@ -71,7 +69,6 @@ public final class CompileContext implements AutoCloseable {
     this.resources = Map.copyOf(resources);
     this.javaFilesNotBuilt = javaFilesNotBuilt;
     this.classesTask = classesTask;
-    this.antlr = antlr;
     this.reporter = reporter;
   }
 
@@ -181,7 +178,7 @@ public final class CompileContext implements AutoCloseable {
     for (Path entry : classpath) {
       urls.add(url(entry));
     }
-    loader = new ModuleClassLoader(name, urls, javaClasses, resources, antlr);
+    loader = new ModuleClassLoader(name, urls, javaClasses, resources);
     ModuleClassLoader threadLoader = loader;
     thread = Executors.newSingleThreadExecutor(r -> {
       Thread t = new Thread(r, "grails-compile " + name);

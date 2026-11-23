@@ -36,22 +36,10 @@ final class ModuleClassLoader extends URLClassLoader {
   static final List<String> EXTENSION_DESCRIPTORS = List.of("META-INF/groovy/org.codehaus.groovy.runtime.ExtensionModule",
       "META-INF/services/org.codehaus.groovy.runtime.ExtensionModule");
 
-  /** ANTLR's runtime, shared with the other module loaders of the same Groovy jar; null when not shared. */
-  private final AntlrLoader antlr;
-
-  ModuleClassLoader(String name, List<URL> urls, Map<String, Path> javaClasses, Map<String, List<Path>> resources, AntlrLoader antlr) {
+  ModuleClassLoader(String name, List<URL> urls, Map<String, Path> javaClasses, Map<String, List<Path>> resources) {
     super(name, urls.toArray(new URL[0]), BoundaryLoader.INSTANCE);
     this.javaClasses = javaClasses;
     this.resources = Map.copyOf(resources);
-    this.antlr = antlr;
-  }
-
-  @Override
-  protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
-    if (antlr != null && name.startsWith(AntlrLoader.PACKAGE)) {
-      return antlr.loadClass(name);
-    }
-    return super.loadClass(name, resolve);
   }
 
   @Override

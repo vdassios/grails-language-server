@@ -75,7 +75,7 @@ public final class GroovyAnalyzer implements Analyzer {
   /** Failures, to the server: shown to the user or logged, each once. */
   final Reports reports;
   private final TransformCaches caches;
-  final ParserCache parserCache = new ParserCache(GroovyAnalyzer.class.getClassLoader());
+  private final ParserCache parserCache = new ParserCache(GroovyAnalyzer.class.getClassLoader());
   /** Parent of each compile's class loader: the module loader that loaded this class. */
   final ClassLoader parent;
   private final LateTransforms lateTransforms;
@@ -116,7 +116,7 @@ public final class GroovyAnalyzer implements Analyzer {
     this.caches = new TransformCaches(GroovyAnalyzer.class.getClassLoader(), reports);
     this.lateTransforms = new LateTransforms(parent);
     FileTexts texts = new FileTexts();
-    this.taglibs = new Taglibs((path, text) -> parserCache.parsing(() -> parsedClasses(path, text)), texts, reports, parent);
+    this.taglibs = new Taglibs(GroovyAnalyzer::parsedClasses, texts, reports, parent);
     this.pages = new GspAnalyzer(this, taglibs, texts);
     try {
       this.output = Files.createTempDirectory("grails-ls-output");
@@ -181,7 +181,7 @@ public final class GroovyAnalyzer implements Analyzer {
       int known = early.size();
       Kept kept;
       try {
-        kept = parserCache.parsing(() -> runUnit(request, found, early));
+        kept = runUnit(request, found, early);
       } finally {
         caches.clear();
         parserCache.trim();
@@ -414,7 +414,7 @@ public final class GroovyAnalyzer implements Analyzer {
     if (found == null) {
       // after a dot just typed: the receiver's members, from the last compile that parsed, when it has the receiver
       Kept earlier = lastParsed.get(request.path);
-      Expression receiver = earlier == null ? null : TypedDot.receiver(earlier, request, line, column, repair, copy -> parserCache.parsing(() -> parsed(request.path, copy)));
+      Expression receiver = earlier == null ? null : TypedDot.receiver(earlier, request, line, column, repair, copy -> parsed(request.path, copy));
       if (receiver != null) {
         kept = earlier;
         found = Completions.afterDot(earlier.ast(), tags, receiver);
@@ -510,12 +510,16 @@ public final class GroovyAnalyzer implements Analyzer {
 
   @Override
   public Map<String, List<Symbol>> declarations(List<String> paths) {
-    return parserCache.parsing(() -> parse(paths));
+    try {
+      return parse(paths);
+    } finally {
+      parserCache.trim();
+    }
   }
 
   /** Conventions for a document: other files are read from their open text, else from disk, and parsed only. */
   Conventions conventions(SourceLookup lookup, String documentPath) {
-    return new Conventions(lookup, documentPath, file -> parserCache.parsing(() -> parsedClasses(file, lookup == null ? null : lookup.openText(file))));
+    return new Conventions(lookup, documentPath, file -> parsedClasses(file, lookup == null ? null : lookup.openText(file)));
   }
 
   /** The classes a file declares, from a parse only (as {@link #declarations}); empty when it does not parse. */

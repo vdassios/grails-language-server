@@ -163,11 +163,11 @@ final class GspAnalyzer {
       }
       Parsed parsed = controllerParses.get(file);
       if (parsed == null || !parsed.text.equals(text)) {
-        parsed = new Parsed(text, groovy.parserCache.parsing(() -> GroovyAnalyzer.parsedClasses(file, text)));
+        parsed = new Parsed(text, GroovyAnalyzer.parsedClasses(file, text));
         controllerParses.put(file, parsed);
       }
       return parsed.classes;
-    }), file -> texts.of(file, lookup), snippet -> groovy.parserCache.parsing(() -> GroovyAnalyzer.parsedClasses("model.groovy", snippet)), escapes());
+    }), file -> texts.of(file, lookup), snippet -> GroovyAnalyzer.parsedClasses("model.groovy", snippet), escapes());
   }
 
   /**

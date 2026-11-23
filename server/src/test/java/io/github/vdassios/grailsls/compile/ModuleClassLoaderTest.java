@@ -54,14 +54,14 @@ class ModuleClassLoaderTest {
     for (int i = 0; i < urls.length; i++) {
       list[i] = urls[i].toUri().toURL();
     }
-    return new ModuleClassLoader("test", List.of(list), javaClasses, Map.of(), null);
+    return new ModuleClassLoader("test", List.of(list), javaClasses, Map.of());
   }
 
   /** A sibling's class output that is not built when the loader starts: its classes show once Gradle writes them. */
   @Test
   void aClassDirectoryBuiltAfterTheLoaderStartedIsFound() throws Exception {
     Path classes = tmp.resolve("lib/build/classes/groovy/main");
-    try (ModuleClassLoader loader = new ModuleClassLoader("test", List.of(CompileContext.url(classes)), Map.of(), Map.of(), null)) {
+    try (ModuleClassLoader loader = new ModuleClassLoader("test", List.of(CompileContext.url(classes)), Map.of(), Map.of())) {
       assertNull(loader.getResource(SAMPLE_FILE));
       Path file = classes.resolve(SAMPLE_FILE);
       Files.createDirectories(file.getParent());

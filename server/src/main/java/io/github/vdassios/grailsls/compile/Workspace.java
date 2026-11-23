@@ -30,6 +30,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
@@ -57,8 +58,8 @@ import io.github.vdassios.grailsls.project.ProjectModel;
  */
 public final class Workspace implements AutoCloseable {
   private final List<CompileContext> contexts = new ArrayList<>();
-  /** One ANTLR runtime per Groovy jar, shared by the contexts of that jar (null value: the jar has none). */
-  private final Map<Path, AntlrLoader> antlr = new HashMap<>();
+  /** A Groovy jar's file name: the jar a module loader takes Groovy's classes from. */
+  private static final Pattern GROOVY_JAR = Pattern.compile("groovy-\\d[^/]*\\.jar");
   /** Files parsed per call when filling the symbol index. */
   public static final int SYMBOL_BATCH = 50;
   private static final Set<Symbol.Kind> CLASS_KINDS = EnumSet.of(Symbol.Kind.CLASS, Symbol.Kind.INTERFACE, Symbol.Kind.ENUM);
@@ -126,10 +127,10 @@ public final class Workspace implements AutoCloseable {
       }
       for (SourceSetRecord sourceSet : module.sourceSets) {
         if (!ownRoots(sourceSet, buildDirs).isEmpty()) {
-          CompileContext context = context(model, module, sourceSet, buildDirs, analysisJar, antlr, classOutputs, reporter);
+          CompileContext context = context(model, module, sourceSet, buildDirs, analysisJar, classOutputs, reporter);
           contexts.add(context);
           probes.putIfAbsent(module.groovyVersion, context);
-          Path groovyJar = AntlrLoader.groovyJar(context.classpath());
+          Path groovyJar = groovyJar(context.classpath());
           parsers.put(context, groovyJar == null ? context : firstOfJar.computeIfAbsent(groovyJar, jar -> context));
           if (sourceSet.name.equals("main")) {
             mains.put(module.path, context);
@@ -619,11 +620,20 @@ public final class Workspace implements AutoCloseable {
   @Override
   public void close() {
     contexts.forEach(CompileContext::close);
-    antlr.values().stream().filter(loader -> loader != null).forEach(AntlrLoader::close);
+  }
+
+  /** The first Groovy jar on a classpath, or null. */
+  private static Path groovyJar(List<Path> classpath) {
+    for (Path entry : classpath) {
+      if (entry.getFileName() != null && GROOVY_JAR.matcher(entry.getFileName().toString()).matches()) {
+        return entry;
+      }
+    }
+    return null;
   }
 
   private static CompileContext context(ProjectModel model, ModuleRecord module, SourceSetRecord sourceSet, Set<Path> buildDirs,
-      Path analysisJar, Map<Path, AntlrLoader> antlr, Map<CompileContext, ClassOutput> classOutputs, BiConsumer<Boolean, String> reporter) {
+      Path analysisJar, Map<CompileContext, ClassOutput> classOutputs, BiConsumer<Boolean, String> reporter) {
     SourceSetRecord main = sourceSet.name.equals("main") ? null : module.sourceSet("main");
     List<ModuleRecord> siblings = siblings(model, module);
 
@@ -687,13 +697,8 @@ public final class Workspace implements AutoCloseable {
       extensionModules(extensions, descriptors, new HashMap<>());
     }
     String name = module.path + " " + sourceSet.name;
-    Path groovyJar = AntlrLoader.groovyJar(classpath);
-    if (groovyJar != null && !antlr.containsKey(groovyJar)) {
-      antlr.put(groovyJar, AntlrLoader.of(groovyJar)); // null kept too: the jar is read once
-    }
-    AntlrLoader shared = groovyJar == null ? null : antlr.get(groovyJar);
     CompileContext context = new CompileContext(name, own, new ArrayList<>(search), new ArrayList<>(classpath), classFiles, descriptors, notBuilt,
-        classesTask(module.path, sourceSet.name), shared, reporter);
+        classesTask(module.path, sourceSet.name), reporter);
     classOutputs.put(context, output);
     return context;
   }
