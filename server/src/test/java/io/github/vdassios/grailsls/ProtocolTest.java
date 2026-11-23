@@ -242,6 +242,36 @@ class ProtocolTest {
   }
 
   /** Grails 3 (Groovy 2.4) stops here: the analysis layer needs Groovy 2.5 or later. */
+  /** {@code gradle.timeoutSeconds} sent as a string that is no number: initialize succeeds and the project resolves. */
+  @Test
+  void aTimeoutThatIsNoNumberFallsBackToTheDefault() throws Exception {
+    Path root = FakeWrapper.write(tmp.resolve("project"), FakeWrapper.WRITES_MODEL).getParent();
+    Files.writeString(root.resolve("settings.gradle"), "");
+    JsonObject options = trustedOptions();
+    JsonObject gradle = new JsonObject();
+    gradle.addProperty("timeoutSeconds", "five minutes");
+    options.add("gradle", gradle);
+    start(root, options);
+    assertEquals(StatusParams.RESOLVING, next().state);
+    assertEquals(StatusParams.INDEXING, next().state);
+    assertEquals(StatusParams.READY, next().state);
+    assertTrue(logs.contains("gradle.timeoutSeconds is not a positive whole number (\"five minutes\"): using 300"), logs.toString());
+  }
+
+  @Test
+  void theTimeoutIsANumberOrANumericString() {
+    List<String> logged = new java.util.ArrayList<>();
+    assertEquals(120, GrailsLanguageServer.timeoutSeconds(com.google.gson.JsonParser.parseString("120"), logged::add));
+    assertEquals(120, GrailsLanguageServer.timeoutSeconds(com.google.gson.JsonParser.parseString("\" 120 \""), logged::add));
+    assertEquals(List.of(), logged);
+    for (String bad : List.of("\"abc\"", "0", "-5", "1.5", "\"\"", "{}", "[1]", "true", "99999999999")) {
+      assertEquals(GrailsLanguageServer.DEFAULT_TIMEOUT_SECONDS, GrailsLanguageServer.timeoutSeconds(com.google.gson.JsonParser.parseString(bad), logged::add), bad);
+    }
+    assertEquals(9, logged.size(), logged.toString());
+    assertEquals(GrailsLanguageServer.DEFAULT_TIMEOUT_SECONDS, GrailsLanguageServer.timeoutSeconds(null, logged::add), "not given");
+    assertEquals(9, logged.size(), "not given is no mistake");
+  }
+
   @Test
   void refusesGroovyOlderThan25() throws Exception {
     Path root = groovyProject(System.getProperty("gls.testGroovy"), "2.4.21");

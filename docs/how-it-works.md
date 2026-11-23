@@ -26,7 +26,7 @@ A failure that turns a feature off is shown with `window/showMessage` (type Erro
 
 `initialize` answers with `serverInfo`: `name` is `grails-language-server`, `version` the server's version (from the jar's manifest).
 
-Initialization options: `trusted` (boolean, required to do anything), `gradle.timeoutSeconds` (default 300), `cacheDir` (default `$XDG_CACHE_HOME/grails-language-server`, else `~/.cache/grails-language-server`).
+Initialization options: `trusted` (boolean, required to do anything), `gradle.timeoutSeconds` (default 300; a positive whole number, also as a string such as `"600"`; any other value is logged and gives the default), `cacheDir` (default `$XDG_CACHE_HOME/grails-language-server`, else `~/.cache/grails-language-server`).
 
 The server exits when its client goes away, even if the client never sends `exit`: when its standard input ends, or when the process named by `processId` in `initialize` ends. On `shutdown` and on the exit it cancels its compiles and kills the Gradle processes it started, and waits for nothing else, so it ends at once even in the middle of a compile. A Gradle daemon one of those runs started is killed with it; a daemon reused from an earlier build keeps running: Gradle sees its client go, cancels the build and keeps the daemon for the next one. The exit code is 0 if `shutdown` came first, else 1. So an editor need not wait for the server when it quits.
 

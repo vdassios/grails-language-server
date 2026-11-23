@@ -13,6 +13,7 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 
 import com.google.gson.JsonElement;
@@ -90,7 +91,7 @@ import io.github.vdassios.grailsls.project.SourcesReport;
  * LSP entry point. Speaks LSP over stdio.
  *
  * <p>Initialization options: {@code trusted} (required before any project code runs), {@code gradle.timeoutSeconds}
- * (default 300) and {@code cacheDir}.
+ * (default 300; a number or a numeric string) and {@code cacheDir}.
  *
  * <p>The server exits when its client goes away, even without the {@code exit} notification: when its input ends,
  * or when the process named by {@code InitializeParams.processId} ends. The exit code is 0 after a {@code shutdown}
@@ -160,7 +161,7 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
     JsonObject options = params.getInitializationOptions() instanceof JsonObject ? (JsonObject) params.getInitializationOptions() : new JsonObject();
     boolean trusted = bool(options.get("trusted"));
     JsonObject gradle = options.has("gradle") && options.get("gradle").isJsonObject() ? options.getAsJsonObject("gradle") : new JsonObject();
-    int timeout = gradle.has("timeoutSeconds") ? gradle.get("timeoutSeconds").getAsInt() : DEFAULT_TIMEOUT_SECONDS;
+    int timeout = timeoutSeconds(gradle.get("timeoutSeconds"), message -> client.logMessage(new MessageParams(MessageType.Warning, message)));
     Path cacheDir = options.has("cacheDir") ? Path.of(options.get("cacheDir").getAsString()) : GradleBridge.defaultCacheDir();
     GradleBridge bridge = new GradleBridge(cacheDir, GradleBridge.defaultJavaHome(), Duration.ofSeconds(timeout));
     StartupMarks marks = new StartupMarks(message -> client.logMessage(new MessageParams(MessageType.Log, message)));
@@ -220,6 +221,28 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
     } else {
       client.logMessage(new MessageParams(MessageType.Warning, message));
     }
+  }
+
+  /**
+   * {@code gradle.timeoutSeconds}: a positive whole number, also given as a string; anything else is logged and gives
+   * the default, as does no value.
+   */
+  static int timeoutSeconds(JsonElement value, Consumer<String> log) {
+    if (value == null || value.isJsonNull()) {
+      return DEFAULT_TIMEOUT_SECONDS;
+    }
+    if (value.isJsonPrimitive() && !value.getAsJsonPrimitive().isBoolean()) {
+      try {
+        int seconds = Integer.parseInt(value.getAsString().trim());
+        if (seconds > 0) {
+          return seconds;
+        }
+      } catch (NumberFormatException e) {
+        // logged below
+      }
+    }
+    log.accept("gradle.timeoutSeconds is not a positive whole number (" + value + "): using " + DEFAULT_TIMEOUT_SECONDS);
+    return DEFAULT_TIMEOUT_SECONDS;
   }
 
   /** The server's version, from the jar's manifest; null when not run from the jar (tests). */
