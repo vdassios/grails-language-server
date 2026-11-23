@@ -54,6 +54,8 @@ public final class CompileService {
   });
   private final AtomicBoolean rescanScheduled = new AtomicBoolean();
   private final Map<Path, Pending> pending = new ConcurrentHashMap<>();
+  /** Held while a compile decides to publish its diagnostics and publishes them, and while a document closes. */
+  private final Object publishing = new Object();
   private volatile Workspace workspace;
 
   public CompileService(Consumer<PublishDiagnosticsParams> publish, long debounceMillis) {
@@ -104,7 +106,9 @@ public final class CompileService {
     if (path == null) {
       return; // no file: never opened
     }
-    documents.close(uri);
+    synchronized (publishing) { // a compile publishing now does so before the clear below
+      documents.close(uri);
+    }
     Pending running = pending.remove(path);
     if (running != null) {
       running.cancel();
@@ -301,9 +305,11 @@ public final class CompileService {
       }
       return;
     }
-    Document now = documents.get(path);
-    if (!result.cancelled && !task.cancelled.get() && now != null && now.version == document.version) {
-      publish.accept(diagnostics(document, result));
+    synchronized (publishing) { // a close in between would clear them before they are sent
+      Document now = documents.get(path);
+      if (!result.cancelled && !task.cancelled.get() && now != null && now.version == document.version) {
+        publish.accept(diagnostics(document, result));
+      }
     }
   }
 

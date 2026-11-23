@@ -365,6 +365,41 @@ class CompileServiceTest {
     }
   }
 
+  /**
+   * The last diagnostics a closed document gets are the empty ones of the close, also when a compile publishes while
+   * the document closes (here its diagnostics are still on their way to the client).
+   */
+  @Test
+  void aCompileEndingDuringCloseDoesNotPublishAfterTheClear() throws Exception {
+    List<PublishDiagnosticsParams> sent = new CopyOnWriteArrayList<>();
+    CountDownLatch publishing = new CountDownLatch(1);
+    CompileService racing = new CompileService(params -> {
+      if (!params.getDiagnostics().isEmpty()) {
+        publishing.countDown();
+        try {
+          Thread.sleep(500);
+        } catch (InterruptedException e) {
+          Thread.currentThread().interrupt();
+        }
+      }
+      sent.add(params);
+    }, CompileService.DEBOUNCE_MILLIS);
+    try {
+      racing.setWorkspace(workspace());
+      racing.open(uri("Broken.groovy"), "class Broken { void x( }\n", 1);
+      assertTrue(publishing.await(30, TimeUnit.SECONDS));
+      racing.close(uri("Broken.groovy"));
+      long end = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+      while (sent.size() < 2 && System.nanoTime() < end) {
+        Thread.sleep(10);
+      }
+      assertEquals(2, sent.size());
+      assertEquals(List.of(), sent.get(1).getDiagnostics(), "the clear comes last");
+    } finally {
+      racing.shutdown();
+    }
+  }
+
   /** A query right after an edit answers about the edited text: it ends the debounce delay instead of waiting it out. */
   @Test
   void aQueryRunsThePendingCompileAtOnce() throws Exception {
