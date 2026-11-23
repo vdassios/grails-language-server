@@ -2,6 +2,7 @@ package io.github.vdassios.grailsls;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.io.PipedInputStream;
@@ -12,17 +13,23 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
 import com.google.gson.JsonObject;
 
+import org.eclipse.lsp4j.DidChangeTextDocumentParams;
+import org.eclipse.lsp4j.DidOpenTextDocumentParams;
 import org.eclipse.lsp4j.InitializeParams;
 import org.eclipse.lsp4j.InitializedParams;
 import org.eclipse.lsp4j.MessageActionItem;
 import org.eclipse.lsp4j.MessageParams;
 import org.eclipse.lsp4j.PublishDiagnosticsParams;
 import org.eclipse.lsp4j.ShowMessageRequestParams;
+import org.eclipse.lsp4j.TextDocumentContentChangeEvent;
+import org.eclipse.lsp4j.TextDocumentItem;
+import org.eclipse.lsp4j.VersionedTextDocumentIdentifier;
 import org.eclipse.lsp4j.WorkspaceFolder;
 import org.eclipse.lsp4j.jsonrpc.Launcher;
 import org.eclipse.lsp4j.services.LanguageServer;
@@ -32,6 +39,7 @@ import org.junit.jupiter.api.condition.DisabledOnOs;
 import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
 
+import io.github.vdassios.grailsls.compile.Workspace;
 import io.github.vdassios.grailsls.project.FakeWrapper;
 
 /**
@@ -45,6 +53,7 @@ class LifecycleTest {
 
   private final CompletableFuture<Integer> exitCode = new CompletableFuture<>();
   private final BlockingQueue<StatusParams> statuses = new LinkedBlockingQueue<>();
+  private final BlockingQueue<PublishDiagnosticsParams> diagnostics = new LinkedBlockingQueue<>();
   private final List<Process> started = new ArrayList<>();
   private PipedOutputStream clientOut;
   private LanguageServer server;
@@ -57,8 +66,19 @@ class LifecycleTest {
     return root;
   }
 
+  /** A project of one module whose main source set is {@code src} on the test's Groovy. */
+  private Path groovyProject() throws IOException {
+    Path root = tmp.toRealPath().resolve("project"); // Gradle reports the project's real paths
+    String module = "{\"path\":\":\",\"name\":\"project\",\"projectDir\":\"" + root + "\",\"groovyVersion\":\"2.5.23\",\"sourceSets\":[{\"name\":\"main\","
+        + "\"sourceRoots\":[\"" + root.resolve("src") + "\"],\"compileClasspath\":[\"" + System.getProperty("gls.testGroovy") + "\"]}]}";
+    FakeWrapper.write(root, "printf '%s' '" + module + "' > \"$out/_root.json\"\n");
+    Files.writeString(root.resolve("settings.gradle"), "");
+    Files.createDirectories(root.resolve("src"));
+    return root;
+  }
+
   /** Starts the server as {@code main} does, on piped streams, and initializes it in {@code root}. */
-  private void start(Path root, Long processId) throws Exception {
+  private GrailsLanguageServer start(Path root, Long processId) throws Exception {
     PipedInputStream serverIn = new PipedInputStream();
     clientOut = new PipedOutputStream(serverIn);
     PipedInputStream clientIn = new PipedInputStream();
@@ -84,6 +104,7 @@ class LifecycleTest {
     }
     server.initialize(params).get(10, TimeUnit.SECONDS);
     server.initialized(new InitializedParams());
+    return impl;
   }
 
   @AfterEach
@@ -161,6 +182,49 @@ class LifecycleTest {
     assertEnded(gradle);
   }
 
+  /**
+   * Shutdown and exit wait for no work in progress: with a module's compile thread busy (a long compile phase holds it
+   * the same way), both are done within about 2 s. Closing the module's loader would wait for the thread.
+   */
+  @Test
+  void shutdownAndExitWithTheCompileThreadBusyEndWithinTwoSeconds() throws Exception {
+    Path root = groovyProject();
+    GrailsLanguageServer impl = start(root, null);
+    assertEquals(StatusParams.RESOLVING, statuses.poll(30, TimeUnit.SECONDS).state);
+    assertEquals(StatusParams.INDEXING, statuses.poll(30, TimeUnit.SECONDS).state);
+    assertEquals(StatusParams.READY, statuses.poll(30, TimeUnit.SECONDS).state);
+    String uri = root.resolve("src/A.groovy").toUri().toString();
+    server.getTextDocumentService().didOpen(new DidOpenTextDocumentParams(new TextDocumentItem(uri, "groovy", 1, "class A {}\n")));
+    assertTrue(diagnostics.poll(30, TimeUnit.SECONDS) != null, "no diagnostics");
+    CountDownLatch busy = new CountDownLatch(1);
+    CountDownLatch release = new CountDownLatch(1);
+    Workspace workspace = impl.compiles().workspace();
+    impl.compiles().query(uri, null, (analyzer, path) -> {
+      busy.countDown();
+      try {
+        release.await(60, TimeUnit.SECONDS);
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+      }
+      return null;
+    });
+    try {
+      assertTrue(busy.await(30, TimeUnit.SECONDS), "the module's thread never ran the query");
+      server.getTextDocumentService().didChange(new DidChangeTextDocumentParams(new VersionedTextDocumentIdentifier(uri, 2),
+          List.of(new TextDocumentContentChangeEvent("class A { int n }\n"))));
+      Thread.sleep(500); // its compile waits for the thread
+      long start = System.nanoTime();
+      server.shutdown().get(10, TimeUnit.SECONDS);
+      clientOut.close();
+      assertEquals(0, exitCode.get(10, TimeUnit.SECONDS));
+      long millis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+      assertTrue(millis < 2000, "shutdown and exit took " + millis + " ms");
+    } finally {
+      release.countDown();
+      workspace.close(); // the server leaves it to the end of the process; this JVM goes on
+    }
+  }
+
   private final class StatusClient implements GrailsLanguageClient {
     @Override
     public void status(StatusParams params) {
@@ -171,7 +235,9 @@ class LifecycleTest {
     public void telemetryEvent(Object object) {}
 
     @Override
-    public void publishDiagnostics(PublishDiagnosticsParams params) {}
+    public void publishDiagnostics(PublishDiagnosticsParams params) {
+      diagnostics.add(params);
+    }
 
     @Override
     public void showMessage(MessageParams messageParams) {}

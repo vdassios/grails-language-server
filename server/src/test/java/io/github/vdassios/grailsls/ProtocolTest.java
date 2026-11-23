@@ -65,6 +65,7 @@ import org.junit.jupiter.api.condition.DisabledOnOs;
 import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
 
+import io.github.vdassios.grailsls.compile.Workspace;
 import io.github.vdassios.grailsls.project.FakeWrapper;
 
 /** Drives the server in-process over JSON-RPC, as an editor would. */
@@ -77,6 +78,7 @@ class ProtocolTest {
   private final BlockingQueue<PublishDiagnosticsParams> diagnostics = new LinkedBlockingQueue<>();
   private final List<String> logs = new java.util.concurrent.CopyOnWriteArrayList<>();
   private GrailsServerProxy server;
+  private GrailsLanguageServer impl;
 
   /** The server as the client sees it, with the custom request. */
   interface GrailsServerProxy extends LanguageServer {
@@ -110,7 +112,7 @@ class ProtocolTest {
     PipedInputStream clientIn = new PipedInputStream();
     PipedOutputStream serverOut = new PipedOutputStream(clientIn);
 
-    GrailsLanguageServer impl = new GrailsLanguageServer();
+    impl = new GrailsLanguageServer();
     Launcher<GrailsLanguageClient> serverLauncher = Launcher.createLauncher(impl, GrailsLanguageClient.class, serverIn, serverOut);
     impl.connect(serverLauncher.getRemoteProxy());
     serverLauncher.startListening();
@@ -137,7 +139,11 @@ class ProtocolTest {
   @AfterEach
   void shutdown() throws Exception {
     if (server != null) {
+      Workspace left = impl.compiles() == null ? null : impl.compiles().workspace();
       server.shutdown().get(10, TimeUnit.SECONDS);
+      if (left != null) {
+        left.close(); // the server leaves it to the end of the process; this JVM goes on
+      }
     }
   }
 

@@ -54,7 +54,15 @@ class CompileServiceTest {
 
   @AfterEach
   void stop() {
-    service.shutdown();
+    stop(service);
+  }
+
+  /** Shuts the service down and closes the workspace it leaves open (the server exits after a shutdown; this JVM goes on). */
+  private static void stop(CompileService compiles) {
+    Workspace left = compiles.shutdown();
+    if (left != null) {
+      left.close();
+    }
   }
 
   private Workspace workspace(Path... classpath) {
@@ -361,8 +369,49 @@ class CompileServiceTest {
         swap.join(30_000);
       }
     } finally {
-      slow.shutdown();
+      stop(slow);
     }
+  }
+
+  /**
+   * Shutdown cancels the compiles and returns without waiting for the module's thread: a compile waiting behind a busy
+   * thread then runs with its cancel flag set and publishes nothing. A workspace set after shutdown is not taken.
+   */
+  @Test
+  void shutdownCancelsTheCompilesWithoutWaiting() throws Exception {
+    service.open(uri("A.groovy"), "class A {}\n", 1);
+    assertEquals(1, next().getVersion());
+    CountDownLatch holding = new CountDownLatch(1);
+    CountDownLatch release = new CountDownLatch(1);
+    service.query(uri("A.groovy"), null, (analyzer, path) -> {
+      holding.countDown();
+      try {
+        release.await(30, TimeUnit.SECONDS);
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+      }
+      return null;
+    });
+    assertTrue(holding.await(10, TimeUnit.SECONDS));
+    service.change(uri("A.groovy"), List.of(new TextDocumentContentChangeEvent("class A { int n }\n")), 2);
+    Thread.sleep(CompileService.DEBOUNCE_MILLIS + 500); // the compile has started and waits for the thread
+    Workspace workspace = service.workspace();
+    Thread stopping = new Thread(service::shutdown);
+    long start = System.nanoTime();
+    stopping.start();
+    try {
+      stopping.join(5_000);
+      assertFalse(stopping.isAlive(), "shutdown waits for the module's thread");
+      long millis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+      assertTrue(millis < 1000, "shutdown took " + millis + " ms");
+    } finally {
+      release.countDown();
+      stopping.join(30_000);
+    }
+    assertNull(published.poll(2, TimeUnit.SECONDS), "the cancelled compile publishes nothing");
+    workspace.close();
+    service.setWorkspace(workspace());
+    assertNull(service.workspace(), "no workspace after shutdown");
   }
 
   /**
@@ -396,7 +445,7 @@ class CompileServiceTest {
       assertEquals(2, sent.size());
       assertEquals(List.of(), sent.get(1).getDiagnostics(), "the clear comes last");
     } finally {
-      racing.shutdown();
+      stop(racing);
     }
   }
 
@@ -412,7 +461,7 @@ class CompileServiceTest {
       slow.change(uri("A.groovy"), List.of(new TextDocumentContentChangeEvent(new Range(end, end), 0, "\n  int count() { 1 }")), 2);
       assertEquals(List.of("CLASS A", "METHOD count"), symbols(slow, "A.groovy"));
     } finally {
-      slow.shutdown();
+      stop(slow);
     }
   }
 

@@ -93,8 +93,9 @@ import io.github.vdassios.grailsls.project.SourcesReport;
  * (default 300) and {@code cacheDir}.
  *
  * <p>The server exits when its client goes away, even without the {@code exit} notification: when its input ends,
- * or when the process named by {@code InitializeParams.processId} ends. It stops a running Gradle first. The exit code
- * is 0 after a {@code shutdown} request, else 1, as LSP asks.
+ * or when the process named by {@code InitializeParams.processId} ends. The exit code is 0 after a {@code shutdown}
+ * request, else 1, as LSP asks. {@code shutdown} and the exit cancel the compiles and kill the Gradle processes the
+ * server started, and wait for nothing else: the module loaders are left to the end of the process.
  */
 public class GrailsLanguageServer implements LanguageServer, LanguageClientAware {
   static final int DEFAULT_TIMEOUT_SECONDS = 300;
@@ -322,9 +323,17 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
   /** Stops the work in progress (Gradle, compiles) and exits: 0 after {@code shutdown}, else 1. Runs once. */
   void clientGone() {
     if (exited.compareAndSet(false, true)) {
-      stop();
-      exit.accept(shutdownRequested ? 0 : 1);
+      try {
+        stop();
+      } finally {
+        exit.accept(shutdownRequested ? 0 : 1);
+      }
     }
+  }
+
+  /** The compile service; null before {@code initialize}. For tests. */
+  CompileService compiles() {
+    return compiles;
   }
 
   private void stop() {
@@ -336,12 +345,15 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
         }
       }
       ProjectService currentProject = project;
-      if (currentProject != null) {
-        currentProject.stop();
-      }
       CompileService currentCompiles = compiles;
-      if (currentCompiles != null) {
-        currentCompiles.shutdown();
+      try {
+        if (currentProject != null) {
+          currentProject.stop();
+        }
+      } finally {
+        if (currentCompiles != null) {
+          currentCompiles.shutdown(); // leaves the workspace open: closing it waits for each busy module thread
+        }
       }
     }
   }

@@ -8,6 +8,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -57,6 +58,8 @@ public final class CompileService {
   /** Held while a compile decides to publish its diagnostics and publishes them, and while a document closes. */
   private final Object publishing = new Object();
   private volatile Workspace workspace;
+  /** Set by {@link #shutdown}. Guarded by {@code this}, as are changes of {@link #workspace}. */
+  private boolean stopped;
 
   public CompileService(Consumer<PublishDiagnosticsParams> publish, long debounceMillis) {
     this.publish = publish;
@@ -73,8 +76,17 @@ public final class CompileService {
 
   /** Replaces the workspace (closing the old one and its loaders) and compiles every open document again. */
   public void setWorkspace(Workspace next) {
-    Workspace old = workspace;
-    workspace = next;
+    Workspace old;
+    synchronized (this) {
+      if (stopped) {
+        if (next != null) {
+          next.close();
+        }
+        return;
+      }
+      old = workspace;
+      workspace = next;
+    }
     if (next != null) {
       next.onDeclarationsCorrected(() -> compileOpenDocuments(next));
     }
@@ -214,10 +226,14 @@ public final class CompileService {
     }
     if (path.toString().endsWith(".java")) {
       if (rescanScheduled.compareAndSet(false, true)) {
-        timer.schedule(() -> {
-          rescanScheduled.set(false);
-          rescan();
-        }, debounceMillis, TimeUnit.MILLISECONDS);
+        try {
+          timer.schedule(() -> {
+            rescanScheduled.set(false);
+            rescan();
+          }, debounceMillis, TimeUnit.MILLISECONDS);
+        } catch (RejectedExecutionException e) {
+          // shut down
+        }
       }
     } else if (current.refresh(path)) {
       compileOpenDocuments(current);
@@ -239,7 +255,7 @@ public final class CompileService {
           compileOpenDocuments(current);
         }
       });
-    } catch (java.util.concurrent.RejectedExecutionException e) {
+    } catch (RejectedExecutionException e) {
       return CompletableFuture.completedFuture(null); // shut down
     }
   }
@@ -254,14 +270,24 @@ public final class CompileService {
     }
   }
 
-  public void shutdown() {
+  /**
+   * For the exit: cancels every compile (a running one stops at its next phase), stops the timers and drops the
+   * workspace without closing it, so nothing waits for a busy module thread; the process ends next. Nothing compiles
+   * from then on, and a workspace set later is closed at once (it has compiled nothing).
+   *
+   * @return the workspace dropped, still open, or null: callers that go on running (tests) close it
+   */
+  public Workspace shutdown() {
+    Workspace current;
+    synchronized (this) {
+      stopped = true;
+      current = workspace;
+      workspace = null;
+    }
+    pending.values().forEach(Pending::cancel);
     timer.shutdownNow();
     rescans.shutdownNow();
-    Workspace current = workspace;
-    workspace = null;
-    if (current != null) {
-      current.close();
-    }
+    return current;
   }
 
   private void schedule(Path path, long delay) {
@@ -270,7 +296,11 @@ public final class CompileService {
     if (previous != null) {
       previous.cancel();
     }
-    next.scheduled = timer.schedule(() -> run(path, next), delay, TimeUnit.MILLISECONDS);
+    try {
+      next.scheduled = timer.schedule(() -> run(path, next), delay, TimeUnit.MILLISECONDS);
+    } catch (RejectedExecutionException e) {
+      finish(path, next); // shut down
+    }
   }
 
   private void run(Path path, Pending task) {
@@ -367,7 +397,14 @@ public final class CompileService {
     void startNow(Runnable compile) {
       ScheduledFuture<?> delay = scheduled;
       if (!started.get() && delay != null && delay.cancel(false)) {
-        timer.execute(compile);
+        try {
+          timer.execute(compile);
+        } catch (RejectedExecutionException e) {
+          cancelled.set(true); // shut down: over at once
+          if (started.compareAndSet(false, true)) {
+            finish(path, this);
+          }
+        }
       }
     }
   }
