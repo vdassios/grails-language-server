@@ -86,7 +86,14 @@ class GroovyAnalyzerTest {
     public List<String> classpathClasses(String packageName) {
       return jarClasses.getOrDefault(packageName, List.of());
     }
+
+    @Override
+    public List<String> grailsAppDirs() {
+      return grailsApps;
+    }
   };
+  /** The modules' {@code grails-app} directories. */
+  private final List<String> grailsApps = new ArrayList<>();
   /** The jars' packages below a package and classes in a package, as the server would list them. */
   private final Map<String, List<String>> jarPackages = new HashMap<>();
   private final Map<String, List<String>> jarClasses = new HashMap<>();
@@ -489,6 +496,18 @@ class GroovyAnalyzerTest {
     assertNotNull(analyzer.compiledClass(path, "A"));
     analyzer.forget(path);
     assertNull(analyzer.compiledClass(path, "A"));
+  }
+
+  /** A page's model variables read a controller's text, parse and compile: kept for the next page, dropped when the controller is closed. */
+  @Test
+  void forgetDropsWhatPagesKeepOfAFile() throws IOException {
+    String controller = write("grails-app/controllers/BookController.groovy", "class BookController {\n  def index() { render view: 'index', model: [count: size()] }\n  int size() { 1 }\n}\n");
+    index.put("BookController", controller);
+    grailsApps.add(tmp.resolve("grails-app").toString());
+    compile(tmp.resolve("grails-app/views/book/index.gsp").toString(), "<p>${count}</p>\n");
+    assertTrue(analyzer.pagesKeep(controller), "the page's model read the controller");
+    analyzer.forget(controller);
+    assertFalse(analyzer.pagesKeep(controller));
   }
 
   @Test

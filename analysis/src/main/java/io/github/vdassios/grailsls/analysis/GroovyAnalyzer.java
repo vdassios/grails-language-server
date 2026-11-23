@@ -284,6 +284,11 @@ public final class GroovyAnalyzer implements Analyzer {
     return kept == null ? -1 : kept.phase;
   }
 
+  /** Whether the GSP pages keep a file's text, parse or model types ({@link GspAnalyzer#keeps}). For tests. */
+  boolean pagesKeep(String path) {
+    return pages.keeps(path);
+  }
+
   /** The kept compile of a document, or null. For tests. */
   CompilationUnit unit(String documentPath) {
     Kept kept = units.get(documentPath);

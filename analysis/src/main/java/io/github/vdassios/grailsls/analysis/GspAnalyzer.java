@@ -499,10 +499,18 @@ final class GspAnalyzer {
     return null;
   }
 
-  /** Drops what is kept for a page. */
+  /** Drops what is kept for a file: a page's tags and translation, and the text, parse and model types pages read of it. */
   void forget(String documentPath) {
     views.forget(documentPath);
     translations.remove(documentPath);
+    controllerParses.remove(documentPath);
+    fileTexts.remove(documentPath);
+    compiledModels.remove(documentPath);
+  }
+
+  /** Whether a file's text, parse or model types are kept. For tests. */
+  boolean keeps(String path) {
+    return controllerParses.containsKey(path) || fileTexts.containsKey(path) || compiledModels.containsKey(path);
   }
 
   /** Drops everything kept. */
