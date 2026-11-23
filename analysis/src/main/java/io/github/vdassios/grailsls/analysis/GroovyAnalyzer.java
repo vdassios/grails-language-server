@@ -29,6 +29,7 @@ import org.codehaus.groovy.ast.ClassNode;
 import org.codehaus.groovy.ast.MethodNode;
 import org.codehaus.groovy.ast.ModuleNode;
 import org.codehaus.groovy.ast.decompiled.AsmDecompiler;
+import org.codehaus.groovy.ast.expr.Expression;
 import org.codehaus.groovy.control.CompilationFailedException;
 import org.codehaus.groovy.control.CompilationUnit;
 import org.codehaus.groovy.control.CompilerConfiguration;
@@ -64,6 +65,11 @@ import io.github.vdassios.grailsls.api.Symbol;
 public final class GroovyAnalyzer implements Analyzer {
   /** The kept compile of each document; a page's is of its translation ({@link GspAnalyzer}). */
   final Map<String, Kept> units = new ConcurrentHashMap<>();
+  /**
+   * The last compile of each Groovy document whose text parsed, kept while later ones do not: completion after a dot
+   * just typed, which does not parse, is answered from it when that is provably right ({@link TypedDot}).
+   */
+  private final Map<String, Kept> lastParsed = new ConcurrentHashMap<>();
   /** The last completion per document (a Groovy one, or a page's tags), for resolve; dropped by the next compile of the document. */
   final Map<String, LastCompletion> completions = new ConcurrentHashMap<>();
   /** Failures, to the server: shown to the user or logged, each once. */
@@ -159,6 +165,9 @@ public final class GroovyAnalyzer implements Analyzer {
       return new CompileResult(List.of(), true, kept.sources, millisSince(start));
     }
     units.put(request.path, kept);
+    if (kept.parsed) {
+      lastParsed.put(request.path, kept);
+    }
     return new CompileResult(diagnostics, false, kept.sources, millisSince(start));
   }
 
@@ -202,7 +211,8 @@ public final class GroovyAnalyzer implements Analyzer {
     DocumentUnit unit = new DocumentUnit(config, loader);
     lateTransforms.add(unit);
     SourceUnit document = unit.addSource(source(request.path, request.text, config, loader, unit.getErrorCollector()));
-    PathResolver resolver = new PathResolver(request.lookup, document);
+    Inputs inputs = new Inputs(request.lookup);
+    PathResolver resolver = new PathResolver(inputs, document);
     unit.setClassNodeResolver(resolver);
     early.forEach(path -> resolver.add(path, unit));
 
@@ -213,7 +223,7 @@ public final class GroovyAnalyzer implements Analyzer {
     Injections injections = null;
     for (; phase <= last; phase++) {
       if (request.cancelled.getAsBoolean()) {
-        return new Kept(unit, request.text, document.getSource().getURI(), request.lookup, resolver.sources(), phase - 1, true);
+        return new Kept(unit, request.text, document.getSource().getURI(), request.lookup, inputs, false, resolver.sources(), phase - 1, true);
       }
       try {
         unit.compile(phase);
@@ -225,11 +235,11 @@ public final class GroovyAnalyzer implements Analyzer {
       }
       if (phase == Phases.CONVERSION) {
         last = lastPhase(document);
-        injections = Injections.queue(document, request.lookup, resolver, unit);
+        injections = Injections.queue(document, inputs, resolver, unit);
       }
     }
     if (early.addAll(resolver.early())) {
-      return new Kept(unit, request.text, document.getSource().getURI(), request.lookup, resolver.sources(), Math.min(phase, last), false);
+      return new Kept(unit, request.text, document.getSource().getURI(), request.lookup, inputs, false, resolver.sources(), Math.min(phase, last), false);
     }
     if (injections != null) {
       injections.mark(unit);
@@ -248,7 +258,22 @@ public final class GroovyAnalyzer implements Analyzer {
         // no hints rather than a failed compile
       }
     }
-    return new Kept(unit, request.text, document.getSource().getURI(), request.lookup, resolver.sources(), Math.min(phase, last), false);
+    boolean parsed = document.getAST() != null && !syntaxError(unit.getErrorCollector(), request.path);
+    return new Kept(unit, request.text, document.getSource().getURI(), request.lookup, inputs, parsed, resolver.sources(), Math.min(phase, last), false);
+  }
+
+  /** Whether the document has a syntax error. */
+  @SuppressWarnings("unchecked") // Groovy 2.5 returns raw lists
+  private static boolean syntaxError(ErrorCollector collector, String documentPath) {
+    for (Object error : collector.getErrors() == null ? List.of() : (List<Object>) collector.getErrors()) {
+      if (error instanceof SyntaxErrorMessage) {
+        String path = ((SyntaxErrorMessage) error).getCause().getSourceLocator();
+        if (path == null || path.equals(documentPath)) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   /**
@@ -383,10 +408,20 @@ public final class GroovyAnalyzer implements Analyzer {
     Conventions conventions = conventions(request.lookup, request.path);
     Function<String, Map<String, Taglibs.Tag>> tags = namespaces(request.lookup);
     Completions found = kept == null ? null : Completions.at(kept.ast(), kept.uri, request.lookup, conventions, tags, false, line, column, typed);
+    // the text does not parse at the position: a copy with a name typed there, and a string closed that the line
+    // leaves open (render(view: 'sh)
+    String repair = Completions.repair(typed, lineAfter(request.text, line, column));
     if (found == null) {
-      // the text does not parse at the position: a copy with a name typed there, and a string closed that the line
-      // leaves open (render(view: 'sh)
-      kept = compileCopy(request, line, column, Completions.repair(typed, lineAfter(request.text, line, column)));
+      // after a dot just typed: the receiver's members, from the last compile that parsed, when it has the receiver
+      Kept earlier = lastParsed.get(request.path);
+      Expression receiver = earlier == null ? null : TypedDot.receiver(earlier, request, line, column, repair, copy -> parserCache.parsing(() -> parsed(request.path, copy)));
+      if (receiver != null) {
+        kept = earlier;
+        found = Completions.afterDot(earlier.ast(), tags, receiver);
+      }
+    }
+    if (found == null) {
+      kept = compileCopy(request, line, column, repair);
       found = kept == null ? null : Completions.at(kept.ast(), kept.uri, request.lookup, conventions, tags, false, line, column, typed);
     }
     if (found == null) {
@@ -512,7 +547,7 @@ public final class GroovyAnalyzer implements Analyzer {
    * A file parsed only, outside any compilation unit (no class is resolved, no transformation runs), from {@code text}
    * or, when that is null, from disk; null when it does not parse.
    */
-  private static SourceUnit parsed(String path, String text) {
+  static SourceUnit parsed(String path, String text) {
     CompilerConfiguration config = new CompilerConfiguration();
     config.setSourceEncoding("UTF-8");
     GroovyClassLoader loader = new GroovyClassLoader(GroovyAnalyzer.class.getClassLoader(), config, false);
@@ -531,12 +566,14 @@ public final class GroovyAnalyzer implements Analyzer {
   public void forget(String documentPath) {
     pages.forget(documentPath);
     units.remove(documentPath);
+    lastParsed.remove(documentPath);
     completions.remove(documentPath);
   }
 
   @Override
   public void close() {
     units.clear();
+    lastParsed.clear();
     completions.clear();
     pages.clear();
     empty(output, true);
@@ -637,6 +674,10 @@ public final class GroovyAnalyzer implements Analyzer {
     final URI uri;
     /** Finds the source of classes the compile read from class files, for definition and hover. */
     final SourceLookup lookup;
+    /** What the compile read through the lookup. */
+    final Inputs inputs;
+    /** Whether the document parsed. */
+    final boolean parsed;
     /** Sources the compile read: the document and those pulled in. */
     final int sources;
     /** The last phase compiled. */
@@ -644,11 +685,13 @@ public final class GroovyAnalyzer implements Analyzer {
     final boolean cancelled;
     private ASTNodeVisitor ast;
 
-    Kept(CompilationUnit unit, String text, URI uri, SourceLookup lookup, int sources, int phase, boolean cancelled) {
+    Kept(CompilationUnit unit, String text, URI uri, SourceLookup lookup, Inputs inputs, boolean parsed, int sources, int phase, boolean cancelled) {
       this.unit = unit;
       this.text = text;
       this.uri = uri;
       this.lookup = lookup;
+      this.inputs = inputs;
+      this.parsed = parsed;
       this.sources = sources;
       this.phase = phase;
       this.cancelled = cancelled;

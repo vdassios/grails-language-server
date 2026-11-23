@@ -883,6 +883,111 @@ class GroovyAnalyzerTest {
     assertTrue(labels(complete(path, closed, 3, column)).contains("toUpperCase"), "a string the line closes later is not closed again");
   }
 
+  /** A completion's labels, and whether it compiled: the flag is checked before each compile phase. */
+  private static final class Answer {
+    final List<String> labels;
+    final boolean compiled;
+    final CompletionList list;
+
+    Answer(CompletionList list, boolean compiled) {
+      this.list = list;
+      this.labels = labels(list);
+      this.compiled = compiled;
+    }
+  }
+
+  /** Compiles {@code before}, then {@code typed} (as the server does before a query on it), and completes at the end of a line of {@code typed}. */
+  private Answer afterTypedDot(String path, String before, String typed, int line) {
+    compile(path, before);
+    compile(path, typed);
+    AtomicInteger polls = new AtomicInteger();
+    CompletionList list = analyzer.completion(new CompileRequest(path, typed, lookup, () -> polls.incrementAndGet() < 0), line, typed.split("\n", -1)[line].length());
+    return new Answer(list, polls.get() > 0);
+  }
+
+  /** What a compile of a copy answers: with no earlier compile to answer from. */
+  private List<String> fromACopy(String path, String typed, int line) {
+    analyzer.forget(path);
+    Answer answer = afterTypedDot(path, typed, typed, line);
+    assertTrue(answer.compiled);
+    return answer.labels;
+  }
+
+  /**
+   * A dot just typed does not parse: the receiver's members come from the last compile that parsed, without a compile,
+   * the same as a compile of a copy gives; for a member deleted after the dot, and for a dot typed after a receiver.
+   */
+  @Test
+  void completionAfterATypedDotIsAnsweredFromTheLastCompileThatParsed() {
+    String path = tmp.resolve("A.groovy").toString();
+    String template = "class A {\n  String name\n  static int count() { 1 }\n  String[] items\n  String upper() { name }\n  def run() {\n    %s\n  }\n}\n";
+    // receiver, dot, member
+    List<String[]> accesses = List.of(new String[] { "name", ".", "toUpperCase()" }, new String[] { "name", "?.", "size()" }, new String[] { "this", ".", "name" },
+        new String[] { "items[0]", ".", "size()" }, new String[] { "A", ".", "count()" }, new String[] { "upper()", ".", "size()" },
+        new String[] { "name.toUpperCase()", ".", "trim()" }, new String[] { "name.substring(1)", ".", "trim()" }, new String[] { "this.name", ".", "trim()" });
+    for (String[] access : accesses) {
+      String typed = String.format(template, access[0] + access[1]);
+      for (String before : List.of(String.format(template, access[0] + access[1] + access[2]), String.format(template, access[0]))) {
+        Answer answer = afterTypedDot(path, before, typed, 6);
+        assertFalse(answer.compiled, before + " then " + typed);
+        assertFalse(answer.labels.isEmpty(), access[0]);
+        assertEquals(fromACopy(path, typed, 6), answer.labels, access[0]);
+      }
+    }
+    Answer answer = afterTypedDot(path, String.format(template, "name.trim()"), String.format(template, "name."), 6);
+    Completion trim = answer.list.items.stream().filter(c -> c.label.equals("trim")).findFirst().orElseThrow();
+    assertTrue(analyzer.resolveCompletion(path, trim.id).detail.contains("trim()"), "resolved on that compile");
+  }
+
+  /** The receiver's type changed since the compile that parsed: answered from a compile of a copy. */
+  @Test
+  void aTypedDotAfterAChangeToTheReceiversTypeCompilesACopy() throws IOException {
+    String path = tmp.resolve("src/A.groovy").toString();
+    // in the document
+    Answer retyped = afterTypedDot(path, "class A {\n  String name\n  def run() {\n    name.trim()\n  }\n}\n", "class A {\n  Integer name\n  def run() {\n    name.\n  }\n}\n", 3);
+    assertTrue(retyped.compiled);
+    assertTrue(retyped.labels.contains("intValue") && !retyped.labels.contains("trim"), retyped.labels.toString());
+
+    // in the source of its class: open text, the file, and which file declares the class
+    String book = write("src/Book.groovy", "class Book {\n  String title\n}\n");
+    index.put("Book", book);
+    String before = "class A {\n  def run(Book book) {\n    book.title\n  }\n}\n";
+    String typed = "class A {\n  def run(Book book) {\n    book.\n  }\n}\n";
+    assertFalse(afterTypedDot(path, before, typed, 2).compiled, "control");
+    compile(path, before);
+    open.put(book, "class Book {\n  String title\n  String author\n}\n");
+    compile(path, typed);
+    assertTrue(labels(analyzer.completion(new CompileRequest(path, typed, lookup, () -> false), 2, 9)).contains("author"), "open text changed");
+    open.remove(book);
+
+    compile(path, before);
+    Files.writeString(Path.of(book), "class Book {\n  String title\n  String isbn\n}\n");
+    compile(path, typed);
+    assertTrue(labels(analyzer.completion(new CompileRequest(path, typed, lookup, () -> false), 2, 9)).contains("isbn"), "file changed");
+
+    compile(path, before);
+    index.put("Book", write("src/other/Book.groovy", "class Book {\n  String publisher\n}\n"));
+    compile(path, typed);
+    assertTrue(labels(analyzer.completion(new CompileRequest(path, typed, lookup, () -> false), 2, 9)).contains("publisher"), "declared by another file");
+  }
+
+  /** Where the dot makes the text read differently, or more than names changed, the copy is compiled. */
+  @Test
+  void aTypedDotThatChangesMoreThanAMemberCompilesACopy() {
+    String path = tmp.resolve("A.groovy").toString();
+    String template = "class A {\n  String name\n  def run() {\n    %s\n  }\n}\n";
+    // the dot ends a class name of instanceof: no member access in the copy
+    assertTrue(afterTypedDot(path, String.format(template, "name instanceof String"), String.format(template, "name instanceof String."), 3).compiled);
+    // a call deleted after the dot: an argument could declare or retype
+    assertTrue(afterTypedDot(path, String.format(template, "name.trim(); def x = 1"), String.format(template, "name."), 3).compiled);
+    // another line edited too
+    assertTrue(afterTypedDot(path, "class A {\n  String name\n  def run() {\n    name.trim()\n  }\n  def other() {}\n}\n", "class A {\n  String name\n  def run() {\n    name.\n  }\n}\n", 3).compiled);
+    // the receiver's span was a method's name: count(1), then count.
+    Answer call = afterTypedDot(path, "class A {\n  Integer count\n  def run() {\n    count(1)\n  }\n}\n", "class A {\n  Integer count\n  def run() {\n    count.\n  }\n}\n", 3);
+    assertTrue(call.compiled);
+    assertTrue(call.labels.contains("intValue") && !call.labels.contains("toUpperCase"), call.labels.toString());
+  }
+
   /** groovy-language-server #94: members of superclasses and traits were missing. */
   @Test
   void membersComeFromTheWholeTypeHierarchyTraitsIncluded() throws IOException {

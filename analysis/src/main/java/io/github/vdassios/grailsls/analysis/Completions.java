@@ -116,6 +116,13 @@ public final class Completions {
     return completions;
   }
 
+  /** The members of a receiver, as {@link #at} gives them after its dot with nothing typed after it ({@link TypedDot}). */
+  static Completions afterDot(ASTNodeVisitor ast, Function<String, Map<String, Taglibs.Tag>> namespaces, Expression receiver) {
+    Completions completions = new Completions(ast, null, null, namespaces, false);
+    completions.fromReceiver(receiver, receiver, "");
+    return completions;
+  }
+
   /** The static members of a class whose names start with a prefix: {@code import static a.B.m}. */
   static Completions staticMembers(ASTNodeVisitor ast, ClassNode type, String prefix) {
     Completions completions = new Completions(ast, null, null, null, false);
