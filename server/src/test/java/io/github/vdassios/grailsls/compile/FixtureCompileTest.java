@@ -174,6 +174,21 @@ class FixtureCompileTest {
     }
   }
 
+  /** Parsing needs no class path: the symbol index starts one context per Groovy jar, not one per source set. */
+  @Test
+  void theSymbolIndexStartsOneContextPerGroovyJar() throws Exception {
+    ProjectModel model = Fixtures.built("grails4", "GLS_TEST_JDK11");
+    try (Workspace workspace = workspace(model)) {
+      assertTrue(workspace.contexts().size() > 1, "several source sets: " + workspace.contexts().size());
+      workspace.indexSymbols().get(120, TimeUnit.SECONDS);
+      Path saved = file(model, ":app", "src/integration-test/groovy/fixture/library/BookShelving.groovy");
+      workspace.reindexSymbols(saved).get(60, TimeUnit.SECONDS);
+      List<String> started = workspace.contexts().stream().filter(c -> c.loader() != null).map(c -> c.name).collect(Collectors.toList());
+      assertEquals(1, started.size(), "one Groovy jar in the fixture: " + started);
+      assertTrue(workspace.symbols().files() >= workspace.contexts().size(), "every source set's files are indexed: " + workspace.symbols().files());
+    }
+  }
+
   /** Completion at the end of an import line put after the controller's package line. */
   private static List<String> importCompletion(Workspace workspace, Path controller, String line) throws Exception {
     String saved = Files.readString(controller);

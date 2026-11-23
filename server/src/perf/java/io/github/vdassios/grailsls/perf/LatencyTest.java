@@ -499,8 +499,9 @@ class LatencyTest {
   }
 
   /**
-   * Fills the symbol index as the server does (every context at once), then parses each context's files again batch
-   * by batch: a compile submitted while the index fills waits for one batch at most. Then a few searches.
+   * Fills the symbol index as the server does (one parsing context per Groovy jar), counts the contexts that started,
+   * then parses each context's files again batch by batch: a compile submitted while the index fills waits for one
+   * batch at most. Then a few searches.
    */
   private void symbolIndex(Workspace workspace) throws Exception {
     long start = System.nanoTime();
@@ -508,12 +509,13 @@ class LatencyTest {
     record("symbol index, all contexts", start);
     count("symbol index files", workspace.symbols().files());
     count("symbols", workspace.symbols().size());
+    count("contexts started by the symbol index", (int) Thread.getAllStackTraces().keySet().stream().filter(t -> t.getName().startsWith("grails-compile ")).count());
     for (CompileContext context : workspace.contexts()) {
       List<Path> files = workspace.declarations().sources(context.ownRoots);
       for (int from = 0; from < files.size(); from += Workspace.SYMBOL_BATCH) {
         List<String> batch = files.subList(from, Math.min(from + Workspace.SYMBOL_BATCH, files.size())).stream().map(Path::toString).collect(Collectors.toList());
         start = System.nanoTime();
-        context.query(a -> a.declarations(batch)).get(5, TimeUnit.MINUTES);
+        workspace.parserOf(context).query(a -> a.declarations(batch)).get(5, TimeUnit.MINUTES);
         record("symbol batch of " + Workspace.SYMBOL_BATCH, start);
       }
     }

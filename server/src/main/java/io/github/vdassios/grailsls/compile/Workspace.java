@@ -87,6 +87,11 @@ public final class Workspace implements AutoCloseable {
   private final Map<CompileContext, List<Path>> pageJars = new HashMap<>();
   /** Packages and classes of the jars, for import completion. */
   private final ClasspathNames classpathNames = new ClasspathNames();
+  /**
+   * Per context, the one that parses its files for the symbol index: the first context of the same Groovy jar. Parsing
+   * needs no class path, so the index starts one loader per Groovy jar, not one per source set.
+   */
+  private final Map<CompileContext, CompileContext> parsers = new HashMap<>();
   /** One context per Groovy version of the modules, for {@link #jdkClassFileError()}. */
   private final Map<String, CompileContext> probes = new LinkedHashMap<>();
   /** The analysis layer's jar: first on every context's class path, but not the project's. */
@@ -114,6 +119,7 @@ public final class Workspace implements AutoCloseable {
       }
     }
     Map<String, CompileContext> mains = new HashMap<>();
+    Map<Path, CompileContext> firstOfJar = new HashMap<>();
     for (ModuleRecord module : model.modules) {
       if (module.groovyVersion == null) {
         continue;
@@ -123,6 +129,8 @@ public final class Workspace implements AutoCloseable {
           CompileContext context = context(model, module, sourceSet, buildDirs, analysisJar, antlr, classOutputs, reporter);
           contexts.add(context);
           probes.putIfAbsent(module.groovyVersion, context);
+          Path groovyJar = AntlrLoader.groovyJar(context.classpath());
+          parsers.put(context, groovyJar == null ? context : firstOfJar.computeIfAbsent(groovyJar, jar -> context));
           if (sourceSet.name.equals("main")) {
             mains.put(module.path, context);
           }
@@ -246,30 +254,38 @@ public final class Workspace implements AutoCloseable {
   }
 
   /**
-   * Fills the symbol index in the background: each context parses its own files, {@link #SYMBOL_BATCH} at a time on its
-   * compile thread, so a compile waits for one batch at most. Completes when every context is done (or closed).
+   * Fills the symbol index in the background: each Groovy jar's first context ({@link #parsers}) parses the files of
+   * every context of that jar, {@link #SYMBOL_BATCH} at a time on its compile thread, so a compile waits for one batch
+   * at most. Completes when every file is done (or the parsing context closed).
    */
   public CompletableFuture<Void> indexSymbols() {
-    List<CompletableFuture<Void>> all = new ArrayList<>();
+    Map<CompileContext, List<Path>> byParser = new LinkedHashMap<>();
     for (CompileContext context : contexts) {
       List<Path> files = index.sources(context.ownRoots).stream().filter(file -> contextOf(file) == context).collect(Collectors.toList());
-      all.add(indexSymbols(context, files, 0));
+      byParser.computeIfAbsent(parsers.get(context), parser -> new ArrayList<>()).addAll(files);
     }
+    List<CompletableFuture<Void>> all = new ArrayList<>();
+    byParser.forEach((parser, files) -> all.add(indexSymbols(parser, files, 0)));
     return CompletableFuture.allOf(all.toArray(new CompletableFuture<?>[0]));
   }
 
-  private CompletableFuture<Void> indexSymbols(CompileContext context, List<Path> files, int from) {
+  private CompletableFuture<Void> indexSymbols(CompileContext parser, List<Path> files, int from) {
     if (from >= files.size()) {
       return CompletableFuture.completedFuture(null);
     }
     List<String> batch = files.subList(from, Math.min(from + SYMBOL_BATCH, files.size())).stream().map(Path::toString).collect(Collectors.toList());
-    return context.query(analyzer -> analyzer.declarations(batch)).thenCompose(found -> {
+    return parser.query(analyzer -> analyzer.declarations(batch)).thenCompose(found -> {
       found.forEach((file, declared) -> {
         symbols.put(Path.of(file), declared);
         correct(Path.of(file), declared);
       });
-      return indexSymbols(context, files, from + SYMBOL_BATCH);
+      return indexSymbols(parser, files, from + SYMBOL_BATCH);
     }).exceptionally(error -> null); // closed: a newer workspace indexes again
+  }
+
+  /** The context that parses {@code context}'s files for the symbol index ({@link #indexSymbols}). */
+  public CompileContext parserOf(CompileContext context) {
+    return parsers.get(context);
   }
 
   /** Re-reads the symbols of a file that was saved, created or deleted, in the background; completes when they are in. */
@@ -282,7 +298,7 @@ public final class Workspace implements AutoCloseable {
       symbols.remove(file);
       return CompletableFuture.completedFuture(null);
     }
-    return context.query(analyzer -> analyzer.declarations(List.of(file.toString()))).thenAccept(found -> {
+    return parsers.get(context).query(analyzer -> analyzer.declarations(List.of(file.toString()))).thenAccept(found -> {
       List<Symbol> declared = found.get(file.toString());
       if (Files.isRegularFile(file) && declared != null) {
         symbols.put(file, declared);
@@ -560,7 +576,7 @@ public final class Workspace implements AutoCloseable {
   /**
    * Why the project's Groovy cannot compile on the JDK the server runs on, or null when it can: each Groovy version of
    * the modules reads one of the JDK's class files in a context of its own (see {@link Analyzer#jdkClassFileError}).
-   * The contexts started here are the ones the first compiles and the symbol index use.
+   * The contexts started here are the first of their Groovy jar, which also parse for the symbol index.
    */
   public String jdkClassFileError() {
     for (CompileContext context : probes.values()) {
