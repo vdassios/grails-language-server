@@ -71,6 +71,7 @@ Every feature of the [Grails VS Code extension](https://github.com/Johan070119/G
 | a key of `static allowedMethods` | this server only |
 | `controller:`, `resources:` and `resource:` in `UrlMappings`, actions by HTTP method (`action: [GET: 'show']`) | this server only |
 
+Outside the list the two still differ: the Lua server ignores the `controller` of `<g:include controller="author" view="show">` (it resolves `show` against the page's controller, this server against `author`'s views), and it reads `template` and `view` on any `g:` tag (this server on `g:render` and `g:include` only).
 
 ## Other features (Grails VS Code extension)
 

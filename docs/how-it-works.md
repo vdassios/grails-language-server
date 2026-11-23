@@ -33,4 +33,5 @@ The server exits when its client goes away, even if the client never sends `exit
 ## Known limits
 
 - **JDK 17 with Groovy 4:** after the project model changes, a closed module loader can stay in memory when the server runs on JDK 17: JDK 17 keeps method-handle type caches that refer to the loader's classes (seen on a Groovy 4 project). JDK 19 and later do not. A Grails 7 project on a recent Groovy 4 can run the server on JDK 21 (see the table under [Install](editors.md#install)).
+- **Characters outside the Basic Multilingual Plane** (emoji and other astral characters): the parser reads each as two characters (`__` in a name, two replacement characters elsewhere), so that positions count UTF-16 units, as LSP does, on every Groovy. String values and names in the compiled code hold those stand-ins: hover falls back to the source text, but a class whose name holds an astral letter does not match its class file.
 - **Heap:** the JVM's defaults apply (a quarter of the RAM at most). Give `-Xmx` before `-jar` to cap it; a large multi-module project can use 2 GB or more after compiling many files.
