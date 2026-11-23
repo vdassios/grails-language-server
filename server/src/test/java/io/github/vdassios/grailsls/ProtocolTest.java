@@ -606,6 +606,21 @@ class ProtocolTest {
     assertTrue(logs.stream().filter(l -> l.startsWith("startup: ")).allMatch(l -> l.matches("startup: [a-z ]+ after \\d+ ms")), logs.toString());
   }
 
+  /** Closing a document clears its diagnostics, which is no compile: an untrusted workspace logs no first diagnostics. */
+  @Test
+  void closingADocumentIsNoFirstDiagnostics() throws Exception {
+    Path root = FakeWrapper.write(tmp.resolve("project"), FakeWrapper.WRITES_MODEL).getParent();
+    start(root, new JsonObject());
+    assertEquals(StatusParams.FAILED, next().state);
+    String uri = root.resolve("A.groovy").toUri().toString();
+    server.getTextDocumentService().didOpen(new DidOpenTextDocumentParams(new TextDocumentItem(uri, "groovy", 1, "class A {}\n")));
+    server.getTextDocumentService().didClose(new DidCloseTextDocumentParams(new TextDocumentIdentifier(uri)));
+    PublishDiagnosticsParams cleared = diagnostics.poll(10, TimeUnit.SECONDS);
+    assertTrue(cleared != null && cleared.getDiagnostics().isEmpty(), String.valueOf(cleared));
+    Thread.sleep(500); // a mark would be logged right after
+    assertEquals(List.of(), startupMarks());
+  }
+
   /**
    * A document open when the project resolves (an editor starts the server for the file it opens) compiles before the
    * symbol index starts, so the index's batches do not hold up its first diagnostics.

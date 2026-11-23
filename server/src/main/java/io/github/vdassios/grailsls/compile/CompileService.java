@@ -41,6 +41,7 @@ public final class CompileService {
 
   private final Documents documents = new Documents();
   private final Consumer<PublishDiagnosticsParams> publish;
+  private final Runnable published;
   private final long debounceMillis;
   private final ScheduledExecutorService timer = Executors.newSingleThreadScheduledExecutor(r -> {
     Thread thread = new Thread(r, "grails-compile-timer");
@@ -62,7 +63,15 @@ public final class CompileService {
   private boolean stopped;
 
   public CompileService(Consumer<PublishDiagnosticsParams> publish, long debounceMillis) {
+    this(publish, () -> {}, debounceMillis);
+  }
+
+  /**
+   * @param published runs after each publish of a compile's diagnostics (not after the clear of a closed document)
+   */
+  public CompileService(Consumer<PublishDiagnosticsParams> publish, Runnable published, long debounceMillis) {
     this.publish = publish;
+    this.published = published;
     this.debounceMillis = debounceMillis;
   }
 
@@ -337,10 +346,12 @@ public final class CompileService {
     }
     synchronized (publishing) { // a close in between would clear them before they are sent
       Document now = documents.get(path);
-      if (!result.cancelled && !task.cancelled.get() && now != null && now.version == document.version) {
-        publish.accept(diagnostics(document, result));
+      if (result.cancelled || task.cancelled.get() || now == null || now.version != document.version) {
+        return;
       }
+      publish.accept(diagnostics(document, result));
     }
+    published.run();
   }
 
   /** The compile is over (done, cancelled or skipped): queries waiting for it go on. */

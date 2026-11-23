@@ -165,10 +165,7 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
     Path cacheDir = options.has("cacheDir") ? Path.of(options.get("cacheDir").getAsString()) : GradleBridge.defaultCacheDir();
     GradleBridge bridge = new GradleBridge(cacheDir, GradleBridge.defaultJavaHome(), Duration.ofSeconds(timeout));
     StartupMarks marks = new StartupMarks(message -> client.logMessage(new MessageParams(MessageType.Log, message)));
-    compiles = new CompileService(diagnostics -> {
-      client.publishDiagnostics(diagnostics);
-      marks.mark(StartupMarks.FIRST_DIAGNOSTICS);
-    }, CompileService.DEBOUNCE_MILLIS);
+    compiles = new CompileService(client::publishDiagnostics, () -> marks.mark(StartupMarks.FIRST_DIAGNOSTICS), CompileService.DEBOUNCE_MILLIS);
     project = new ProjectService(bridge, workspaceRoot(params), trusted, status -> client.status(status), model -> {
       marks.mark(StartupMarks.MODEL_RESOLVED);
       Workspace workspace = new Workspace(model, AnalysisJar.extract(cacheDir), this::report);
