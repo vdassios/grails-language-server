@@ -395,6 +395,11 @@ abstract class GormTest {
       assertEquals(fill("public static ") + app.domain + fill(" findByFirstIlike(String first)"), hover.split("\n")[1]);
       assertEquals(List.of(), messages(compile(workspace, domain, text.replace(fill("findByFirstIlike"), "findByNothing")), Diagnostic.ERROR));
       assertEquals(1, messages(compile(workspace, domain, text.replace(fill("findByFirstIlike"), "findByNothing")), Diagnostic.WARNING).size());
+      // completion offers the finders without a receiver too, as a name and as a call
+      List<String> bare = labels(workspace, domain, text.replace(fill("findByFirstIlike(wanted)"), "findBy"), "        findBy");
+      assertTrue(bare.contains(fill("findByFirst")), bare.toString());
+      List<String> call = labels(workspace, domain, text.replace(fill("findByFirstIlike(wanted)"), "findBy(wanted)"), "        findBy");
+      assertTrue(call.contains(fill("findByFirst")), call.toString());
     }
   }
 

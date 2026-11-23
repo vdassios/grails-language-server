@@ -367,7 +367,8 @@ public final class Completions {
     }
     ClassNode type = GroovyASTUtils.getTypeOfReceiver(receiver, expression, ast);
     if (type != null) {
-      if (receiver instanceof ClassExpression && Gorm.isDomain(type)) {
+      boolean implicitThis = expression instanceof MethodCallExpression && ((MethodCallExpression) expression).isImplicitThis();
+      if ((receiver instanceof ClassExpression || implicitThis) && Gorm.isDomain(type)) {
         finders(type, prefix);
       }
       members(type, receiver instanceof ClassExpression, prefix, new HashSet<>());
@@ -404,6 +405,10 @@ public final class Completions {
     Set<String> names = new HashSet<>();
     for (ASTNode current = node; current != null; current = ast.getParent(current)) {
       if (current instanceof ClassNode) {
+        // a domain class's own code calls its finders without a receiver
+        if (Gorm.isDomain((ClassNode) current)) {
+          finders((ClassNode) current, prefix);
+        }
         members((ClassNode) current, null, prefix, names);
       } else if (current instanceof MethodNode) {
         variables(((MethodNode) current).getVariableScope(), prefix, names);
