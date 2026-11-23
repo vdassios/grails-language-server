@@ -566,7 +566,7 @@ public final class GroovyAnalyzer implements Analyzer {
     CompilerConfiguration config = new CompilerConfiguration();
     config.setSourceEncoding("UTF-8");
     GroovyClassLoader loader = new GroovyClassLoader(GroovyAnalyzer.class.getClassLoader(), config, false);
-    SourceUnit source = text == null ? new SourceUnit(new File(path), config, loader, new ErrorCollector(config)) : new SourceUnit(path, text, config, loader, new ErrorCollector(config));
+    SourceUnit source = source(path, text, config, loader, new ErrorCollector(config));
     try {
       source.parse();
       source.completePhase();
@@ -604,10 +604,17 @@ public final class GroovyAnalyzer implements Analyzer {
   }
 
   /**
-   * A source of in-memory text, named by its file path (Grails decides artefacts by it) and identified by the file's
-   * URI, as a source read from disk is.
+   * A source of {@code text}, or of the file's text on disk when that is null, named by its file path (Grails decides
+   * artefacts by it) and identified by the file's URI. A file that cannot be read as UTF-8 is left to Groovy to read.
    */
   static SourceUnit source(String path, String text, CompilerConfiguration config, GroovyClassLoader loader, ErrorCollector errors) {
+    if (text == null) {
+      try {
+        text = Files.readString(Path.of(path));
+      } catch (IOException | RuntimeException e) {
+        return new SourceUnit(new File(path), config, loader, errors);
+      }
+    }
     return new SourceUnit(path, new StringReaderSourceWithURI(text, new File(path).toURI(), config), config, loader, errors);
   }
 

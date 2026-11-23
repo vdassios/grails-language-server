@@ -19,8 +19,6 @@
 ////////////////////////////////////////////////////////////////////////////////
 package io.github.vdassios.grailsls.analysis;
 
-import java.io.IOException;
-import java.io.Reader;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -50,7 +48,6 @@ import org.codehaus.groovy.ast.expr.PropertyExpression;
 import org.codehaus.groovy.ast.expr.VariableExpression;
 import org.codehaus.groovy.ast.stmt.BlockStatement;
 import org.codehaus.groovy.ast.stmt.Statement;
-import org.codehaus.groovy.control.SourceUnit;
 
 import io.github.vdassios.grailsls.api.Completion;
 import io.github.vdassios.grailsls.api.CompletionDetail;
@@ -616,26 +613,8 @@ public final class Completions {
         last = range == null ? last : Math.max(last, range.endLine);
       }
     }
-    int line = last >= 0 ? last + 1 : headerEnd(text(module));
+    int line = last >= 0 ? last + 1 : headerEnd(StringReaderSourceWithURI.text(module == null ? null : module.getContext()));
     return new Range(line, 0, line, 0);
-  }
-
-  /** The text the module was compiled from, or null when it cannot be read. */
-  private static String text(ModuleNode module) {
-    SourceUnit unit = module == null ? null : module.getContext();
-    if (unit == null || unit.getSource() == null) {
-      return null;
-    }
-    try (Reader reader = unit.getSource().getReader()) {
-      StringBuilder text = new StringBuilder();
-      char[] buffer = new char[8192];
-      for (int read; (read = reader.read(buffer)) >= 0;) {
-        text.append(buffer, 0, read);
-      }
-      return text.toString();
-    } catch (IOException e) {
-      return null;
-    }
   }
 
   /**

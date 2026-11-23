@@ -630,6 +630,35 @@ class GroovyAnalyzerTest {
   }
 
   /** {@code new P()}: the constructor when the class declares it, else the class (no source for a default one). */
+  /**
+   * Groovy 3 and later count columns in code points; LSP positions count UTF-16 units, two for an emoji. The document,
+   * a file read from disk and a comment's text all keep their emoji.
+   */
+  @Test
+  void columnsAfterAnEmojiCountUtf16Units() throws IOException {
+    String other = write("src/Other.groovy", "class Other {\n  def s = '\uD83D\uDE00'; def target = 1\n}\n");
+    index.put("Other", other);
+    String path = tmp.resolve("src/A.groovy").toString();
+    CompileResult result = compile(path, "class A {\n  /** Counts \uD83D\uDE00 things. */\n  def run(Other other) {\n"
+        + "    def count = 1; ['\uD83D\uDE00', count, new Missing(), other.target]\n  }\n}\n");
+    assertEquals(List.of(path + ":4:34: unable to resolve class Missing"), errors(result));
+    assertEquals("4:9-4:14", definitionRange(path, 3, 26)); // on count, after the emoji
+    assertEquals("4:9-4:14", definitionRange(path, 3, 30));
+    Location target = analyzer.definition(path, 3, 56);
+    assertNotNull(target);
+    assertEquals(other + ":2:17", target.path + ":" + target.range.toString().split("-")[0]);
+    assertTrue(analyzer.hover(path, 2, 7).endsWith("---\n\nCounts \uD83D\uDE00 things."), analyzer.hover(path, 2, 7));
+  }
+
+  /** A letter outside the BMP in a name (mathematical italic x): the name still parses, and columns after it are right. */
+  @Test
+  void aNameWithALetterOutsideTheBmpResolves() {
+    String path = tmp.resolve("A.groovy").toString();
+    CompileResult result = compile(path, "class A {\n  def run() {\n    def \uD835\uDC65 = 1; [\uD835\uDC65, new Missing()]\n  }\n}\n");
+    assertEquals(List.of(path + ":3:22: unable to resolve class Missing"), errors(result));
+    assertEquals("3:9-3:11", definitionRange(path, 2, 17)); // on the name's use
+  }
+
   @Test
   void definitionOfAConstructorCallWithoutADeclaredConstructorIsTheClass() {
     String path = tmp.resolve("A.groovy").toString();

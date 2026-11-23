@@ -1,7 +1,6 @@
 package io.github.vdassios.grailsls.analysis;
 
 import java.io.IOException;
-import java.io.Reader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
@@ -58,7 +57,7 @@ final class ClassFileSource {
       // a class of the compile: the text it was compiled from (the open document's is not the file's)
       SourceUnit unit = owner.getModule().getContext();
       path = unit == null ? null : Navigation.path(unit.getSource().getURI());
-      text = path == null ? null : text(unit);
+      text = path == null ? null : StringReaderSourceWithURI.text(unit);
     } else {
       int nested = name.indexOf('$', name.lastIndexOf('.') + 1);
       path = lookup == null ? null : lookup.classSource(nested < 0 ? name : name.substring(0, nested));
@@ -154,19 +153,6 @@ final class ClassFileSource {
       return null;
     }
     return Character.toLowerCase(name.charAt(prefix)) + name.substring(prefix + 1);
-  }
-
-  private static String text(SourceUnit unit) {
-    try (Reader reader = unit.getSource().getReader()) {
-      StringBuilder text = new StringBuilder();
-      char[] buffer = new char[8192];
-      for (int read = reader.read(buffer); read >= 0; read = reader.read(buffer)) {
-        text.append(buffer, 0, read);
-      }
-      return text.toString();
-    } catch (IOException | RuntimeException e) {
-      return null;
-    }
   }
 
   private static String simpleName(ClassNode type) {

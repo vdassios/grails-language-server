@@ -1,6 +1,5 @@
 package io.github.vdassios.grailsls.analysis;
 
-import java.io.File;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
@@ -63,10 +62,7 @@ final class PathResolver extends ClassNodeResolver {
     SourceUnit source = sources.get(path);
     if (source == null) {
       String text = lookup.openText(path);
-      source = text != null
-          ? GroovyAnalyzer.source(path, text, unit.getConfiguration(), unit.getClassLoader(), unit.getErrorCollector())
-          : new SourceUnit(new File(path), unit.getConfiguration(), unit.getClassLoader(), unit.getErrorCollector());
-      source = unit.addSource(source);
+      source = unit.addSource(GroovyAnalyzer.source(path, text, unit.getConfiguration(), unit.getClassLoader(), unit.getErrorCollector()));
       sources.put(path, source);
     }
     return source;

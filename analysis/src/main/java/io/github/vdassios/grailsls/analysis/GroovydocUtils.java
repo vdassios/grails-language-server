@@ -27,11 +27,13 @@ public class GroovydocUtils {
 	/**
 	 * The Groovydoc on a node as markdown ({@link Javadoc#markdown}), or null. Groovydoc is attached to AST nodes from
 	 * Groovy 3 on ({@code AnnotatedNode.getGroovydoc()}). This layer is compiled against Groovy 2.5 and runs on the
-	 * project's Groovy, so it is read reflectively: on Groovy 2.5 the result is always null.
+	 * project's Groovy, so it is read reflectively: on Groovy 2.5 the result is always null. So is it when the parser
+	 * read an emoji in the comment as {@link StringReaderSourceWithURI#REPLACEMENT}: the comment is then read from the
+	 * source text instead.
 	 */
 	public static String markdown(AnnotatedNode node) {
 		String content = groovydocContent(node);
-		return content == null ? null : Javadoc.markdown(content);
+		return content == null || content.contains(StringReaderSourceWithURI.REPLACEMENT) ? null : Javadoc.markdown(content);
 	}
 
 	private static String groovydocContent(AnnotatedNode node) {
