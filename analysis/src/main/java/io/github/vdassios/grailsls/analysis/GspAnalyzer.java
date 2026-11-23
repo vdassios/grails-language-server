@@ -1,9 +1,5 @@
 package io.github.vdassios.grailsls.analysis;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -58,9 +54,12 @@ final class GspAnalyzer {
   private volatile Boolean escapes;
   /** The translation of each GSP page whose generated Groovy the analyzer keeps. */
   private final Map<String, GspTranslation> translations = new ConcurrentHashMap<>();
+  /** Texts of the files pages read (controllers, templates), shared with the taglibs. */
+  private final FileTexts texts;
 
-  GspAnalyzer(GroovyAnalyzer groovy, Taglibs taglibs) {
+  GspAnalyzer(GroovyAnalyzer groovy, Taglibs taglibs, FileTexts texts) {
     this.groovy = groovy;
+    this.texts = texts;
     this.views = new GspViews(taglibs, (lookup, path) -> new GspConventions(groovy.conventions(lookup, path)));
   }
 
@@ -158,7 +157,7 @@ final class GspAnalyzer {
   /** {@link GspConventions} whose parses are kept while a file's text stays the same (open text, else the file). */
   private GspConventions modelConventions(SourceLookup lookup, String documentPath) {
     return new GspConventions(new Conventions(lookup, documentPath, file -> {
-      String text = textOf(file, lookup);
+      String text = texts.of(file, lookup);
       if (text == null) {
         return List.of();
       }
@@ -168,44 +167,7 @@ final class GspAnalyzer {
         controllerParses.put(file, parsed);
       }
       return parsed.classes;
-    }), file -> textOf(file, lookup), snippet -> groovy.parserCache.parsing(() -> GroovyAnalyzer.parsedClasses("model.groovy", snippet)), escapes());
-  }
-
-  /** Texts of files read from disk, with the modification time and size they were read at: each page compile reads every controller. */
-  private final Map<String, FileText> fileTexts = new ConcurrentHashMap<>();
-
-  private static final class FileText {
-    final long modified;
-    final long size;
-    final String text;
-
-    FileText(long modified, long size, String text) {
-      this.modified = modified;
-      this.size = size;
-      this.text = text;
-    }
-  }
-
-  /** A file's open text, else its text on disk (read again only when its modification time or size changed); null when unreadable. */
-  private String textOf(String file, SourceLookup lookup) {
-    String open = lookup == null ? null : lookup.openText(file);
-    if (open != null) {
-      return open;
-    }
-    try {
-      BasicFileAttributes attributes = Files.readAttributes(Path.of(file), BasicFileAttributes.class);
-      long modified = attributes.lastModifiedTime().toMillis();
-      FileText known = fileTexts.get(file);
-      if (known != null && known.modified == modified && known.size == attributes.size()) {
-        return known.text;
-      }
-      String text = Files.readString(Path.of(file));
-      fileTexts.put(file, new FileText(modified, attributes.size(), text));
-      return text;
-    } catch (IOException | RuntimeException e) {
-      fileTexts.remove(file);
-      return null;
-    }
+    }), file -> texts.of(file, lookup), snippet -> groovy.parserCache.parsing(() -> GroovyAnalyzer.parsedClasses("model.groovy", snippet)), escapes());
   }
 
   /**
@@ -239,7 +201,7 @@ final class GspAnalyzer {
    * none is known or the compile is cancelled.
    */
   private String compiledType(GspConventions.ModelEntry model, SourceLookup lookup, BooleanSupplier cancelled) {
-    String text = model.render != null ? model.render.pageText : textOf(model.path, lookup);
+    String text = model.render != null ? model.render.pageText : texts.of(model.path, lookup);
     CompiledModels known = text == null ? null : compiledModels.get(model.path);
     if (text != null && model.render == null && (known == null || !known.text.equals(text))) {
       Map<String, String> types = controllerModelTypes(model, text, lookup, cancelled);
@@ -503,19 +465,19 @@ final class GspAnalyzer {
     views.forget(documentPath);
     translations.remove(documentPath);
     controllerParses.remove(documentPath);
-    fileTexts.remove(documentPath);
+    texts.forget(documentPath);
     compiledModels.remove(documentPath);
   }
 
   /** Whether a file's text, parse or model types are kept. For tests. */
   boolean keeps(String path) {
-    return controllerParses.containsKey(path) || fileTexts.containsKey(path) || compiledModels.containsKey(path);
+    return controllerParses.containsKey(path) || texts.keeps(path) || compiledModels.containsKey(path);
   }
 
   /** Drops everything kept. */
   void clear() {
     controllerParses.clear();
-    fileTexts.clear();
+    texts.clear();
     compiledModels.clear();
     translations.clear();
     views.clear();

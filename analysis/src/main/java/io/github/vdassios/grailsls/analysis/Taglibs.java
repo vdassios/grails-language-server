@@ -212,6 +212,8 @@ final class Taglibs {
   }
 
   private final BiFunction<String, String, List<ClassNode>> parse;
+  /** Texts of the project's taglib files and of the sources they inherit from. */
+  private final FileTexts texts;
   private final Reports reports;
   /** The module's loader: superclasses and traits in its jars are read from there. */
   private final ClassLoader loader;
@@ -247,11 +249,12 @@ final class Taglibs {
   }
 
   /**
-   * {@code parse} parses a project file (parse only); {@code loader} is the module's, whose Grails decides whether
-   * methods are tags; class files that cannot be read go to {@code reports}.
+   * {@code parse} parses a project file (parse only), whose text comes from {@code texts}; {@code loader} is the
+   * module's, whose Grails decides whether methods are tags; class files that cannot be read go to {@code reports}.
    */
-  Taglibs(BiFunction<String, String, List<ClassNode>> parse, Reports reports, ClassLoader loader) {
+  Taglibs(BiFunction<String, String, List<ClassNode>> parse, FileTexts texts, Reports reports, ClassLoader loader) {
     this.parse = parse;
+    this.texts = texts;
     this.reports = reports;
     this.loader = loader;
     this.methodTags = loader.getResource(TAG_DISCOVERY_RULES) != null;
@@ -705,13 +708,9 @@ final class Taglibs {
   }
 
   private List<Members> sourceClasses(String path, SourceLookup lookup) {
-    String text = lookup.openText(path);
+    String text = texts.of(path, lookup);
     if (text == null) {
-      try {
-        text = Files.readString(Path.of(path));
-      } catch (IOException e) {
-        return List.of();
-      }
+      return List.of();
     }
     FileClasses kept = sourceFiles.get(path);
     if (kept != null && kept.text.equals(text)) {

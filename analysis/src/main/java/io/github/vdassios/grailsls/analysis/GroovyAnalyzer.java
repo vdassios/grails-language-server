@@ -109,8 +109,9 @@ public final class GroovyAnalyzer implements Analyzer {
     this.reports = new Reports(reporter);
     this.caches = new TransformCaches(GroovyAnalyzer.class.getClassLoader(), reports);
     this.lateTransforms = new LateTransforms(parent);
-    this.taglibs = new Taglibs((path, text) -> parserCache.parsing(() -> parsedClasses(path, text)), reports, parent);
-    this.pages = new GspAnalyzer(this, taglibs);
+    FileTexts texts = new FileTexts();
+    this.taglibs = new Taglibs((path, text) -> parserCache.parsing(() -> parsedClasses(path, text)), texts, reports, parent);
+    this.pages = new GspAnalyzer(this, taglibs, texts);
     try {
       this.output = Files.createTempDirectory("grails-ls-output");
     } catch (IOException e) {

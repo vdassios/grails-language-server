@@ -10,6 +10,7 @@ import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Enumeration;
@@ -110,7 +111,7 @@ class TaglibsTest {
   }
 
   private Taglibs taglibs(ClassLoader loader) {
-    return new Taglibs(GroovyAnalyzer::parsedClasses, reports, loader);
+    return new Taglibs(GroovyAnalyzer::parsedClasses, new FileTexts(), reports, loader);
   }
 
   /** Compiles Groovy sources (file name to text) into a directory, against classes in {@code classpath}. */
@@ -314,6 +315,24 @@ class TaglibsTest {
     assertEquals("from", inherited.docs().attributes.get(0).name);
     assertEquals("demo.helpers.Helpers", grails8.tags.get("kid").get("traitMethod").owner);
     assertEquals(List.of(), shown);
+  }
+
+  /**
+   * Each GSP request reads the tags: a project taglib file is read again only when its modification time or size
+   * changed (the edit below changes neither until the file is touched).
+   */
+  @Test
+  void aTaglibFileIsReadAgainOnlyWhenItsTimeOrSizeChanged() throws Exception {
+    SourceLookup lookup = project("demo/OneTagLib.groovy", "package demo\nclass OneTagLib {\n  static namespace = 'x'\n  def one = { attrs -> }\n}\n");
+    Taglibs taglibs = taglibs(grails7());
+    assertEquals(Map.of("x", Set.of("one")), names(taglibs.all(lookup), false));
+    Path file = tmp.resolve("app/grails-app/taglib/demo/OneTagLib.groovy");
+    FileTime modified = Files.getLastModifiedTime(file);
+    Files.writeString(file, "package demo\nclass OneTagLib {\n  static namespace = 'x'\n  def two = { attrs -> }\n}\n");
+    Files.setLastModifiedTime(file, modified);
+    assertEquals(Map.of("x", Set.of("one")), names(taglibs.all(lookup), false), "not read again");
+    Files.setLastModifiedTime(file, FileTime.fromMillis(modified.toMillis() + 2000));
+    assertEquals(Map.of("x", Set.of("two")), names(taglibs.all(lookup), false));
   }
 
   /** A superclass no source and no class file declares: its tags are unknown, so the namespace is not complete. */
