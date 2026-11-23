@@ -298,6 +298,17 @@ abstract class ConventionsTest {
     }
   }
 
+  /** An action can be a property assigned a closure, as in Grails 2 controllers: {@code def legacy = { }}. */
+  @Test
+  void closureActionsAreActions() throws Exception {
+    try (Workspace workspace = workspace()) {
+      String text = controllerWith("def legacy = { }", "def go() { redirect(action: 'legacy') }");
+      String own = "controllers/" + app().packageName.replace('.', '/') + "/" + cap() + "Controller.groovy:";
+      assertEquals(own + "4", definition(workspace, controller(), text, "'legacy'"));
+      assertEquals(List.of("legacy"), labels(workspace, controller(), text.replace("action: 'legacy'", "action: 'leg'"), "action: 'leg"));
+    }
+  }
+
   /**
    * No hint where the file may come from somewhere the server does not model: a relative name in a namespaced or
    * abstract controller (whose views depend on the namespace or the subclass), a {@code plugin} or {@code contextPath}

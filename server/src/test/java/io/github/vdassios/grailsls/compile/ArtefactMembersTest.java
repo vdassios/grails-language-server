@@ -235,6 +235,28 @@ abstract class ArtefactMembersTest {
     }
   }
 
+  /** Two services with one simple name: the bean name names neither for sure, so the property stays untyped. */
+  @Test
+  void twoServicesWithOneNameTypeNoProperty() throws Exception {
+    String simpleName = app().serviceClass.substring(app().serviceClass.lastIndexOf('.') + 1);
+    try (Workspace workspace = workspace()) {
+      List<String> typed = completionInProbe(workspace, app().taglib, app().bean + ".");
+      assertTrue(typed.contains(app().serviceMethod), "one service: " + typed);
+      Path second = file("grails-app/services/duplicate/" + simpleName + ".groovy");
+      try {
+        Files.createDirectories(second.getParent());
+        Files.writeString(second, "package duplicate\n\nclass " + simpleName + " {\n}\n");
+        workspace.refresh(second);
+        List<String> untyped = completionInProbe(workspace, app().taglib, app().bean + ".");
+        assertTrue(!untyped.contains(app().serviceMethod), "two services: " + untyped);
+      } finally {
+        // the fixture's copy is shared by the other tests
+        Files.deleteIfExists(second);
+        Files.deleteIfExists(second.getParent());
+      }
+    }
+  }
+
   @Test
   void hoverShowsMembersAddedByGrails() throws Exception {
     try (Workspace workspace = workspace()) {

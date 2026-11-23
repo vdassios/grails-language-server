@@ -269,6 +269,29 @@ abstract class GormTest {
     }
   }
 
+  /** {@code findOrCreateBy} and {@code findOrSaveBy} take equality conditions joined by And, {@code listOrderBy} one property. */
+  @Test
+  void findOrCreateAndListOrderByWarnAboutWhatGormRejects() throws Exception {
+    try (Workspace workspace = workspace()) {
+      String text = serviceWith("D.findOrCreateByFirst(wanted)", "D.findOrCreateByFirstLike(wanted)", "D.findOrSaveByFirstOrSecond(wanted, wanted)",
+          "D.listOrderByFirst()", "D.listOrderByFirstLike()");
+      CompileResult result = compile(workspace, service(), text);
+      assertEquals(List.of(), messages(result, Diagnostic.ERROR));
+      String name = app().domain;
+      String first = cap(app().first);
+      String second = cap(app().second);
+      int column = 9 + name.length() + 1;
+      String createLike = "findOrCreateBy" + first + "Like";
+      String saveOr = "findOrSaveBy" + first + "Or" + second;
+      String orderLike = "listOrderBy" + first + "Like";
+      assertEquals(List.of(
+          "6:" + (column + 14) + "-" + (column + createLike.length()) + " findOrCreateBy takes only equality conditions joined by And (" + name + "." + createLike + ")",
+          "7:" + (column + 12) + "-" + (column + saveOr.length()) + " findOrSaveBy takes only equality conditions joined by And (" + name + "." + saveOr + ")",
+          "9:" + (column + 11) + "-" + (column + orderLike.length()) + " listOrderBy takes one property and no comparator (" + name + "." + orderLike + ")"),
+          messages(result, Diagnostic.WARNING));
+    }
+  }
+
   /**
    * GORM rejects a finder call only with too few arguments: what follows them is query settings or ignored, and a
    * closure in a variable is the further criteria. A name GORM cannot read hides no other warning of the file.

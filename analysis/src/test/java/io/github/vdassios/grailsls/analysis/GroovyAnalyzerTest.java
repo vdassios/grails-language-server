@@ -562,6 +562,26 @@ class GroovyAnalyzerTest {
     assertFalse(analyzer.pagesKeep(controller));
   }
 
+  /** Controllers of every module with a {@code grails-app} (a plugin's and the app's) are named, defined and completed. */
+  @Test
+  void controllersOfEveryModuleAreNamed() throws IOException {
+    String admin = write("plugin/grails-app/controllers/admin/AdminController.groovy", "package admin\n\nclass AdminController {\n  def list() {}\n}\n");
+    write("app/grails-app/controllers/demo/ShopController.groovy", "package demo\n\nclass ShopController {\n  def index() {}\n}\n");
+    index.put("admin.AdminController", admin);
+    grailsApps.add(tmp.resolve("app/grails-app").toString());
+    grailsApps.add(tmp.resolve("plugin/grails-app").toString());
+    // not saved yet: completion offers the controllers on disk
+    String path = tmp.resolve("app/grails-app/controllers/demo/HomeController.groovy").toString();
+    String text = "package demo\n\nclass HomeController {\n  def index() { redirect(controller: 'admin', action: 'list') }\n}\n";
+    compile(path, text);
+    Location controller = analyzer.definition(path, 3, 38); // on 'admin'
+    assertEquals(admin + ":2", controller == null ? null : controller.path + ":" + controller.range.startLine);
+    Location action = analyzer.definition(path, 3, 56); // on 'list'
+    assertEquals(admin + ":3", action == null ? null : action.path + ":" + action.range.startLine);
+    String typing = text.replace("controller: 'admin'", "controller: ''");
+    assertEquals(List.of("admin", "shop"), labels(complete(path, typing, 3, 38)).stream().sorted().collect(Collectors.toList()));
+  }
+
   @Test
   void definitionOfAClassPulledInFromSourceIsItsFile() throws IOException {
     String book = write("src/lib/Book.groovy", "package lib\n\nclass Book {\n  String title\n}\n");
