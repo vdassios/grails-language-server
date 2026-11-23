@@ -1,6 +1,7 @@
 package io.github.vdassios.grailsls.compile;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -11,9 +12,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
 
@@ -282,6 +286,38 @@ class CompileServiceTest {
     assertEquals(1, first.getDiagnostics().size(), messages(first).toString());
     assertTrue(messages(first).get(0).contains("Fresh"), messages(first).toString());
     assertNull(published.poll(1, TimeUnit.SECONDS), "nothing from the compile of version 1");
+  }
+
+  /**
+   * {@code $/cancelRequest} cancels the future a request returned: a query waiting for the module's thread never runs,
+   * and a running one sees its request's cancel flag set, which stops a compile of a copy (completion, signature help).
+   */
+  @Test
+  void aCancelledQueryIsSkippedOrStopsItsCompile() throws Exception {
+    service.open(uri("A.groovy"), "class A {}\n", 1);
+    assertEquals(List.of(), messages(next()));
+    CountDownLatch inside = new CountDownLatch(1);
+    AtomicBoolean sawCancel = new AtomicBoolean();
+    CompletableFuture<Boolean> running = CompileService.mapped(service.queryText(uri("A.groovy"), false, (analyzer, request) -> {
+      inside.countDown();
+      long end = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+      while (!request.cancelled.getAsBoolean() && System.nanoTime() < end) {
+        Thread.onSpinWait();
+      }
+      sawCancel.set(request.cancelled.getAsBoolean());
+      return true;
+    }), answer -> answer); // as the language server maps an answer to its LSP type
+    assertTrue(inside.await(10, TimeUnit.SECONDS));
+    AtomicBoolean queuedRan = new AtomicBoolean();
+    CompletableFuture<Object> queued = service.query(uri("A.groovy"), null, (analyzer, path) -> {
+      queuedRan.set(true);
+      return null;
+    });
+    queued.cancel(true);
+    running.cancel(true);
+    assertEquals(List.of("CLASS A"), symbols(service, "A.groovy"), "a later query runs after both");
+    assertTrue(sawCancel.get(), "the running query's request is cancelled");
+    assertFalse(queuedRan.get(), "the cancelled query waiting for the thread is skipped");
   }
 
   /** A query right after an edit answers about the edited text: it ends the debounce delay instead of waiting it out. */

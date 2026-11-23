@@ -397,21 +397,21 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
     @Override
     public CompletableFuture<Either<List<? extends Location>, List<? extends LocationLink>>> definition(DefinitionParams params) {
       Position at = params.getPosition();
-      return compiles.query(params.getTextDocument().getUri(), null, (analyzer, path) -> analyzer.definition(path, at.getLine(), at.getCharacter()))
-          .thenApply(location -> Either.forLeft(location == null ? List.of() : List.of(location(location))));
+      return CompileService.mapped(compiles.query(params.getTextDocument().getUri(), null, (analyzer, path) -> analyzer.definition(path, at.getLine(), at.getCharacter())),
+          location -> Either.forLeft(location == null ? List.of() : List.of(location(location))));
     }
 
     @Override
     public CompletableFuture<Hover> hover(HoverParams params) {
       Position at = params.getPosition();
-      return compiles.query(params.getTextDocument().getUri(), null, (analyzer, path) -> analyzer.hover(path, at.getLine(), at.getCharacter()))
-          .thenApply(markdown -> markdown == null ? null : new Hover(new MarkupContent(MarkupKind.MARKDOWN, markdown)));
+      return CompileService.mapped(compiles.query(params.getTextDocument().getUri(), null, (analyzer, path) -> analyzer.hover(path, at.getLine(), at.getCharacter())),
+          markdown -> markdown == null ? null : new Hover(new MarkupContent(MarkupKind.MARKDOWN, markdown)));
     }
 
     @Override
     public CompletableFuture<List<Either<SymbolInformation, DocumentSymbol>>> documentSymbol(DocumentSymbolParams params) {
       String uri = params.getTextDocument().getUri();
-      return compiles.query(uri, List.<Symbol>of(), (analyzer, path) -> analyzer.symbols(path)).thenApply(symbols -> {
+      return CompileService.mapped(compiles.query(uri, List.<Symbol>of(), (analyzer, path) -> analyzer.symbols(path)), symbols -> {
         List<Either<SymbolInformation, DocumentSymbol>> result = new ArrayList<>();
         for (Symbol symbol : symbols) {
           result.add(Either.forLeft(new SymbolInformation(symbol.name, symbolKind(symbol.kind), new Location(uri, range(symbol.range)), symbol.container)));
@@ -424,8 +424,8 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
     public CompletableFuture<Either<List<CompletionItem>, CompletionList>> completion(CompletionParams params) {
       String uri = params.getTextDocument().getUri();
       Position at = params.getPosition();
-      return compiles.queryText(uri, io.github.vdassios.grailsls.api.CompletionList.EMPTY, (analyzer, request) -> analyzer.completion(request, at.getLine(), at.getCharacter()))
-          .thenApply(list -> Either.forRight(completionList(uri, list)));
+      return CompileService.mapped(compiles.queryText(uri, io.github.vdassios.grailsls.api.CompletionList.EMPTY, (analyzer, request) -> analyzer.completion(request, at.getLine(), at.getCharacter())),
+          list -> Either.forRight(completionList(uri, list)));
     }
 
     /** Adds the signature and documentation; the item's data names its document and its key there. */
@@ -436,7 +436,7 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
         return CompletableFuture.completedFuture(item);
       }
       int id = data.get("id").getAsInt();
-      return compiles.query(data.get("uri").getAsString(), null, (analyzer, path) -> analyzer.resolveCompletion(path, id)).thenApply(detail -> {
+      return CompileService.mapped(compiles.query(data.get("uri").getAsString(), null, (analyzer, path) -> analyzer.resolveCompletion(path, id)), detail -> {
         if (detail != null) {
           item.setDetail(detail.detail);
           if (detail.documentation != null) {
@@ -450,8 +450,8 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
     @Override
     public CompletableFuture<SignatureHelp> signatureHelp(SignatureHelpParams params) {
       Position at = params.getPosition();
-      return compiles.queryText(params.getTextDocument().getUri(), null, (analyzer, request) -> analyzer.signatureHelp(request, at.getLine(), at.getCharacter()))
-          .thenApply(help -> help == null ? null : toSignatureHelp(help));
+      return CompileService.mapped(compiles.queryText(params.getTextDocument().getUri(), null, (analyzer, request) -> analyzer.signatureHelp(request, at.getLine(), at.getCharacter())),
+          help -> help == null ? null : toSignatureHelp(help));
     }
   };
 

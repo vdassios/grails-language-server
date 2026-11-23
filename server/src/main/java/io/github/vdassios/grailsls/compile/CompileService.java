@@ -14,6 +14,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 import org.eclipse.lsp4j.Diagnostic;
@@ -120,6 +121,8 @@ public final class CompileService {
    * Runs a query on the last compile of an open document, given the analyzer and the document's path. Waits for the
    * document's pending compile and starts it at once if it is still in its debounce delay, so the answer is about the
    * current text. Completes with {@code none} when the document is not open or not in a Groovy source set.
+   * Cancelling the returned future (see {@link #mapped}) skips the query if it has not started, and sets the cancel
+   * flag of its {@link CompileRequest}, which stops a compile the query runs.
    */
   public <T> CompletableFuture<T> query(String uri, T none, BiFunction<Analyzer, String, T> query) {
     return queryText(uri, none, (analyzer, request) -> query.apply(analyzer, request.path));
@@ -131,16 +134,42 @@ public final class CompileService {
    */
   public <T> CompletableFuture<T> queryText(String uri, T none, BiFunction<Analyzer, CompileRequest, T> query) {
     Path path = Documents.path(uri);
-    return path == null ? CompletableFuture.completedFuture(none) : afterCompiles(path, () -> {
+    if (path == null) {
+      return CompletableFuture.completedFuture(none);
+    }
+    CompletableFuture<T> answer = new CompletableFuture<>();
+    afterCompiles(path, () -> {
       Workspace current = workspace;
       Document document = documents.get(path);
-      CompileContext context = current == null || document == null ? null : current.contextOf(path);
+      CompileContext context = current == null || document == null || answer.isDone() ? null : current.contextOf(path);
       if (context == null) {
         return CompletableFuture.completedFuture(none);
       }
-      CompileRequest request = new CompileRequest(path.toString(), document.text, lookup(current, context), () -> false);
-      return context.query(analyzer -> query.apply(analyzer, request));
+      CompileRequest request = new CompileRequest(path.toString(), document.text, lookup(current, context), answer::isCancelled);
+      // cancelled while it waited for the module's thread: skipped
+      return context.query(analyzer -> answer.isDone() ? none : query.apply(analyzer, request));
+    }).whenComplete((value, error) -> {
+      if (error != null) {
+        answer.completeExceptionally(error);
+      } else {
+        answer.complete(value);
+      }
     });
+    return answer;
+  }
+
+  /**
+   * {@code query.thenApply(map)}, except that cancelling the result cancels {@code query}: lsp4j cancels the future a
+   * request returned on {@code $/cancelRequest}, and only the query's own future reaches its compile.
+   */
+  public static <T, R> CompletableFuture<R> mapped(CompletableFuture<T> query, Function<? super T, ? extends R> map) {
+    CompletableFuture<R> mapped = query.thenApply(map);
+    mapped.whenComplete((value, error) -> {
+      if (mapped.isCancelled()) {
+        query.cancel(true);
+      }
+    });
+    return mapped;
   }
 
   /** Finds classes in the declaration index and reads open documents from their current text. */
