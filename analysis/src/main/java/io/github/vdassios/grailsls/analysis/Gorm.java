@@ -348,7 +348,11 @@ public final class Gorm {
 
   /** A finder of a domain class by its name; null when the name has no finder prefix. */
   public static Finder finder(ClassNode domain, String name) {
-    Map<String, Property> properties = properties(domain);
+    return finder(domain, name, properties(domain));
+  }
+
+  /** {@link #finder(ClassNode, String)}, given the class's {@link #properties}: for many names of one class. */
+  static Finder finder(ClassNode domain, String name, Map<String, Property> properties) {
     FinderName parsed = FinderName.parse(name, properties.keySet());
     return parsed == null ? null : new Finder(domain, parsed, properties);
   }

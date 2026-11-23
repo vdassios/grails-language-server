@@ -335,8 +335,9 @@ public final class Completions {
    * filtering the step they have.
    */
   private void finders(ClassNode domain, String prefix) {
-    for (String name : FinderName.continuations(prefix, Gorm.properties(domain).keySet())) {
-      Gorm.Finder finder = Gorm.finder(domain, name);
+    Map<String, Gorm.Property> properties = Gorm.properties(domain);
+    for (String name : FinderName.continuations(prefix, properties.keySet())) {
+      Gorm.Finder finder = Gorm.finder(domain, name, properties);
       boolean whole = finder != null && finder.name.problems.isEmpty();
       items.add(new Completion(name, Completion.Kind.METHOD, null, "0" + name, null, List.of(), whole ? remember(finder.method()) : -1));
       finderSteps = true;
