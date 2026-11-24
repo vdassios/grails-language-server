@@ -155,8 +155,8 @@ public final class CompileContext implements AutoCloseable {
     }
   }
 
-  /** The analyzer, for queries; created on first use. Call from {@link #compile} results only. */
-  public synchronized Analyzer analyzer() {
+  /** The analyzer, created on first use. Called on this context's thread only, by {@link #compile} and {@link #query}. */
+  private synchronized Analyzer analyzer() {
     if (closed) {
       throw new IllegalStateException(name + " is closed");
     }

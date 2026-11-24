@@ -95,7 +95,7 @@ abstract class ArtefactMembersTest {
   private CompiledClass compiled(Workspace workspace, String relative, String className) throws Exception {
     Path path = file(relative);
     assertEquals(List.of(), errors(compile(workspace, path, Files.readString(path))), relative);
-    CompiledClass compiled = workspace.contextOf(path).analyzer().compiledClass(path.toString(), className);
+    CompiledClass compiled = workspace.contextOf(path).query(analyzer -> analyzer.compiledClass(path.toString(), className)).get(60, TimeUnit.SECONDS);
     assertNotNull(compiled, className + " in the compile of " + relative);
     return compiled;
   }

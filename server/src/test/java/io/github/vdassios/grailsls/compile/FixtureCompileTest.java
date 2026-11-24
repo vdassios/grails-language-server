@@ -71,7 +71,7 @@ class FixtureCompileTest {
     ProjectModel model = Fixtures.built("grails4", "GLS_TEST_JDK11");
     try (Workspace workspace = workspace(model)) {
       Path controller = file(model, ":app", "grails-app/controllers/fixture/library/BookController.groovy");
-      assertEquals("2.5.14", workspace.contextOf(controller).analyzer().groovyVersion(), "the fixture's Groovy, not the 2.5.23 the analysis layer is compiled against");
+      assertEquals("2.5.14", workspace.contextOf(controller).query(Analyzer::groovyVersion).get(60, TimeUnit.SECONDS), "the fixture's Groovy, not the 2.5.23 the analysis layer is compiled against");
     }
   }
 
@@ -280,7 +280,7 @@ class FixtureCompileTest {
     try (Workspace workspace = workspace(model)) {
       Path service = file(model, ":app", "grails-app/services/fixture/library/BookService.groovy");
       assertEquals(List.of(), errors(compile(workspace, service)));
-      CompiledClass clock = workspace.contextOf(service).analyzer().compiledClass(service.toString(), "fixture.support.Clock");
+      CompiledClass clock = workspace.contextOf(service).query(analyzer -> analyzer.compiledClass(service.toString(), "fixture.support.Clock")).get(60, TimeUnit.SECONDS);
       assertEquals(file(model, ":support", "src/main/groovy/fixture/support/Clock.groovy").toString(), clock.sourcePath);
     }
   }
@@ -347,7 +347,7 @@ class FixtureCompileTest {
     ProjectModel model = Fixtures.built("groovy-library", "GLS_TEST_JDK17");
     try (Workspace workspace = workspace(model)) {
       Path shape = file(model, ":", "src/main/groovy/fixture/shapes/Shape.groovy");
-      assertEquals("3.0.25", workspace.contextOf(shape).analyzer().groovyVersion());
+      assertEquals("3.0.25", workspace.contextOf(shape).query(Analyzer::groovyVersion).get(60, TimeUnit.SECONDS));
       assertEquals(List.of(), errors(compile(workspace, shape)));
     }
   }

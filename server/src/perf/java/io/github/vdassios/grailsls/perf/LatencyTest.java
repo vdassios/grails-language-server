@@ -359,7 +359,7 @@ class LatencyTest {
     count("RSS MB before close", rssMb());
 
     // the analyzer is loaded by the context's module loader
-    WeakReference<ClassLoader> loader = new WeakReference<>(context.analyzer().getClass().getClassLoader());
+    WeakReference<ClassLoader> loader = new WeakReference<>(context.query(analyzer -> analyzer.getClass().getClassLoader()).join());
     int heapBefore = heapMb();
     int classesBefore = ManagementFactory.getClassLoadingMXBean().getLoadedClassCount();
     workspace.close();
