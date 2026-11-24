@@ -1,68 +1,77 @@
 # Install and editor setup
 
+To use the server, you need:
+
+- the server's jar
+- the JDK that your project builds with
+- an editor set up to start the server, with your Gradle root as the workspace root
+
 ## Install
 
-Download `grails-language-server-all.jar` from the [releases](https://github.com/vdassios/grails-language-server/releases), or build it (`./gradlew shadowJar`, see [Development](development.md#build)). It speaks LSP over stdio:
+Download `grails-language-server-all.jar` from the [releases](https://github.com/vdassios/grails-language-server/releases) page, or build it yourself with `./gradlew shadowJar` (see [Development](development.md#build)). The server talks LSP over standard input and output:
 
 ```sh
 java -jar grails-language-server-all.jar
 ```
 
-**Run it on the project's JDK** (the one its Gradle build uses): the server compiles with the project's own Groovy, which reads the JDK's class files with its bundled ASM, and it runs the project's Gradle wrapper on the same JDK. The newest JDK a Groovy release can run on depends on its ASM; measured for some releases:
+The server itself needs Java 11 or later. For Grails 7, Grails 8, and Groovy 6, it needs Java 17 or later.
 
-| Project's Groovy | Grails | Newest JDK for the server |
+### Choose the JDK
+
+Run the server on the JDK that your project's Gradle build uses. There are two reasons for this:
+
+- The server compiles your code with your project's Groovy. That Groovy reads the JDK's class files with the ASM library that it bundles, and each ASM version can only read class files up to a certain JDK.
+- The server runs your project's Gradle wrapper on the same JDK.
+
+The newest JDK that works depends on your project's Groovy version. These limits were measured for some releases:
+
+| Your project's Groovy | Grails | Newest JDK for the server |
 |---|---|---|
-| 2.5.14 | 4 | 15 (the JDK's class files up to version 59) |
-| 3.0.14 | 5, 6 | 19 (version 63) |
-| 3.0.23 | 5, 6 | 23 (version 67) |
-| 4.0.4 | 7 | 19 (version 63) |
-| 4.0.33 | 7 | 27 (version 71) |
-| 5.1.3 | 8 | 27 (version 71) |
-| 6.0.0 | none yet | 27 (version 71) |
+| 2.5.14 | 4 | 15 (class file version 59) |
+| 3.0.14 | 5, 6 | 19 (class file version 63) |
+| 3.0.23 | 5, 6 | 23 (class file version 67) |
+| 4.0.4 | 7 | 19 (class file version 63) |
+| 4.0.33 | 7 | 27 (class file version 71) |
+| 5.1.3 | 8 | 27 (class file version 71) |
+| 6.0.0 | none yet | 27 (class file version 71) |
 
-The server itself needs Java 11 or later, Grails 7 and 8 and Groovy 6 need 17. It supports Grails 4 or later (Groovy 2.5 or later): for a module on an older Groovy (Grails 3), it reports `failed` and compiles nothing. Before it reports `ready`, the project's Groovy reads one of the JDK's class files, as its compiler does; when that Groovy cannot read them (a JDK newer than the table allows), the server reports `failed`, naming both versions, instead of an error at line 0 of every file. When Gradle fails, the message names the wrapper's Gradle version and the JDK it ran on, and points here when the output shows the JDK does not suit the build.
+The server supports Grails 4 and later, which means Groovy 2.5 and later. If a module uses an older Groovy, as Grails 3 does, the server reports `failed` and compiles nothing.
 
-The server does nothing until the client sends `initializationOptions.trusted = true` (see [Trust](how-it-works.md#trust)). The workspace root must be the Gradle root, the directory with `gradlew`; the server reads the project model from there. It never runs a wrapper from a parent directory: opening a sub-module fails with a message naming the folder to open.
+Before the server reports `ready`, it checks that your project's Groovy can read the JDK's class files, the same way its compiler does. If the JDK is too new for that Groovy, the server reports `failed` and names both versions. Without this check, you would see an error at line 0 of every file.
 
-## What the server reports
+If Gradle fails, the message names the wrapper's Gradle version and the JDK that it ran on. If Gradle's output shows that the JDK doesn't suit the build, the message also points to this page.
 
-- **Version.** `initialize` answers with `serverInfo.version`, the server's version (`serverInfo.name` is `grails-language-server`), so a client can tell which jar it started.
-- **Its own checks.** The server checks the project itself before it serves anything, whatever the client checked: the workspace is trusted, every module is on Groovy 2.5 or later, Gradle resolved every module's Groovy jar, and the project's Groovy can read the class files of the JDK the server runs on. Each one that fails is a `failed` status naming the reason, not errors on every file.
-- **Status.** `grails/status` ([protocol](how-it-works.md#protocol)) carries a state and a message:
+### Trust and the workspace root
 
-| State | Message |
-|---|---|
-| `resolving` | `reading the Gradle build in <root>` |
-| `indexing` | `<n> modules`, with ` (cached)` when the model came from the cache and `, <k> unresolved dependencies` when Gradle could not resolve some |
-| `ready` | the same, plus `, <j> Java files not built (run Gradle <tasks>)` when Java sources of a module have no class files yet |
-| `failed` | the reason: `workspace not trusted: ...`, `no workspace folder`, `Groovy <version> (module <path>) is not supported: ...`, `Gradle could not resolve Groovy for module <path> (...)` with Gradle's reason (Groovy 6 on JDK 11: the Java it needs, and a pointer to this page), the JDK the project's Groovy cannot read (both versions named), or Gradle's error (naming the wrapper's Gradle version and the JDK) |
+The server does nothing until your editor sends `initializationOptions.trusted = true`. See [Trust](how-it-works.md#trust).
 
-  A `failed` reload after `ready` keeps the previous model: the server goes on answering from it.
-- **Cancelled requests.** A request the client cancels with `$/cancelRequest` is answered with LSP's `RequestCancelled` error: a query still waiting for its module's compile thread never runs, and a compile of the document's copy the query started (completion, signature help) stops at its next phase. `grails/downloadSources` still running or queued at `shutdown` is answered with `{ "available": 0, "unavailable": 0, "failed": 0, "message": "cancelled" }`.
+The workspace root must be the Gradle root, which is the directory that contains `gradlew`. The server reads the project model from there. It never runs a Gradle wrapper from a parent directory. If you open a sub-module instead, the server fails with a message that names the folder to open.
 
 ## Editor setup
 
-**Changes outside the editor.** The server follows files changed outside the editor (a checkout, a generator): through the client's file watcher when the client offers one (VS Code, Neovim on macOS), otherwise with a watcher of its own (Neovim on Linux, where it uses inotify: one watch per source directory). If it logs that a directory cannot be watched, raise `fs.inotify.max_user_watches`; until then it reads the source roots again on every save. The request `grails/reindex` makes it read them again at any time, without Gradle. After a build file changes, the server says the project model is stale; `grails/reloadProject` reads it again.
+Each setup below starts `java` from your `PATH`. If `java` on your `PATH` is not your project's JDK, use the full path to your project's `java` instead. Replace `/path/to/grails-language-server-all.jar` with the path to the jar.
 
-Each setup below starts `java` from `PATH`; give the full path of the project's JDK's `java` if `PATH` points at another. Replace `/path/to/grails-language-server-all.jar`. Each was checked by opening a Grails 4 controller and asking for hover on `render`, except Zed.
+To check that a setup works, open a controller and hover over `render`. Every setup on this page except Zed was checked this way, on a Grails 4 controller.
 
-### Neovim (0.11 or later)
+### Neovim
+
+You need Neovim 0.11 or later. Add this to your config:
 
 ```lua
-vim.lsp.config('grails_ls', {
-  cmd = { 'java', '-jar', '/path/to/grails-language-server-all.jar' },
-  filetypes = { 'groovy', 'gsp' },
-  root_markers = { 'settings.gradle', 'settings.gradle.kts', 'gradlew' },
+vim.lsp.config("grails_ls", {
+  cmd = { "java", "-jar", "/path/to/grails-language-server-all.jar" },
+  filetypes = { "groovy", "gsp" },
+  root_markers = { "settings.gradle", "settings.gradle.kts", "gradlew" },
   init_options = { trusted = true },
 })
-vim.lsp.enable 'grails_ls'
+vim.lsp.enable("grails_ls")
 ```
 
-Neovim detects `*.gsp` as `gsp`; [grails.nvim](https://github.com/vdassios/grails.nvim) adds a GSP tree-sitter grammar.
+Neovim detects `*.gsp` files as the `gsp` filetype. [grails.nvim](https://github.com/vdassios/grails.nvim) adds a tree-sitter grammar for GSP, and can also download and start the server for you.
 
 ### Helix
 
-In `~/.config/helix/languages.toml`:
+Add this to `~/.config/helix/languages.toml`:
 
 ```toml
 [language-server.grails-language-server]
@@ -76,11 +85,15 @@ language-servers = ["grails-language-server"]
 roots = ["settings.gradle", "settings.gradle.kts"]
 ```
 
-Helix sends `config` as the initialization options. It takes the topmost of the `roots` markers below the workspace (the version-control root), which is the Gradle root unless the repository holds several Gradle builds. Helix has no GSP language.
+Helix sends `config` as the initialization options.
 
-### Emacs (eglot, Emacs 29 or later)
+Helix's workspace is the version-control root. Below it, Helix uses the topmost directory that contains one of the `roots` markers. That directory is the Gradle root, unless your repository contains several Gradle builds.
 
-With a `groovy-mode` (for example `groovy-emacs-modes` from MELPA):
+Helix has no GSP language, so the server only works on Groovy files there.
+
+### Emacs
+
+You need Emacs 29 or later, which includes eglot, and a `groovy-mode`, such as `groovy-emacs-modes` from MELPA. Add this to your init file:
 
 ```elisp
 (with-eval-after-load 'eglot
@@ -91,11 +104,21 @@ With a `groovy-mode` (for example `groovy-emacs-modes` from MELPA):
 (setq project-vc-extra-root-markers '("settings.gradle" "settings.gradle.kts"))
 ```
 
-Then `M-x eglot` in a Groovy buffer, or `(add-hook 'groovy-mode-hook #'eglot-ensure)`.
+Then run `M-x eglot` in a Groovy buffer. To start eglot automatically, also add:
+
+```elisp
+(add-hook 'groovy-mode-hook #'eglot-ensure)
+```
 
 ### VS Code
 
-VS Code starts language servers only from extensions. A local extension of two files is enough: put them in a folder, run `npm install` there, and link the folder into `~/.vscode/extensions/` (or open it and press F5 to try it). Set `grailsLanguageServer.jar` (and `grailsLanguageServer.java` if `java` on `PATH` is not the project's JDK) in the settings.
+VS Code only starts language servers from extensions. A local extension made of two files is enough:
+
+1. Create a folder with the two files below.
+2. Run `npm install` in that folder.
+3. Link the folder into `~/.vscode/extensions/`. To try it without installing it, open the folder in VS Code and press F5.
+4. In your settings, set `grailsLanguageServer.jar` to the path to the jar. If `java` on your `PATH` is not your project's JDK, also set `grailsLanguageServer.java`.
+5. Open your Gradle root as the workspace folder. VS Code uses the workspace folder as the root.
 
 `package.json`:
 
@@ -110,7 +133,7 @@ VS Code starts language servers only from extensions. A local extension of two f
     "configuration": {
       "properties": {
         "grailsLanguageServer.jar": { "type": "string", "description": "Path to grails-language-server-all.jar" },
-        "grailsLanguageServer.java": { "type": "string", "default": "java", "description": "java to run it with (the project's JDK)" }
+        "grailsLanguageServer.java": { "type": "string", "default": "java", "description": "The java to run it with (the project's JDK)" }
       }
     }
   },
@@ -146,8 +169,58 @@ exports.activate = async () => {
 exports.deactivate = () => client?.stop();
 ```
 
-The workspace folder is the root, so open the Gradle root.
-
 ### Zed
 
-Not set up yet. Zed starts language servers only through its extensions (compiled to WebAssembly), and the Groovy extension in its registry downloads and starts its own server; its source reads no `binary` setting that could point it here. Zed needs a small extension of its own for this server; none exists yet.
+Zed is not supported yet. Zed only starts language servers through extensions, which are compiled to WebAssembly. The Groovy extension in Zed's registry downloads and starts its own server, and it has no `binary` setting that could point it to this one. Zed needs a small extension for this server, and none exists yet.
+
+## Files changed outside the editor
+
+The server notices files that change outside the editor, for example after a checkout or after running a code generator:
+
+- If your editor can watch files for the server, the server uses that. VS Code and Neovim on macOS can.
+- Otherwise, the server watches the files itself. This is the case for Neovim on Linux, where the server uses inotify, with one watch for each source directory.
+
+If the server logs that it cannot watch a directory, raise `fs.inotify.max_user_watches`. Until you do, the server reads the source roots again every time you save.
+
+To make the server read the source roots again at any time, send it `grails/reindex`. This does not run Gradle.
+
+When a build file changes, the server tells you that the project model is out of date. Send `grails/reloadProject` to read the model again.
+
+## Troubleshooting
+
+### Server version
+
+The server's response to `initialize` includes `serverInfo`. Its `name` is `grails-language-server`, and its `version` is the server's version. Use it to check which jar your editor started.
+
+### Startup checks
+
+Before it serves anything, the server checks your project itself, whatever your editor has already checked:
+
+- The workspace is trusted.
+- Every module uses Groovy 2.5 or later.
+- Gradle resolved every module's Groovy jar.
+- Your project's Groovy can read the class files of the JDK that the server runs on.
+
+If a check fails, the server reports `failed` with the reason. You don't get errors on every file.
+
+### Status messages
+
+The server reports its progress with the `grails/status` notification (see [Protocol](how-it-works.md#protocol)). Each status has a state and a message:
+
+| State | Message |
+|---|---|
+| `resolving` | `reading the Gradle build in <root>` |
+| `indexing` | `<n> modules`. ` (cached)` is added when the model came from the cache, and `, <k> unresolved dependencies` is added when Gradle could not resolve some dependencies. |
+| `ready` | The same as `indexing`. `, <j> Java files not built (run Gradle <tasks>)` is added when a module has Java sources with no class files yet. |
+| `failed` | The reason. See the list below. |
+
+A `failed` status gives one of these reasons:
+
+- `workspace not trusted: ...`
+- `no workspace folder`
+- `Groovy <version> (module <path>) is not supported: ...`
+- `Gradle could not resolve Groovy for module <path> (...)`, with Gradle's reason. For example, Groovy 6 on JDK 11 gives the Java version it needs, and a pointer to this page.
+- the JDK that your project's Groovy cannot read, with both versions
+- Gradle's error, with the wrapper's Gradle version and the JDK
+
+If a reload fails after the server was `ready`, the server keeps the previous project model and goes on answering from it.

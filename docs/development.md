@@ -2,20 +2,71 @@
 
 ## Build
 
-Building needs JDK 17 or later (Gradle 9); the server itself targets Java 11 and runs on the project's JDK.
+To build the server, you need JDK 17 or later, because the build uses Gradle 9. The server itself targets Java 11, and runs on your project's JDK.
 
 ```sh
-./gradlew build      # compiles api, analysis and server, runs the tests
-./gradlew shadowJar  # build/libs/grails-language-server-all.jar
-java -jar build/libs/grails-language-server-all.jar   # LSP over stdio
+./gradlew build      # compile api, analysis and server, and run the tests
+./gradlew shadowJar  # build build/libs/grails-language-server-all.jar
+java -jar build/libs/grails-language-server-all.jar   # start the server (LSP over stdio)
 ```
 
-The demo GIFs in `docs/media/` are recorded from the tapes in `demo/` on the `demo/bookstore` app; see [demo/README.md](../demo/README.md).
+## Tests
 
-Releases: the version is `version` in `gradle.properties`; the jar's manifest carries it and the server reports it as `serverInfo.version`. Pushing a tag `v*` runs CI, and once the build passes it publishes the tested jar as a GitHub release (a tag with a hyphen, such as `v0.6.0-alpha.1`, as a pre-release). The tag must be `v` and that version, or the release step fails.
+### Fixture projects
 
-The project-model tests run the fixture builds under `fixtures/` (see [its README](../fixtures/README.md)) with their own Gradle wrappers. They need a JDK 11 (Grails 4 fixture) and a JDK 17 (Grails 7 and plain Groovy fixtures), given as `GLS_TEST_JDK11` and `GLS_TEST_JDK17`; a test whose JDK is not set is skipped. `-PtestJavaHome=<jdk>` runs the tests on another JDK; CI runs them on JDK 11, the oldest the server supports, with both fixture JDKs set.
+The project model tests build the fixture projects under `fixtures/` with their own Gradle wrappers (see [fixtures/README.md](../fixtures/README.md)). They need two JDKs, which you give as environment variables:
 
-`analysis` is tested on every Groovy the server supports: `test` on Groovy 2.5, `testGroovy3` on Groovy 3, `testGroovy4` on Groovy 4, `testGroovy5` on Groovy 5 and `testGroovy6` on Groovy 6 (versions in `analysis/build.gradle`); `check` runs all five. `testGroovy6` runs on the JDK in `GLS_TEST_JDK17` (else Gradle's), never on `-PtestJavaHome`: Groovy 6 needs Java 17. The server tests that need Java 17 (tagged `jdk17`: those that compile the Grails 7 fixture in-process, and the one where Groovy 2.5.14 cannot read the JDK's class files) run in `:server:testJdk17` on the JDK in `GLS_TEST_JDK17`.
+- `GLS_TEST_JDK11`: a JDK 11, for the Grails 4 fixture
+- `GLS_TEST_JDK17`: a JDK 17, for the Grails 7 and plain Groovy fixtures
 
-`./gradlew :server:perfTest` runs `LatencyTest` (its own source set, `server/src/perf`), which measures compile and query latency outside the default build (`build` only compiles it): on the Grails 4 fixture, or on the built project in `GLS_PERF_PROJECT` (resolved with the JDK in `GLS_PERF_JDK`). It writes counts and timings only, under `server/build/perf/`. `LatencyTest.artefactSweep` compiles every Groovy file of the project as the open file and reports time, errors and whether Grails's members are present, per artefact kind and kind of module (`sweep.txt`).
+A test whose JDK is not set is skipped.
+
+To run the tests on a different JDK, pass `-PtestJavaHome=<jdk>`. CI runs them on JDK 11, the oldest JDK that the server supports, with both fixture JDKs set.
+
+### Groovy versions
+
+`analysis` is tested on every Groovy version that the server supports. The versions are set in `analysis/build.gradle`.
+
+| Task | Groovy |
+|---|---|
+| `test` | 2.5 |
+| `testGroovy3` | 3 |
+| `testGroovy4` | 4 |
+| `testGroovy5` | 5 |
+| `testGroovy6` | 6 |
+
+`check` runs all five. Groovy 6 needs Java 17, so `testGroovy6` runs on the JDK in `GLS_TEST_JDK17`, or else on Gradle's JDK. It never uses `-PtestJavaHome`.
+
+### Tests that need Java 17
+
+Some server tests need Java 17. They are tagged `jdk17`, and include the tests that compile the Grails 7 fixture in the test process, and the test where Groovy 2.5.14 cannot read the JDK's class files. They run in `:server:testJdk17`, on the JDK in `GLS_TEST_JDK17`.
+
+## Performance tests
+
+`./gradlew :server:perfTest` runs `LatencyTest`, which measures compile and query latency. It lives in its own source set, `server/src/perf`. The default build only compiles it.
+
+By default, it measures the Grails 4 fixture. To measure another project, build that project and set:
+
+- `GLS_PERF_PROJECT`: the path to the built project
+- `GLS_PERF_JDK`: the JDK to resolve it with
+
+The test writes counts and timings only, under `server/build/perf/`.
+
+`LatencyTest.artefactSweep` compiles every Groovy file of the project as the open file. For each kind of artefact and each kind of module, it reports the time, the errors, and whether Grails's members are present. It writes the results to `sweep.txt`.
+
+For the full measurement procedure, see [Rerunning](../benchmarks/results.md#rerunning) in the benchmark results.
+
+## Demo recordings
+
+The GIFs in `docs/media/` are recorded from the tapes in `demo/`, on the `demo/bookstore` app. See [demo/README.md](../demo/README.md).
+
+## Releases
+
+The version is the `version` property in `gradle.properties`. The jar's manifest includes it, and the server reports it as `serverInfo.version`.
+
+To release:
+
+1. Set `version` in `gradle.properties`.
+2. Push a tag named `v` followed by that version, such as `v0.6.0`.
+
+CI builds and tests the tag. If the build passes, CI publishes the tested jar as a GitHub release. A tag with a hyphen, such as `v0.6.0-alpha.1`, is published as a pre-release. If the tag does not match the version, the release step fails.
