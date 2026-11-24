@@ -10,12 +10,13 @@ dependencies {
   testImplementation project(":api")
 }
 
-// The same tests on Groovy 3 (Grails 5, 6), 4 (Grails 7) and 5 (Grails 8): the jar compiled against 2.5 must also
+// The same tests on Groovy 3 (Grails 5, 6), 4 (Grails 7), 5 (Grails 8) and 6: the jar compiled against 2.5 must also
 // run there. Versions as in the docs/editors.md table.
 def groovyRuntimes = [
   groovy3: "org.codehaus.groovy:groovy:3.0.23",
   groovy4: "org.apache.groovy:groovy:4.0.33",
   groovy5: "org.apache.groovy:groovy:5.1.3",
+  groovy6: "org.apache.groovy:groovy:6.0.0",
 ]
 // Grails 8's g: taglibs (FormTagLib, ValidationTagLib, ...), Java 21 class files declaring tags as methods: TaglibsTest
 // reads them as the server reads a Grails 8 project's jars. The jar alone, never on a class path.
@@ -68,6 +69,15 @@ groovyRuntimes.each { name, coordinates ->
     testClassesDirs = sourceSets.test.output.classesDirs
     classpath = sourceSets.test.runtimeClasspath.filter { !it.name.startsWith("groovy-2.") } + configuration
     useJUnitPlatform { excludeTags "jdk17" }
+    // Groovy 6's classes need Java 17: on the JDK in GLS_TEST_JDK17, else Gradle's (17 or later), never on
+    // -PtestJavaHome (see the root build).
+    if (major.toInteger() >= 6) {
+      def jdk17 = System.getenv("GLS_TEST_JDK17")
+      if (jdk17) {
+        executable = "${jdk17}/bin/java"
+      }
+      inputs.property("jdk17", jdk17.toString())
+    }
   }
   tasks.named("check") { dependsOn task }
 }

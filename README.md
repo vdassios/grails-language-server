@@ -18,7 +18,7 @@ Recorded in Neovim on [`demo/bookstore`](demo/), a small Grails 7 app you can tr
 - **GSP pages**: tags and attributes from the project's taglibs and jars; page code compiled as Grails translates it, with errors, completion, hover and definition in `${ }`, and model variables typed from the controllers. [More](docs/features.md#gsp-pages)
 - **Library sources**: definition and hover reach the sources of jars and the JDK; missing sources jars are downloaded on request. [More](docs/features.md#library-sources)
 - **The usual LSP features**: diagnostics, completion (a class not yet imported is offered with its import when it is one of the project's own; jar and JDK classes need the import first), hover, signature help, definition, document and workspace symbols. [Checklist](docs/conformance.md)
-- **Groovy 2.5 to 5, Grails 4 to 8**: each module source set compiles with its own jars, on the project's JDK. [Tested range](#status), [JDK table](docs/editors.md#install)
+- **Groovy 2.5 to 6, Grails 4 to 8**: each module source set compiles with its own jars, on the project's JDK. [Tested range](#status), [JDK table](docs/editors.md#install)
 - **Any LSP editor**: setups checked in Neovim, Helix, Emacs and VS Code. [Editors](docs/editors.md)
 
 ## Quick start
@@ -43,7 +43,7 @@ vim.lsp.enable 'grails_ls'
 
 Pre-alpha, milestone M6 (distribution). Linux and macOS only: nothing is tested on Windows. What is tested, exactly:
 
-- **Groovy**: the `analysis` tests pass on Groovy 2.5.23, 3.0.23, 4.0.33 and 5.1.3.
+- **Groovy**: the `analysis` tests pass on Groovy 2.5.23, 3.0.23, 4.0.33, 5.1.3 and 6.0.0.
 - **Grails 4 and 7**: the server's tests run on two fixture projects, Grails 4.1.4 (Groovy 2.5, JDK 11) and Grails 7.2.4 (Groovy 4, JDK 17).
 - **Grails 8**: reading its taglibs (tags declared as methods) is covered by a unit test over Grails 8's own taglib class files; there is no Grails 8 fixture.
 - **Grails 5 and 6**: one manual benchmark run each, on a public project ([benchmarks/results.md](benchmarks/results.md), which also measures a Grails 4, 7 and 8 project).
