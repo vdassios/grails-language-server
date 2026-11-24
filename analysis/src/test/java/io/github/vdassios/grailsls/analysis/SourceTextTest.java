@@ -147,5 +147,6 @@ class SourceTextTest {
     assertEquals("7:6", at(groovy, List.of("Lists"), "total", false, List.of()), "not the item of order's list");
     assertEquals("9:6 /** Counts. */", at(groovy, List.of("Lists"), "count", false, List.of()), "no comment opens in the slashy string");
     assertEquals("def half = total / 2 / count; ~      ; f(   ); return      ", SourceText.code("def half = total / 2 / count; ~/a\\/*/; f(/x/); return /\\d+/"));
+    assertEquals("~              \n}", SourceText.code("~/.*\\\\/.*\\\\/.*/\n}"), "a backslash escapes a slash only");
   }
 }

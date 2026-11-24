@@ -313,8 +313,9 @@ final class SourceText {
         end = Math.min(end < n && chars[end] == c ? end + 1 : end, n);
       } else if (c == '/' && slashyMayStart(source, last, lastAt)) {
         end = i + 1;
+        // a backslash escapes a slash only: /a\\/ ends at its second slash
         while (end < n && chars[end] != '/') {
-          end += chars[end] == '\\' ? 2 : 1;
+          end += chars[end] == '\\' && end + 1 < n && chars[end + 1] == '/' ? 2 : 1;
         }
         end = Math.min(end + 1, n);
       } else {
