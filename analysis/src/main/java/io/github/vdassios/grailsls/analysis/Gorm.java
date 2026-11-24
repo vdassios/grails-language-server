@@ -116,7 +116,7 @@ public final class Gorm {
 
   /**
    * The persistent properties of a domain class and its superclasses, nearest first: declared ones that are neither
-   * static nor transient, and those Grails adds ({@code id}, {@code version}, one per {@code hasMany} and
+   * static, transient nor of type {@code Object} (a {@code def} property: GORM maps none), and those Grails adds ({@code id}, {@code version}, one per {@code hasMany} and
    * {@code belongsTo} entry). A class read from a class file has no property nodes: its fields with a getter instead.
    * The properties of a trait are fields of the class that implements it, in source and class file alike. A getter
    * and setter pair without a field is one too, as GORM maps every bean property that can be read and written
@@ -136,7 +136,8 @@ public final class Gorm {
       List<PropertyNode> declared = GroovyASTUtils.members(type::getProperties, List.<PropertyNode>of());
       for (PropertyNode property : declared) {
         String name = property.getName();
-        if (property.isStatic() || Modifier.isTransient(property.getModifiers()) || transients.contains(name) || name.indexOf('$') >= 0) {
+        if (property.isStatic() || Modifier.isTransient(property.getModifiers()) || transients.contains(name) || name.indexOf('$') >= 0
+            || property.getType().equals(ClassHelper.OBJECT_TYPE)) {
           continue;
         }
         MapEntryExpression entry = associations.get(name);
@@ -150,7 +151,8 @@ public final class Gorm {
           continue;
         }
         String name = fromTrait < 0 ? field.getName() : field.getName().substring(fromTrait + 2);
-        if (field.isStatic() || Modifier.isTransient(field.getModifiers()) || transients.contains(name) || name.isEmpty() || name.indexOf('$') >= 0) {
+        if (field.isStatic() || Modifier.isTransient(field.getModifiers()) || transients.contains(name) || name.isEmpty() || name.indexOf('$') >= 0
+            || field.getType().equals(ClassHelper.OBJECT_TYPE)) {
           continue;
         }
         MethodNode getter = GroovyASTUtils.members(() -> type.getGetterMethod("get" + FinderName.capitalized(name)), null);

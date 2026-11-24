@@ -461,6 +461,27 @@ abstract class GormTest {
     }
   }
 
+  /** GORM maps no property of type {@code Object} ({@code GormMappingConfigurationStrategy}): a {@code def} property, declared or from a trait, has no finder. */
+  @Test
+  void anObjectPropertyIsNoFinderCondition() throws Exception {
+    try (Workspace workspace = workspace()) {
+      App app = app();
+      Path domain = domainFile(app.domain);
+      String saved = Files.readString(domain);
+      int end = saved.lastIndexOf('}');
+      String text = saved.substring(0, end) + "\n    def mood\n    Object extra\n\n    static def probe(String wanted) {\n        findByMood(wanted)\n        findByExtra(wanted)\n        findByTag(wanted)\n    }\n"
+          + saved.substring(end) + "\ntrait Tagged {\n    def tag\n}\n";
+      text = text.replace("class " + app.domain + " {", "class " + app.domain + " implements Tagged {");
+      CompileResult result = compile(workspace, domain, text);
+      assertEquals(List.of(), messages(result, Diagnostic.ERROR));
+      List<String> warnings = messages(result, Diagnostic.WARNING);
+      assertEquals(3, warnings.size(), warnings.toString());
+      for (String name : List.of("mood", "extra", "tag")) {
+        assertTrue(warnings.stream().anyMatch(w -> w.contains("No property '" + name + "'")), name + " in " + warnings);
+      }
+    }
+  }
+
   /** GORM persists the properties a trait gives a domain class: seen in a corpus project, where every domain class takes its label from one. */
   @Test
   void aPropertyFromATraitIsAFinderCondition() throws Exception {
