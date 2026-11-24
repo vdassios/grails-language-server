@@ -27,7 +27,7 @@ The server does nothing until the client sends `initializationOptions.trusted = 
 ## What the server reports
 
 - **Version.** `initialize` answers with `serverInfo.version`, the server's version (`serverInfo.name` is `grails-language-server`), so a client can tell which jar it started.
-- **Its own checks.** The server checks the project itself before it serves anything, whatever the client checked: the workspace is trusted, every module is on Groovy 2.5 or later, and the project's Groovy can read the class files of the JDK the server runs on. Each one that fails is a `failed` status naming the reason, not errors on every file.
+- **Its own checks.** The server checks the project itself before it serves anything, whatever the client checked: the workspace is trusted, every module is on Groovy 2.5 or later, Gradle resolved every module's Groovy jar, and the project's Groovy can read the class files of the JDK the server runs on. Each one that fails is a `failed` status naming the reason, not errors on every file.
 - **Status.** `grails/status` ([protocol](how-it-works.md#protocol)) carries a state and a message:
 
 | State | Message |
@@ -35,7 +35,7 @@ The server does nothing until the client sends `initializationOptions.trusted = 
 | `resolving` | `reading the Gradle build in <root>` |
 | `indexing` | `<n> modules`, with ` (cached)` when the model came from the cache and `, <k> unresolved dependencies` when Gradle could not resolve some |
 | `ready` | the same, plus `, <j> Java files not built (run Gradle <tasks>)` when Java sources of a module have no class files yet |
-| `failed` | the reason: `workspace not trusted: ...`, `no workspace folder`, `Groovy <version> (module <path>) is not supported: ...`, the JDK the project's Groovy cannot read (both versions named), or Gradle's error (naming the wrapper's Gradle version and the JDK) |
+| `failed` | the reason: `workspace not trusted: ...`, `no workspace folder`, `Groovy <version> (module <path>) is not supported: ...`, `Gradle could not resolve Groovy for module <path> (...)` with Gradle's reason (Groovy 6 on JDK 11: the Java it needs, and a pointer to this page), the JDK the project's Groovy cannot read (both versions named), or Gradle's error (naming the wrapper's Gradle version and the JDK) |
 
   A `failed` reload after `ready` keeps the previous model: the server goes on answering from it.
 - **Cancelled requests.** A request the client cancels with `$/cancelRequest` is answered with LSP's `RequestCancelled` error: a query still waiting for its module's compile thread never runs, and a compile of the document's copy the query started (completion, signature help) stops at its next phase. `grails/downloadSources` still running or queued at `shutdown` is answered with `{ "available": 0, "unavailable": 0, "failed": 0, "message": "cancelled" }`.

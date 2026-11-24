@@ -12,6 +12,20 @@ import org.gradle.api.artifacts.component.ModuleComponentIdentifier
 import org.gradle.api.artifacts.component.ProjectComponentIdentifier
 import org.gradle.util.GradleVersion
 
+// A dependency that failed to resolve, as one line: the first line of Gradle's message ("Could not resolve g:a:v.") and
+// why, from its deepest cause: the line naming the Java the dependency needs when that is the reason (Groovy 6 on a
+// Java 11 build: "Incompatible because this component declares a component, compatible with Java 17 and the consumer
+// needed a component, compatible with Java 11"), else that cause's first line.
+def glsFailure = { String sourceSet, Throwable f ->
+  def lines = { Throwable t -> (t.message ?: t.class.name).readLines()*.trim().findAll { it } }
+  def deepest = f
+  while (deepest.cause != null && deepest.cause != deepest) {
+    deepest = deepest.cause
+  }
+  def why = deepest.is(f) ? null : (lines(deepest).find { it.contains('Incompatible because') && it.contains('compatible with Java') } ?: lines(deepest)[0])
+  ("${sourceSet}: ${lines(f)[0]}" + (why ? ' ' + why.replaceFirst(/^- /, '') : '')).toString()
+}
+
 allprojects { p ->
   def task = p.tasks.create('grailsLanguageServerModel')
   if (GradleVersion.current() >= GradleVersion.version('7.4')) {
@@ -36,7 +50,7 @@ allprojects { p ->
             record.dependsOn << id.projectPath
           }
         }
-        artifacts.failures.each { f -> record.errors << "${ss.name}: ${f.message}".toString() }
+        artifacts.failures.each { f -> record.errors << glsFailure(ss.name, f) }
       }
       // other source sets whose output a build script adds to this one's classpath (Grails: integrationTest gets test's);
       // such additions are not in the configuration. Resolving the whole classpath is strict: on a failure, none listed
@@ -57,7 +71,7 @@ allprojects { p ->
             runtimeOnly << path
           }
         }
-        runtimeArtifacts.failures.each { f -> record.errors << "${ss.name} runtime: ${f.message}".toString() }
+        runtimeArtifacts.failures.each { f -> record.errors << glsFailure("${ss.name} runtime", f) }
       }
       def resourceDirs = ss.resources.srcDirs
       record.sourceSets << [

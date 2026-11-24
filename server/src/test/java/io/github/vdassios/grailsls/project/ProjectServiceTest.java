@@ -171,4 +171,33 @@ class ProjectServiceTest {
     assertEquals("cancelled", service.downloadSources().get(2, TimeUnit.SECONDS).message);
     assertEquals(1, FakeWrapper.runs(root), "no Gradle after stop");
   }
+
+  /**
+   * A module whose Groovy jar Gradle could not resolve is failed with Gradle's reason, not ready with nothing to
+   * compile; a module that never asked for Groovy, or whose Groovy resolved, is let through.
+   */
+  @Test
+  void aModuleWhoseGroovyDidNotResolveFails() {
+    ModuleRecord javaOnly = module(":java", null, "main: Could not resolve com.example:missing:1.0. Could not find com.example:missing:1.0.");
+    ModuleRecord resolved = module(":groovy", "5.1.3", "test: Could not resolve org.apache.groovy:groovy-json:6.0.0. Could not find it.");
+    assertNull(ProjectService.unresolvedGroovy(new ProjectModel(tmp, List.of(javaOnly, resolved), false)));
+
+    String reason = "main: Could not resolve org.apache.groovy:groovy:6.0.0. Incompatible because this component declares a component, compatible with Java 17"
+        + " and the consumer needed a component, compatible with Java 11";
+    ModuleRecord unresolved = module(":app", null, reason);
+    assertEquals("Gradle could not resolve Groovy for module :app (" + reason + "): start the server on the JDK the project builds with (see docs/editors.md)",
+        ProjectService.unresolvedGroovy(new ProjectModel(tmp, List.of(javaOnly, resolved, unresolved), false)));
+
+    String offline = "main: Could not resolve org.codehaus.groovy:groovy-all:2.5.23. Could not GET 'https://repo.maven.apache.org/'.";
+    assertEquals("Gradle could not resolve Groovy for module :app (" + offline + ")",
+        ProjectService.unresolvedGroovy(new ProjectModel(tmp, List.of(module(":app", null, offline)), false)), "no JDK advice for another reason");
+  }
+
+  private static ModuleRecord module(String path, String groovyVersion, String error) {
+    ModuleRecord module = new ModuleRecord();
+    module.path = path;
+    module.groovyVersion = groovyVersion;
+    module.errors.add(error);
+    return module;
+  }
 }

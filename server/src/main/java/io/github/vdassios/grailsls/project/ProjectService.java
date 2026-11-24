@@ -10,6 +10,7 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.regex.Pattern;
 
 import io.github.vdassios.grailsls.StatusParams;
 
@@ -189,6 +190,9 @@ public final class ProjectService {
     try {
       ProjectModel resolved = bridge.resolve(workspaceRoot, force);
       String unsupported = unsupportedGroovy(resolved);
+      if (unsupported == null) {
+        unsupported = unresolvedGroovy(resolved);
+      }
       if (unsupported != null) {
         status.accept(new StatusParams(StatusParams.FAILED, unsupported));
         return;
@@ -221,6 +225,29 @@ public final class ProjectService {
         int minor = Integer.parseInt(parts[1]);
         if (major < 2 || major == 2 && minor < 5) {
           return "Groovy " + module.groovyVersion + " (module " + module.path + ") is not supported: the server needs Groovy 2.5 or later (Grails 4 or later)";
+        }
+      }
+    }
+    return null;
+  }
+
+  private static final Pattern GROOVY_JAR = Pattern.compile("(org\\.codehaus\\.groovy|org\\.apache\\.groovy):groovy(-all)?:");
+
+  /**
+   * Why the model cannot be served, or null: a module whose Groovy jar Gradle could not resolve, with Gradle's reason.
+   * Such a module has no Groovy version, so it would be ready and compile nothing. A module without Groovy that never
+   * asked for it (Java only, an empty root) has no such failure and is let through. The usual cause is a Groovy that
+   * needs a newer Java than the build's (Groovy 6 needs 17), which Gradle reports as "compatible with Java".
+   */
+  static String unresolvedGroovy(ProjectModel model) {
+    for (ModuleRecord module : model.modules) {
+      if (module.groovyVersion != null) {
+        continue;
+      }
+      for (String error : module.errors) {
+        if (GROOVY_JAR.matcher(error).find()) {
+          return "Gradle could not resolve Groovy for module " + module.path + " (" + error + ")"
+              + (error.contains("compatible with Java") ? ": start the server on the JDK the project builds with (see docs/editors.md)" : "");
         }
       }
     }

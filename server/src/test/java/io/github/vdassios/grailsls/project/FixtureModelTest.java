@@ -3,6 +3,7 @@ package io.github.vdassios.grailsls.project;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
@@ -82,6 +83,27 @@ class FixtureModelTest {
     ModuleRecord root = model.module(":");
     assertEquals("3.0.25", root.groovyVersion);
     assertEquals(List.of("src/main/groovy", "src/main/java"), relative(root, root.sourceSet("main").sourceRoots));
+  }
+
+  /**
+   * Groovy 6 asks for Java 17, so Gradle on JDK 11 resolves no Groovy jar for the plain Groovy fixture: the model keeps
+   * Gradle's reason, and the server fails with it instead of being ready with nothing to compile.
+   */
+  @Test
+  void groovyLibraryOnAGroovyTheBuildsJavaCannotUse() throws Exception {
+    Path jdk = Fixtures.jdk("GLS_TEST_JDK11");
+    Path root = Fixtures.copy(Fixtures.ROOT.resolve("groovy-library"), tmp.resolve("groovy-library"));
+    Path build = root.resolve("build.gradle");
+    java.nio.file.Files.writeString(build, java.nio.file.Files.readString(build).replace("org.codehaus.groovy:groovy:3.0.25", "org.apache.groovy:groovy:6.0.0"));
+    ProjectModel model = new GradleBridge(tmp.resolve("cache"), jdk, Duration.ofSeconds(540)).resolve(root, false);
+
+    ModuleRecord module = model.module(":");
+    assertNull(module.groovyVersion);
+    assertTrue(module.errors.contains("main: Could not resolve org.apache.groovy:groovy:6.0.0. Incompatible because this component declares a component, "
+        + "compatible with Java 17 and the consumer needed a component, compatible with Java 11"), String.valueOf(module.errors));
+    String failed = ProjectService.unresolvedGroovy(model);
+    assertTrue(failed != null && failed.startsWith("Gradle could not resolve Groovy for module : (main: Could not resolve org.apache.groovy:groovy:6.0.0.")
+        && failed.endsWith("start the server on the JDK the project builds with (see docs/editors.md)"), failed);
   }
 
   /**
