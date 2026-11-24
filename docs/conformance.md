@@ -5,7 +5,7 @@ This page lists the features that a Grails editor can offer, and which of them t
 - the [Grails VS Code extension](https://github.com/Johan070119/Grails-VsCode-Extension): every feature in its README, as of v0.7.0
 - the [IntelliJ Grails plugin](https://github.com/apache/grails-intellij-plugin): the features that the server was designed to match
 
-For details of how each feature works, see [Features](features.md).
+For details of how each feature works, see [Features](features.md). For what comes next, see [Roadmap](roadmap.md).
 
 | Status | Meaning |
 |---|---|

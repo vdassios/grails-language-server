@@ -66,3 +66,7 @@ A fork of [groovy-language-server](https://github.com/GroovyLanguageServer/groov
 ## License
 
 [Apache License 2.0](LICENSE).
+
+## Roadmap
+
+Four language features come next: find all references, rename, type definition, and document highlight. A VS Code extension, published on the Marketplace and Open VSX, is planned too. For the gaps in Grails support and the routes the server could take later, see the [Roadmap](docs/roadmap.md).
