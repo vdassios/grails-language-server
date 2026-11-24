@@ -4,64 +4,71 @@
 [![Release](https://img.shields.io/github/v/release/vdassios/grails-language-server?include_prereleases)](https://github.com/vdassios/grails-language-server/releases)
 [![License](https://img.shields.io/github/license/vdassios/grails-language-server)](LICENSE)
 
-A [language server](https://microsoft.github.io/language-server-protocol/) for Groovy and Grails that compiles your code with your project's own Groovy and Grails. The members Grails adds at compile time (`render`, `params`, `save`, `get`, dynamic finders, ...) are visible to completion, hover and navigation, in any LSP editor.
+grails-language-server is a [language server](https://microsoft.github.io/language-server-protocol/) for Groovy and Grails. It compiles your code with your project's own Groovy and Grails, so it knows the methods and properties that Grails adds at compile time: `render` and `params` in controllers, `save` and `get` on domain classes, dynamic finders, and more. Completion, hover, and go to definition all work with them, in any editor that supports the Language Server Protocol.
 
-![Neovim with grails-language-server: a GORM finder completed step by step and read on hover, a finder warning, a view name followed to its page, and a model variable completed in the page](docs/media/server.gif)
+![Neovim with grails-language-server: a GORM finder completed step by step and explained on hover, a finder warning, a view name followed to its page, and a model variable completed in the page](docs/media/server.gif)
 
-Recorded in Neovim on [`demo/bookstore`](demo/), a small Grails 7 app you can try it on.
+The recording shows Neovim on [`demo/bookstore`](demo/), a small Grails 7 app that you can try the server on.
 
 ## Features
 
-- **Grails artefacts**: controllers, domain classes, services and taglibs carry the members Grails adds; `def fooService` is typed as that service. [More](docs/features.md#grails-artefacts)
-- **GORM**: dynamic finders complete one step at a time, are typed, read in words on hover and warned about when GORM would reject them; criteria and `where` blocks, `constraints` and `mapping`. [More](docs/features.md#gorm)
-- **Conventions**: strings that name views, templates, layouts, controllers and actions complete, go to their target and get a hint when it does not exist. [More](docs/features.md#conventions)
-- **GSP pages**: tags and attributes from the project's taglibs and jars; page code compiled as Grails translates it, with errors, completion, hover and definition in `${ }`, and model variables typed from the controllers. [More](docs/features.md#gsp-pages)
-- **Library sources**: definition and hover reach the sources of jars and the JDK; missing sources jars are downloaded on request. [More](docs/features.md#library-sources)
-- **The usual LSP features**: diagnostics, completion (a class not yet imported is offered with its import when it is one of the project's own; jar and JDK classes need the import first), hover, signature help, definition, document and workspace symbols. [Checklist](docs/conformance.md)
-- **Groovy 2.5 to 6, Grails 4 to 8**: each module source set compiles with its own jars, on the project's JDK. [Tested range](#status), [JDK table](docs/editors.md#install)
-- **Any LSP editor**: setups checked in Neovim, Helix, Emacs and VS Code. [Editors](docs/editors.md)
+- **Your project's Groovy and Grails.** The server compiles each source set in its own class loader, with your project's jars, on your project's JDK. Your code is compiled by the same Groovy version (2.5 to 6) and the same AST transformations as in your build. This is the main difference from [groovy-language-server](https://github.com/GroovyLanguageServer/groovy-language-server), which this server is forked from: it compiles every project with the Groovy 4 that it bundles. Grails 4 to 8 are supported. ([How it works](docs/how-it-works.md), [tested versions](#status), [JDK table](docs/editors.md#install))
+- **Standard language features.** Diagnostics, completion, hover, signature help, go to definition, and document and workspace symbols. ([Feature status](docs/conformance.md))
+- **Any LSP editor.** Setups are tested in Neovim, Helix, Emacs, and VS Code. For Neovim, [grails.nvim](https://github.com/vdassios/grails.nvim) also adds a tree-sitter grammar for GSP. ([Editor setup](docs/editors.md), [GSP grammar](https://github.com/vdassios/grails.nvim/blob/main/docs/grammar.md))
+- **Grails artefacts.** Controllers, domain classes, services, and taglibs have the members that Grails adds to them. A property such as `def bookService` is typed as `BookService`. ([More](docs/features.md#grails-artefacts))
+- **GORM.** No class declares a dynamic finder such as `findByTitleLikeAndAuthor`. GORM builds it from the method name at run time. The server reads the name the same way GORM does. It completes a finder one part at a time, gives it a type, describes the query on hover, and warns you when GORM would reject it. It also understands criteria blocks, `where` blocks, `constraints`, and `mapping`. ([More](docs/features.md#gorm))
+- **Grails conventions.** Strings that name a view, template, layout, controller, or action complete, take you to their target, and get a hint when the target doesn't exist. ([More](docs/features.md#conventions))
+- **GSP pages.** Tags and attributes come from your taglibs and your jars. Code in a page is translated by Grails's own `GroovyPageParser`, loaded from your class path, and then compiled. You get errors, completion, hover, and go to definition inside `${ }`. Model variables are typed from the controllers that render the page. ([More](docs/features.md#gsp-pages))
+- **Library sources.** Go to definition and hover work on classes from jars and the JDK. If a sources jar is missing, the server can download it when your editor asks. ([More](docs/features.md#library-sources))
+- **Tested on public projects.** The server was measured on five open-source Grails apps and plugins, from Grails 4 to 8 and up to 1,787 Groovy files. It found the Grails members on every artefact. Three of the projects compile with no errors, and every error in the other two has a known cause. ([Results](benchmarks/results.md))
 
 ## Quick start
 
-1. Download `grails-language-server-all.jar` from the [releases](https://github.com/vdassios/grails-language-server/releases).
-2. Run it on the project's JDK, the one its Gradle build uses: Groovy 2.5 (Grails 4) needs JDK 15 or older ([JDK table](docs/editors.md#install)).
-3. Start it from your editor with the Gradle root as the workspace root. Neovim 0.11 or later:
+1. Download `grails-language-server-all.jar` from the [releases](https://github.com/vdassios/grails-language-server/releases) page.
+2. Find the JDK that your project's Gradle build uses, and run the server on it. For a Grails 4 project (Groovy 2.5), that has to be JDK 15 or older. See the [JDK table](docs/editors.md#install).
+3. Set up your editor to start the server, with the Gradle root as the workspace root. For Neovim 0.11 or later, add this to your config:
 
-```lua
-vim.lsp.config('grails_ls', {
-  cmd = { 'java', '-jar', '/path/to/grails-language-server-all.jar' },
-  filetypes = { 'groovy', 'gsp' },
-  root_markers = { 'settings.gradle', 'settings.gradle.kts', 'gradlew' },
-  init_options = { trusted = true },
-})
-vim.lsp.enable 'grails_ls'
-```
+   ```lua
+   vim.lsp.config("grails_ls", {
+     cmd = { "java", "-jar", "/path/to/grails-language-server-all.jar" },
+     filetypes = { "groovy", "gsp" },
+     root_markers = { "settings.gradle", "settings.gradle.kts", "gradlew" },
+     init_options = { trusted = true },
+   })
+   vim.lsp.enable("grails_ls")
+   ```
 
-`trusted = true` lets the server run the project's Gradle build and AST transformations; send it only for projects you trust ([Trust](docs/how-it-works.md#trust)). In Neovim, [grails.nvim](https://github.com/vdassios/grails.nvim) does all of this for you: it downloads the jar, finds the JDK and adds a GSP grammar. Helix, Emacs, VS Code and Zed: [docs/editors.md](docs/editors.md).
+4. Open a controller and hover over `render`. The first start runs your Gradle build, so it can take a while.
+
+`trusted = true` allows the server to run your project's Gradle build and AST transformations. Only set it for projects you trust. See [Trust](docs/how-it-works.md#trust).
+
+If you use Neovim, [grails.nvim](https://github.com/vdassios/grails.nvim) does all of this for you. It downloads the jar, finds the right JDK, and adds the GSP grammar. For Helix, Emacs, VS Code, and Zed, see [Editor setup](docs/editors.md).
 
 ## Status
 
-Pre-alpha, milestone M6 (distribution). Linux and macOS only: nothing is tested on Windows. What is tested, exactly:
+The server is in pre-alpha. It runs on Linux and macOS. It has not been tested on Windows.
 
-- **Groovy**: the `analysis` tests pass on Groovy 2.5.23, 3.0.23, 4.0.33, 5.1.3 and 6.0.0.
-- **Grails 4 and 7**: the server's tests run on two fixture projects, Grails 4.1.4 (Groovy 2.5, JDK 11) and Grails 7.2.4 (Groovy 4, JDK 17).
-- **Grails 8**: reading its taglibs (tags declared as methods) is covered by a unit test over Grails 8's own taglib class files; there is no Grails 8 fixture.
-- **Grails 5 and 6**: one manual benchmark run each, on a public project ([benchmarks/results.md](benchmarks/results.md), which also measures a Grails 4, 7 and 8 project).
+This is what is tested:
 
-What is covered, planned or out of scope, feature by feature: [docs/conformance.md](docs/conformance.md).
+- **Groovy:** the `analysis` tests pass on Groovy 2.5.23, 3.0.23, 4.0.33, 5.1.3, and 6.0.0.
+- **Grails 4 and 7:** the server's tests run on two fixture projects: Grails 4.1.4 (Groovy 2.5, JDK 11) and Grails 7.2.4 (Groovy 4, JDK 17).
+- **Grails 8:** a unit test reads the taglib class files of Grails 8, which declares tags as methods. There is no Grails 8 fixture project.
+- **Grails 5 and 6:** each was measured once, by hand, on a public project. See [benchmarks/results.md](benchmarks/results.md), which also covers a Grails 4, 7, and 8 project.
+
+For the status of each feature, see [Feature status](docs/conformance.md).
 
 ## Documentation
 
-- [Features](docs/features.md): Grails artefacts, GORM, conventions, GSP pages, library sources
-- [Install and editor setup](docs/editors.md): the JDK table, Neovim, Helix, Emacs, VS Code, Zed
-- [How it works](docs/how-it-works.md): design, trust, protocol extensions, known limits
-- [Conformance checklist](docs/conformance.md)
-- [Benchmarks](benchmarks/results.md) on a [public corpus](benchmarks/corpus.md)
-- [Development](docs/development.md): build, tests, performance tests, releases
+- [Features](docs/features.md): what the server understands about Grails artefacts, GORM, conventions, GSP pages, and library sources.
+- [Install and editor setup](docs/editors.md): which JDK to use, and setup for Neovim, Helix, Emacs, VS Code, and Zed.
+- [How it works](docs/how-it-works.md): the design, trust, protocol extensions, and known limits.
+- [Feature status](docs/conformance.md): which features are supported, planned, or out of scope.
+- [Benchmarks](benchmarks/results.md): measurements on a [public corpus](benchmarks/corpus.md) of Grails projects.
+- [Development](docs/development.md): building, testing, and releasing.
 
 ## Origin
 
-A fork of [groovy-language-server](https://github.com/GroovyLanguageServer/groovy-language-server) by Prominic.NET, Inc. Its providers and AST visitor are the starting point of `analysis`. See `NOTICE`.
+This project is a fork of [groovy-language-server](https://github.com/GroovyLanguageServer/groovy-language-server) by Prominic.NET, Inc. Its providers and AST visitor were the starting point for the `analysis` module. See `NOTICE`.
 
 ## License
 
