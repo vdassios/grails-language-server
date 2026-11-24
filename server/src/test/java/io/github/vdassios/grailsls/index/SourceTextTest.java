@@ -19,4 +19,13 @@ class SourceTextTest {
   void unclosedStringsAndCommentsEnd() {
     assertEquals("x = '  \ny {}\n    \n ", SourceText.code("x = 'ab\ny {}\n/* a\nb"));
   }
+
+  /** A slash where a value may start opens a slashy string; after a value it divides. */
+  @Test
+  void slashyStringsAreBlankedAndDivisionIsCode() {
+    assertEquals("def half = total / 2 / count; ~/    /; f(/ /); return /   /",
+        SourceText.code("def half = total / 2 / count; ~/a\\/*/; f(/x/); return /\\d+/"));
+    assertEquals("m = s =~ /         /\nclass A {}", SourceText.code("m = s =~ /'${a}\\/*x/\nclass A {}"), "no string or comment opens in it");
+    assertEquals("~/            /\n}", SourceText.code("~/.*\\\\/.*\\\\/.*/\n}"), "a backslash escapes a slash only");
+  }
 }

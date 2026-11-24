@@ -165,14 +165,14 @@ class DeclarationIndexTest {
     assertEquals(List.of(), index.rescan().files, "nothing changed since");
   }
 
-  /** A parse corrects what the text scan got wrong (a slashy string is read as code), until the file changes again. */
+  /** A parse corrects what the text scan got wrong (a dollar-slashy string is read as code), until the file changes again. */
   @Test
   void aParseReplacesTheNamesTheScanFound() throws IOException {
     Path root = tmp.resolve("src");
-    Path file = write("src/p/A.groovy", "package p\nclass A {\n  def glob = /\\/*/\n}\nclass Lost {}\n// */\n");
+    Path file = write("src/p/A.groovy", "package p\nclass A {\n  def glob = $/ /* /$\n}\nclass Lost {}\n// */\n");
     DeclarationIndex index = new DeclarationIndex(Set.of());
     index.addRoots(List.of(root));
-    assertNull(index.fileOf("p.Lost", List.of(root)), "the scan reads /* in the slashy string as a comment");
+    assertNull(index.fileOf("p.Lost", List.of(root)), "the scan reads /* in the dollar-slashy string as a comment");
 
     assertTrue(index.parsed(file, List.of("p.A", "p.Lost")));
     assertEquals(file, index.fileOf("p.Lost", List.of(root)));

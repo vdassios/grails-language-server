@@ -60,6 +60,13 @@ class DeclarationsTest {
     assertEquals(List.of("Kept"), Declarations.of("def glob = '/static/*'\nclass Kept {}\n// */\n"));
   }
 
+  /** A slashy string's {@code \/*} opens no comment either; a division is still code. */
+  @Test
+  void aSlashyStringThatLooksLikeACommentHidesNothing() {
+    String text = "package c\nclass Codec {\n  def re = /^\\/*(.*?)\\/*$/\n  def half(n) { n / 2 }\n}\nclass Other {}\n";
+    assertEquals(List.of("c.Codec", "c.Other"), Declarations.of(text));
+  }
+
   /** Source embedded in a multi-line string (a Spock spec's input) declares nothing. */
   @Test
   void classesInsideMultiLineStringsAreNotDeclared() {

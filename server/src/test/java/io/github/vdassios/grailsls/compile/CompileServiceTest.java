@@ -195,13 +195,13 @@ class CompileServiceTest {
   }
 
   /**
-   * The parse behind the symbol index corrects the type names the text scan got wrong (a slashy string read as a
-   * comment), and the open documents compile again; a file that does not parse keeps the names of the scan.
+   * The parse behind the symbol index corrects the type names the text scan got wrong (a dollar-slashy string read
+   * as a comment), and the open documents compile again; a file that does not parse keeps the names of the scan.
    */
   @Test
   void aParseCorrectsTheDeclarationIndex() throws Exception {
     Files.createDirectories(src.resolve("lib"));
-    Files.writeString(src.resolve("lib/Globs.groovy"), "package lib\nclass Globs {\n  def glob = /\\/*/\n}\nclass Lost {}\n// */\n");
+    Files.writeString(src.resolve("lib/Globs.groovy"), "package lib\nclass Globs {\n  def glob = $/ /* /$\n}\nclass Lost {}\n// */\n");
     Files.writeString(src.resolve("Broken.groovy"), "class Broken {\n  void x( }\n");
     Workspace workspace = workspace();
     service.setWorkspace(workspace);
