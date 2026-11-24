@@ -1,8 +1,8 @@
 # Benchmark results
 
-Measured figures for the server: first on its own fixtures, the latest numbers (2026-11-23, after the Stage 6 latency work), then on the five public projects of [corpus.md](corpus.md) (2026-11-18, server `7224fc6`). The corpus projects were not on the machine for the later measurements, so their figures predate the changes below and are not claimed for them.
+Measured figures for the server: first on its own fixtures, the latest numbers (2026-11-23, after the Stage 6 latency work), then rundeck again after the Stage 6 work (2026-11-24, server `1706504`), then the five public projects of [corpus.md](corpus.md) (2026-11-18, server `7224fc6`). The other four corpus projects were not on the machine for the later measurements, so their figures predate the changes below and are not claimed for them.
 
-The server was developed against a target (C6): first diagnostics within 3 s of a warm start, completion within 300 ms, resident memory under 1.5 GB with ten files open. It is a target, not a promise: both fixtures are well within it; on the corpus, first diagnostics and completion after a typed dot miss it on the larger projects (mdm-core, mod-agreements, rundeck, hoist-core) and resident memory on rundeck, as the corpus sections give.
+The server was developed against a target (C6): first diagnostics within 3 s of a warm start, completion within 300 ms, resident memory under 1.5 GB with ten files open. It is a target, not a promise: both fixtures are well within it. On the corpus, first diagnostics miss it on the larger projects (mdm-core, mod-agreements, rundeck, hoist-core), and resident memory misses it on rundeck. Completion after a typed dot missed it on the same four on 2026-11-18; rundeck, the one measured since, meets it after Stage 6 (p90 59 ms).
 
 ## Fixtures, 2026-11-23: before and after the latency work
 
@@ -53,6 +53,45 @@ The shared parser cache (`AntlrLoader`, `SharedParser`) is kept. It loads the AN
 
 Creating a class loader for each file the symbol index parses costs about 1 µs, against about 130 µs to parse and convert the grails4 fixture's controller with Groovy 2.5.14 (JDK 11, after warm-up): kept as it is.
 
+## rundeck, 2026-11-24: after the Stage 6 work
+
+- Server `1706504` against the 2026-11-18 figures (`7224fc6`). rundeck at `21f4101` on JDK 17.0.19; machine, test heap (4096 MB) and units as in the corpus sections below; mains power with sleep prevented.
+- One full run (all four perf tests in one JVM, 61 minutes), then the memory test alone three times, then the cold starts. Where three runs are given, the first figure is their median. The cold starts ran on the fat jar with the JDK check fix (see [Known problems](#known-problems-found)): without it the server failed on rundeck before its first compile. The perf tests do not run that check.
+
+| rundeck | 2026-11-18 (`7224fc6`) | 2026-11-24 (`1706504`) |
+|---|---|---|
+| Sweep: errors / files with errors | 29 / 20 | 29 / 20 |
+| Sweep compile: controllers | 290 / 4575 / 8145 | 273 / 5839 / 8933 |
+| Sweep compile: services | 34 / 4151 / 7602 | 54 / 5308 / 9740 |
+| Sweep compile: domain | 3599 / 4116 / 4162 | 4540 / 5187 / 5387 |
+| Heap after the sweep | 1738 | 1673 |
+| Static test: errors; compile | 1; 37 / 3498 / 11721 | 1; 29 / 3517 / 10289 |
+| Latency sample: compile | 1217 / 5491 / 16551 | 906 / 5154 / 11453 |
+| Hover | 0 / 7 / 66 | 0 / 7 / 21 |
+| Completion | 4 / 6 / 8 | 0 / 0 / 250 |
+| Compile with a typed dot | 7 / 5146 / 5816 | 4 / 4512 / 4737 |
+| **Completion after a typed dot** | 14 / **5462** / 7139 | 1 / **59** / 104 |
+| Completions with no items: compiled / typed dot | 0 / 2 | 0 / 2 |
+| Symbol index: files / symbols | 1714 / 25979 | 1714 / 23766 |
+| Symbol index: time; contexts it started | 29843; - | 19868; 2 |
+| Heap after the symbol index | 2047 | 1570 |
+| Memory test: ten files, all compiles | 35301 | 39822 (38318, 41225) |
+| Memory test: heap with ten files | 1313 | 1344 (1344, 1346) |
+| **RSS with ten files** | 2389 | 2505 (2272, 2575) |
+| RSS after the repeats, before close | 2986 | 3331 (3115, 4129) |
+| RSS after close | 2119 | 2292 (2283, 2476) |
+| Loader collected by GC / once soft references are cleared | no / no | no / no (all three runs) |
+| Cold start, controllers: median / p90 / max; within 3 s | 7652 / 13565 / 13913; 10 of 20 | 2552 / 13405 / 13627; 10 of 20 |
+| Cold start, services: median / p90 / max; within 3 s | 12929 / 14332 / 14647; 8 of 20 | 12395 / 13254 / 13665; 8 of 20 |
+
+What changed and what it shows:
+
+- **Completion after a typed dot now meets the target on rundeck:** p90 5462 → 59 ms. It is answered from the last compile that parsed, as on the fixtures. One plain completion took 250 ms; its median and p90 are 0.
+- **The symbol index** took 19.9 s instead of 29.8 s and started 2 contexts, one per Groovy jar. Before, it parsed in every source set's loader. It found 2,213 fewer symbols in the same 1714 files. The index's declaration scan changed in round 2, and the difference was not broken down. Heap after the index: 2047 → 1570 MB. Heap after the sweep: 1738 → 1673 MB. Both figures come from the full run's shared JVM.
+- **Sweep compiles are 26 to 28 % slower at p90** in all three groups, at the edge of the run-to-run variation (about 30 %). The latency sample and the static test are as fast or faster. This is one run each and was not investigated.
+- **First diagnostics are unchanged:** the same 10 controllers and 8 services of 20 are within 3 s. The files still fall into two groups, about 2 s and about 13 s, so the controllers' median (7.7 → 2.6 s) only shows where it falls between them.
+- **Memory is unchanged within the variation:** RSS with ten files is still above 1.5 GB. The loader is still kept after close on a JDK 17 server process (the known JDK limit below).
+
 ## Corpus, 2026-11-18: against the C6 target
 
 - Server: commit `7224fc6`.
@@ -67,6 +106,8 @@ Creating a class loader for each file the symbol index parses costs about 1 µs,
 | Completion within 300 ms, after a typed dot (the editor waits for the compile of the copy) | cherokeedictionary (p90 113) | hoist-core (p90 396), mod-agreements (524), mdm-core (2357), rundeck (5462) |
 | RSS under 1.5 GB with ten files | cherokeedictionary 448, mdm-core 872, mod-agreements 1137 (median of three runs), hoist-core 1145 | rundeck 2389 |
 | Loader released on close | cherokeedictionary, mdm-core, mod-agreements, hoist-core | rundeck on JDK 17: a JDK limit (see Known problems); released once soft references are cleared when the server runs on JDK 21 |
+
+rundeck after Stage 6: see the section above; completion after a typed dot now meets the target there.
 
 Errors on valid code: 0 on cherokeedictionary, mod-agreements and hoist-core; mdm-core 4 and rundeck 29 (sweep) and 1 (static test), all attributed below. Grails members (artefact traits and GORM methods) are found on every controller, domain class, taglib and `@Transactional` service of every project.
 
@@ -189,8 +230,9 @@ Server changes in between: library sources for definition and hover, GORM finder
 ## Known problems found
 
 - **Known limit: on a JDK 17 server process, rundeck's compile context loader is not released.** After close the loader survives even once soft references are cleared: heap 1643 → 690 MB, and only 599 of 11345 loaded classes unloaded. A heap dump after close shows the cause in the JDK, not the server: `MethodHandle.asTypeCache` is a strong field on JDK 17, and method handles kept in JDK statics (`java.lang.runtime.ObjectMethods.OBJECT_EQ` and `OBJECTS_HASHCODE`, used by record classes; `MethodHandleImpl.ARRAYS`, reached from Groovy 4's `invokedynamic` call sites) keep the last type they were adapted to, whose classes belong to the context's loader (Micronaut's source generation records, Groovy's AST classes). JDK 21 keeps such types behind a soft reference: the same test with the server's JVM on 21.0.13 (the project still on JDK 17, 0 errors) gives no / yes, heap after close 10 MB, loaded classes 11245 → 4698 (that run compiled each repeated file once, not 50 times). Seen on rundeck only, the one Groovy 4 project measured on JDK 17. Nothing to fix in the server; the launcher should prefer JDK 21 or newer for the server process.
+- **Fixed (2026-11-24): the JDK check failed on a module with only Java in main.** At start-up the server checks that the project's Groovy can read the JDK's class files, in the first compile context of each Groovy version. rundeck's `core` applies the groovy plugin, but its main source set holds only Java, and Groovy is on its test class path alone. That context has no Groovy to load the analysis layer on (`NoClassDefFoundError: org/codehaus/groovy/ast/AnnotatedNode`), so the server reported `failed` and published no diagnostics. The check now runs only in contexts with a Groovy jar. The bug came in after the 2026-11-18 measurements and was never released. The perf tests skip that check, so only the cold starts showed it.
 - **Fixed: Java build output that names Groovy sources.** A Java class from build output whose member types name a Groovy class not yet in the compile failed the compile (rundeck's `JettyCombinedLdapLoginModuleSpec`: `NoClassDefFoundError: rundeck.services.ConfigurationService`, the 30th sweep error of 2026-11-15). A document that hits this is compiled twice.
-- **Budget misses on larger projects:** first diagnostics above 3 s on mdm-core, rundeck and hoist-core, and partly mod-agreements; completion after a typed dot above 300 ms at p90 on all but cherokeedictionary; RSS with ten files above 1.5 GB on rundeck.
+- **Budget misses on larger projects:** first diagnostics above 3 s on mdm-core, rundeck and hoist-core, and partly mod-agreements; completion after a typed dot above 300 ms at p90 on all but cherokeedictionary (2026-11-18; rundeck meets it since Stage 6); RSS with ten files above 1.5 GB on rundeck.
 
 ## Rerunning
 
