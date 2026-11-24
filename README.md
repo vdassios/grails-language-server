@@ -63,6 +63,7 @@ For the status of each feature, see [Feature status](docs/conformance.md).
 - [Install and editor setup](docs/editors.md): which JDK to use, and setup for Neovim, Helix, Emacs, VS Code, and Zed.
 - [How it works](docs/how-it-works.md): the design, trust, protocol extensions, and known limits.
 - [Feature status](docs/conformance.md): which features are supported, planned, or out of scope.
+- [Roadmap](docs/roadmap.md): the work that is left, and the routes the server could take later.
 - [Benchmarks](benchmarks/results.md): measurements on a [public corpus](benchmarks/corpus.md) of Grails projects.
 - [Development](docs/development.md): building, testing, and releasing.
 
