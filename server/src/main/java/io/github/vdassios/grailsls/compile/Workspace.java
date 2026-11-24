@@ -125,8 +125,10 @@ public final class Workspace implements AutoCloseable {
         if (!ownRoots(sourceSet, buildDirs).isEmpty()) {
           CompileContext context = context(model, module, sourceSet, buildDirs, analysisJar, jars, antlr, classOutputs, reporter);
           contexts.add(context);
-          probes.putIfAbsent(module.groovyVersion, context);
           Path groovyJar = AntlrLoader.groovyJar(context.classpath());
+          if (groovyJar != null) { // a Java-only main whose module has Groovy for its tests alone cannot load the analysis layer
+            probes.putIfAbsent(module.groovyVersion, context);
+          }
           parsers.put(context, groovyJar == null ? context : firstOfJar.computeIfAbsent(groovyJar, jar -> context));
           if (sourceSet.name.equals("main")) {
             mains.put(module.path, context);

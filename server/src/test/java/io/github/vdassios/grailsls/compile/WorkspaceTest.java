@@ -330,4 +330,23 @@ class WorkspaceTest {
           workspace.lookup(app, p -> null).pluginFiles());
     }
   }
+
+  /**
+   * A module can apply the groovy plugin with only Java in main and Groovy on its test classpath alone (rundeck's
+   * {@code core}): the JDK check must not try to load the analysis layer there, where there is no Groovy to load it on.
+   */
+  @Test
+  void theJdkCheckSkipsContextsWithoutAGroovyJar() throws IOException {
+    Path core = tmp.resolve("core");
+    Path app = tmp.resolve("app");
+    Files.createDirectories(core.resolve("src/main/java"));
+    Files.createDirectories(app.resolve("src/main/groovy"));
+    Path dep = touch("repo/dep.jar", "");
+    SourceSetRecord coreMain = sourceSet("main", List.of(core.resolve("src/main/java")), List.of(dep), List.of());
+    SourceSetRecord appMain = sourceSet("main", List.of(app.resolve("src/main/groovy")), List.of(Path.of(System.getProperty("gls.testGroovy"))), List.of());
+    ProjectModel model = new ProjectModel(tmp, List.of(module(":core", core, "2.5.23", List.of(), coreMain), module(":app", app, "2.5.23", List.of(), appMain)), false);
+    try (Workspace workspace = new Workspace(model, AnalysisJar.extract(tmp.resolve("cache")))) {
+      assertNull(workspace.jdkClassFileError());
+    }
+  }
 }
