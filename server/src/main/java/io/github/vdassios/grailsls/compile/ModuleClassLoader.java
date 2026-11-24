@@ -38,12 +38,24 @@ final class ModuleClassLoader extends URLClassLoader {
 
   /** The workspace's jar entries, which {@link #index} is built from. */
   private final JarEntries jars;
+  /** ANTLR's runtime, shared with the other module loaders of the same Groovy jar; null when not shared. */
+  private final AntlrLoader antlr;
 
-  ModuleClassLoader(String name, List<URL> urls, Map<String, Path> javaClasses, Map<String, List<Path>> resources, JarEntries jars) {
+  ModuleClassLoader(String name, List<URL> urls, Map<String, Path> javaClasses, Map<String, List<Path>> resources, JarEntries jars,
+      AntlrLoader antlr) {
     super(name, urls.toArray(new URL[0]), BoundaryLoader.INSTANCE);
     this.javaClasses = javaClasses;
     this.resources = Map.copyOf(resources);
     this.jars = jars;
+    this.antlr = antlr;
+  }
+
+  @Override
+  protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
+    if (antlr != null && name.startsWith(AntlrLoader.PACKAGE)) {
+      return antlr.loadClass(name);
+    }
+    return super.loadClass(name, resolve);
   }
 
   @Override
