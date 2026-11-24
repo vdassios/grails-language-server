@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.PrintStream;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -95,7 +96,7 @@ import io.github.vdassios.grailsls.project.SourcesReport;
  * LSP entry point. Speaks LSP over stdio.
  *
  * <p>Initialization options: {@code trusted} (required before any project code runs), {@code gradle.timeoutSeconds}
- * (default 300; a number or a numeric string) and {@code cacheDir}.
+ * (default 300; a number or a numeric string) and {@code cacheDir} (a path string).
  *
  * <p>The server exits when its client goes away, even without the {@code exit} notification: when its input ends,
  * or when the process named by {@code InitializeParams.processId} ends. The exit code is 0 after a {@code shutdown}
@@ -166,7 +167,7 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
     boolean trusted = bool(options.get("trusted"));
     JsonObject gradle = options.has("gradle") && options.get("gradle").isJsonObject() ? options.getAsJsonObject("gradle") : new JsonObject();
     int timeout = timeoutSeconds(gradle.get("timeoutSeconds"), message -> client.logMessage(new MessageParams(MessageType.Warning, message)));
-    Path cacheDir = options.has("cacheDir") ? Path.of(options.get("cacheDir").getAsString()) : GradleBridge.defaultCacheDir();
+    Path cacheDir = cacheDir(options.get("cacheDir"), message -> client.logMessage(new MessageParams(MessageType.Warning, message)));
     GradleBridge bridge = new GradleBridge(cacheDir, GradleBridge.defaultJavaHome(), Duration.ofSeconds(timeout));
     StartupMarks marks = new StartupMarks(message -> client.logMessage(new MessageParams(MessageType.Log, message)));
     compiles = new CompileService(client::publishDiagnostics, () -> marks.mark(StartupMarks.FIRST_DIAGNOSTICS), CompileService.DEBOUNCE_MILLIS);
@@ -272,6 +273,26 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
     }
     log.accept("gradle.timeoutSeconds is not a positive whole number (" + value + "): using " + DEFAULT_TIMEOUT_SECONDS);
     return DEFAULT_TIMEOUT_SECONDS;
+  }
+
+  /**
+   * {@code cacheDir}: a path given as a non-blank string; anything else is logged and gives the default, as does no
+   * value.
+   */
+  static Path cacheDir(JsonElement value, Consumer<String> log) {
+    if (value == null || value.isJsonNull()) {
+      return GradleBridge.defaultCacheDir();
+    }
+    if (value.isJsonPrimitive() && value.getAsJsonPrimitive().isString() && !value.getAsString().isBlank()) {
+      try {
+        return Path.of(value.getAsString());
+      } catch (InvalidPathException e) {
+        // logged below
+      }
+    }
+    Path fallback = GradleBridge.defaultCacheDir();
+    log.accept("cacheDir is not a path (" + value + "): using " + fallback);
+    return fallback;
   }
 
   /** The server's version, from the jar's manifest; null when not run from the jar (tests). */

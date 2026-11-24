@@ -278,6 +278,22 @@ class ProtocolTest {
   }
 
   @Test
+  void theCacheDirIsAPathStringOrTheDefault() {
+    Path fallback = io.github.vdassios.grailsls.project.GradleBridge.defaultCacheDir();
+    List<String> logged = new java.util.ArrayList<>();
+    assertEquals(Path.of("/tmp/gls"), GrailsLanguageServer.cacheDir(com.google.gson.JsonParser.parseString("\"/tmp/gls\""), logged::add));
+    assertEquals(List.of(), logged);
+    for (String bad : List.of("{}", "[\"/tmp/gls\"]", "1", "true", "\"\"", "\"  \"", "\"a\\u0000b\"")) {
+      assertEquals(fallback, GrailsLanguageServer.cacheDir(com.google.gson.JsonParser.parseString(bad), logged::add), bad);
+    }
+    assertEquals(7, logged.size(), logged.toString());
+    assertEquals("cacheDir is not a path ({}): using " + fallback, logged.get(0));
+    assertEquals(fallback, GrailsLanguageServer.cacheDir(null, logged::add), "not given");
+    assertEquals(fallback, GrailsLanguageServer.cacheDir(com.google.gson.JsonNull.INSTANCE, logged::add), "null");
+    assertEquals(7, logged.size(), "not given is no mistake");
+  }
+
+  @Test
   void refusesGroovyOlderThan25() throws Exception {
     Path root = groovyProject(System.getProperty("gls.testGroovy"), "2.4.21");
     start(root, trustedOptions());
