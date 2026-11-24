@@ -246,7 +246,6 @@ class ProtocolTest {
     assertEquals(0, FakeWrapper.runs(root));
   }
 
-  /** Grails 3 (Groovy 2.4) stops here: the analysis layer needs Groovy 2.5 or later. */
   /** {@code gradle.timeoutSeconds} sent as a string that is no number: initialize succeeds and the project resolves. */
   @Test
   void aTimeoutThatIsNoNumberFallsBackToTheDefault() throws Exception {
@@ -293,6 +292,7 @@ class ProtocolTest {
     assertEquals(7, logged.size(), "not given is no mistake");
   }
 
+  /** Grails 3 (Groovy 2.4) stops here: the analysis layer needs Groovy 2.5 or later. */
   @Test
   void refusesGroovyOlderThan25() throws Exception {
     Path root = groovyProject(System.getProperty("gls.testGroovy"), "2.4.21");
