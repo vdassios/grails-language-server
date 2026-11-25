@@ -86,6 +86,14 @@ public class GroovyASTUtils {
         return call instanceof MethodCall && ((MethodCall) call).getArguments() == arguments ? (MethodCall) call : null;
     }
 
+    /** The top-level class a class is nested in, or the class itself; null for null. */
+    public static ClassNode topLevel(ClassNode type) {
+        while (type != null && type.getOuterClass() != null) {
+            type = type.getOuterClass();
+        }
+        return type;
+    }
+
     public static ASTNode getEnclosingNodeOfType(ASTNode offsetNode, Class<? extends ASTNode> nodeType,
             ASTNodeVisitor astVisitor) {
         ASTNode current = offsetNode;

@@ -210,7 +210,7 @@ public final class Conventions {
 
   /** The logical name of the controller a class is ({@code BookController} → {@code book}), or null. */
   private String controllerName(ClassNode type) {
-    ClassNode top = topLevel(type);
+    ClassNode top = GroovyASTUtils.topLevel(type);
     if (top == null || !inGrailsApp("controllers")) {
       return null;
     }
@@ -223,21 +223,14 @@ public final class Conventions {
    * namespace} (Grails looks below {@code views/<namespace>/} first) or is abstract (its subclasses render them).
    */
   private static boolean viewsUnknown(ClassNode type) {
-    ClassNode top = topLevel(type);
+    ClassNode top = GroovyASTUtils.topLevel(type);
     FieldNode namespace = top.getField("namespace");
     return Modifier.isAbstract(top.getModifiers()) || namespace != null && namespace.isStatic();
   }
 
   private boolean urlMappings(ClassNode type) {
-    ClassNode top = topLevel(type);
+    ClassNode top = GroovyASTUtils.topLevel(type);
     return top != null && top.getNameWithoutPackage().endsWith("UrlMappings") && inGrailsApp("controllers");
-  }
-
-  private static ClassNode topLevel(ClassNode type) {
-    while (type != null && type.getOuterClass() != null) {
-      type = type.getOuterClass();
-    }
-    return type;
   }
 
   private boolean inGrailsApp(String directory) {
@@ -418,7 +411,7 @@ public final class Conventions {
     if (reference.base == null) {
       return null;
     }
-    ClassNode own = reference.node == null ? null : topLevel((ClassNode) GroovyASTUtils.getEnclosingNodeOfType(reference.node, ClassNode.class, ast));
+    ClassNode own = reference.node == null ? null : GroovyASTUtils.topLevel((ClassNode) GroovyASTUtils.getEnclosingNodeOfType(reference.node, ClassNode.class, ast));
     if (own != null && reference.base.equals(controllerName(own))) {
       return new Owner(own, documentPath);
     }
