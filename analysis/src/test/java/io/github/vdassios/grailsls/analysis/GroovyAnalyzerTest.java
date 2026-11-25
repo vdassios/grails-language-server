@@ -35,6 +35,7 @@ import org.codehaus.groovy.ast.Parameter;
 import org.codehaus.groovy.ast.expr.ClosureExpression;
 import org.codehaus.groovy.control.Phases;
 import org.codehaus.groovy.control.SourceUnit;
+import org.codehaus.groovy.control.messages.SyntaxErrorMessage;
 import org.codehaus.groovy.transform.sc.StaticCompilationMetadataKeys;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -153,6 +154,23 @@ class GroovyAnalyzerTest {
     assertEquals(Diagnostic.ERROR, error.severity);
     assertTrue(error.startLine >= 2 && error.startLine <= 3, error.toString());
     assertFalse(error.message.contains("@ line"), "the message without Groovy's position suffix: " + error.message);
+  }
+
+  /**
+   * Groovy 3 and later keep no tree of a text that does not parse, and each later phase would parse it again: about
+   * 45 ms a parse on a large file, with ANTLR's LL pass. Each parse adds its syntax error to the error collector.
+   */
+  @Test
+  void aTextThatDoesNotParseIsParsedOnce() {
+    String path = tmp.resolve("A.groovy").toString();
+    for (String text : List.of("class A {\n  int run(String s) {\n    s.\n  }\n}\n",
+        "@groovy.transform.CompileStatic\nclass A {\n  int run(String s) {\n    s.\n  }\n}\n")) {
+      CompileResult result = compile(path, text);
+      assertEquals(1, result.diagnostics.size(), result.diagnostics.toString());
+      long syntaxErrors = analyzer.unit(path).getErrorCollector().getErrors().stream().filter(SyntaxErrorMessage.class::isInstance).count();
+      assertEquals(1, syntaxErrors, "one parse, so one syntax error in the collector: " + text);
+      assertEquals(Phases.CANONICALIZATION, analyzer.phase(path));
+    }
   }
 
   @Test

@@ -261,6 +261,11 @@ public final class GroovyAnalyzer implements Analyzer {
       if (request.cancelled.getAsBoolean()) {
         return new Kept(unit, request.text, document.getSource().getURI(), request.lookup, inputs, false, resolver.sources(), phase - 1, true, null);
       }
+      if (phase > Phases.CONVERSION && document.getAST() == null) {
+        // the document does not parse, and Groovy 3 and later keep no tree of it: each later phase would only parse
+        // it again (SourceUnit.buildAST). Not a break, so the phase kept and the conversion's decisions stay the same
+        continue;
+      }
       try {
         unit.compile(phase);
       } catch (CompilationFailedException e) {
