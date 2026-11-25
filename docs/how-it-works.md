@@ -46,7 +46,9 @@ If your editor cancels a request with `$/cancelRequest` while the request is sti
 
 ### Completion after a dot
 
-Right after you type a dot, the text usually does not parse, so completion compiles a repaired copy of it. The server skips this compile when the file's last compile that parsed is known to contain the receiver. That is the case when both of these are true:
+Right after you type a dot, the text usually does not parse, so completion compiles a repaired copy of it. The copy gets a name after the dot. It also closes a string that the line leaves open, and the blocks, brackets, and parentheses that the text leaves open, such as a method you are writing before its closing brace. Braces in strings and comments do not count. If the copy still does not parse, the list is empty and marked as incomplete, so your editor asks again as you type.
+
+The server skips this compile when the file's last compile that parsed is known to contain the receiver. That is the case when both of these are true:
 
 - The two texts differ only after the receiver, on the receiver's line, by at most a member access.
 - The sources that the last compile read have not changed. As for any kept compile, classes from the class loader are not checked.
