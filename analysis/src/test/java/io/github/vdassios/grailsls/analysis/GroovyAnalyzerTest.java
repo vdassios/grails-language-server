@@ -1559,6 +1559,34 @@ class GroovyAnalyzerTest {
   }
 
   /**
+   * In statically compiled code, a call that leaves out a default argument targets an overload the type checker makes
+   * for it, with no position and no doc. Hover and definition show the method it was made from, as in dynamic code.
+   */
+  @Test
+  void aCallThatLeavesOutADefaultArgumentFindsTheMethodItWasMadeFrom() {
+    String path = tmp.resolve("A.groovy").toString();
+    String text = "@groovy.transform.CompileStatic\nclass A {\n  /** Reads a file. */\n  static int read(Map options = [:], File file) { 1 }\n"
+        + "  static int read(Map options = [:], String name) { 2 }\n  /** Shifts. */\n  int shift(int periods = 1, int step = 2) { periods }\n"
+        + "  /** Makes one. */\n  A(int size = 1) {}\n  def run(File file) {\n"
+        + "    A.read(file) + read('x') + new A().shift() + new A().shift(3)\n  }\n}\n";
+    assertEquals(List.of(), errors(compile(path, text)));
+    String hover = analyzer.hover(path, 10, 7);
+    assertNotNull(hover, "hover on read in A.read(file)");
+    assertTrue(hover.split("\n")[1].endsWith("int read(Map options, File file)"), hover);
+    assertTrue(hover.contains("Reads a file."), hover);
+    assertEquals(3, analyzer.definition(path, 10, 7).range.startLine, "definition of read in A.read(file)");
+    assertEquals(4, analyzer.definition(path, 10, 20).range.startLine, "definition of read in read('x')");
+    hover = analyzer.hover(path, 10, 40);
+    assertTrue(hover.split("\n")[1].endsWith("int shift(int periods, int step)"), hover);
+    assertTrue(hover.contains("Shifts."), hover);
+    assertEquals(6, analyzer.definition(path, 10, 40).range.startLine, "definition of shift in shift()");
+    assertEquals(6, analyzer.definition(path, 10, 58).range.startLine, "definition of shift in shift(3)");
+    assertEquals(8, analyzer.definition(path, 10, 32).range.startLine, "definition of new A()");
+    SignatureHelp help = analyzer.signatureHelp(new CompileRequest(path, text, lookup, () -> false), 10, 11);
+    assertEquals(2, help.signatures.size(), "signature help in A.read(");
+  }
+
+  /**
    * The type checker runs for every annotation that runs it ({@code @TypeChecked}, Grails's {@code @GrailsTypeChecked}
    * and {@code @GrailsCompileStatic} too), under an aliased import, and on a constructor.
    */

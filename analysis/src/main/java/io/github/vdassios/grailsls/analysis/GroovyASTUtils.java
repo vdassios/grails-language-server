@@ -30,6 +30,7 @@ import java.util.stream.Collectors;
 
 import org.codehaus.groovy.ast.ASTNode;
 import org.codehaus.groovy.ast.ClassNode;
+import org.codehaus.groovy.ast.ConstructorNode;
 import org.codehaus.groovy.ast.FieldNode;
 import org.codehaus.groovy.ast.GenericsType;
 import org.codehaus.groovy.ast.ImportNode;
@@ -53,6 +54,7 @@ import org.codehaus.groovy.ast.expr.StaticMethodCallExpression;
 import org.codehaus.groovy.ast.expr.TupleExpression;
 import org.codehaus.groovy.ast.expr.VariableExpression;
 import org.codehaus.groovy.ast.stmt.ExpressionStatement;
+import org.codehaus.groovy.transform.stc.StaticTypeCheckingVisitor;
 import org.codehaus.groovy.transform.stc.StaticTypesMarker;
 
 public class GroovyASTUtils {
@@ -416,9 +418,40 @@ public class GroovyASTUtils {
         // static on Groovy 2.5)
         Object target = ((ASTNode) node).getNodeMetaData(StaticTypesMarker.DIRECT_METHOD_CALL_TARGET);
         if (target instanceof MethodNode) {
-            return (MethodNode) target;
+            return madeFrom((MethodNode) target);
         }
         return getMethodFromCallExpression(node, astVisitor, -1);
+    }
+
+    /**
+     * The method the type checker made a call's target from, or the target itself. For a call that leaves out a default
+     * argument, the type checker makes an overload without those parameters: it has the generated empty code, no
+     * position, and is not in its class, but it holds the method's own parameters. The method is the one in its class
+     * that holds them all, in order, and has a default value for each other parameter.
+     */
+    private static MethodNode madeFrom(MethodNode target) {
+        ClassNode declaring = target.getDeclaringClass();
+        if (target.getCode() != StaticTypeCheckingVisitor.GENERATED_EMPTY_STATEMENT || declaring == null) {
+            return target;
+        }
+        List<? extends MethodNode> methods = members(() -> target instanceof ConstructorNode ? declaring.getDeclaredConstructors()
+                : declaring.getDeclaredMethods(target.getName()), Collections.emptyList());
+        Parameter[] kept = target.getParameters();
+        for (MethodNode method : methods) {
+            int found = 0;
+            for (Parameter parameter : method.getParameters()) {
+                if (found < kept.length && parameter == kept[found]) {
+                    found++;
+                } else if (!parameter.hasInitialExpression()) {
+                    found = -1;
+                    break;
+                }
+            }
+            if (method != target && found == kept.length) {
+                return method;
+            }
+        }
+        return target;
     }
 
     public static MethodNode getMethodFromCallExpression(MethodCall node, ASTNodeVisitor astVisitor, int argIndex) {
