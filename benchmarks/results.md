@@ -2,6 +2,7 @@
 
 This page gives measured figures for the server, newest first:
 
+- [matrix, 2026-11-25, later](#matrix-2026-11-25-completion-right-after-a-dot): the same library, before and after completion stopped waiting for the edit's compile right after a dot.
 - [matrix, 2026-11-25](#matrix-2026-11-25-compiles-that-reuse-the-pulled-in-sources): a plain Groovy library outside the corpus, before and after compiles started reusing the sources that the last compile pulled in.
 - [Fixtures, 2026-11-23](#fixtures-2026-11-23-before-and-after-the-latency-work): the server's own fixture projects, before and after the latency work.
 - [rundeck, 2026-11-24](#rundeck-2026-11-24-after-the-latency-work): rundeck measured again after the latency work, on server `1706504`.
@@ -20,6 +21,38 @@ This is a goal, not a promise. Both fixtures are well within it. On the corpus:
 - First diagnostics miss it on the larger projects: mdm-core, mod-agreements, rundeck, and hoist-core.
 - Resident memory misses it on rundeck.
 - Completion after a typed dot missed it on the same four projects on 2026-11-18. rundeck, the only one measured since, now meets it (p90 59 ms).
+
+## matrix, 2026-11-25: completion right after a dot
+
+- **Commits.** Before: server `ba2f3c9`. Then `df842c5`, which parses a text that does not parse only once per compile, and `2646611`, which answers completion right after a dot without waiting for the edit's compile.
+- **Project, machine, and method.** The same as in [the section below](#matrix-2026-11-25-compiles-that-reuse-the-pulled-in-sources), with the same script. Mains power, with sleep prevented.
+- **Units.** Times are in milliseconds, as the median of 5. Every completion gave the same items in all three versions: 123 for `m.`, 19 for `m.c`, 10 for `m.co`, and 8 for `m.col`. `m.` gives 3 fewer items than in the section below, because completion no longer offers `Matrix`'s package-private members or `Object.finalize` there (`58dba98`).
+
+| Latency | Before (`ba2f3c9`) | `df842c5` | After (`2646611`) |
+|---|---|---|---|
+| Compile after an edit that keeps the text | 15 | 19 | 15 |
+| `m.`, right after its edit | 223 | 89 | 20 |
+| `m.c`, right after its edit | 6 | 6 | 12 |
+| `m.co`, right after its edit | 6 | 7 | 10 |
+| `m.col`, right after its edit | 5 | 7 | 9 |
+| `m.`, after its diagnostics | 8 | 9 | 9 |
+| `m.c`, `m.co`, and `m.col`, after their diagnostics | 1 | 1 to 2 | 1 to 2 |
+
+The rise for `m.c` to `m.col` right after their edits comes from the processor's clock, not from the code. They take the same code path in both versions. After `2646611`, they no longer follow a long compile of `m.`, so they run before the clock has gone up. With one core kept busy, `df842c5` and `2646611` both take 5 ms for each.
+
+Memory comes from two runs of each version, separated by `;`, with the script and units of the section below. "After one more compile" adds an edit that removes `m.col` and waits for its diagnostics.
+
+| Memory | Before (`ba2f3c9`) | After (`2646611`) |
+|---|---|---|
+| matrix: heap with ten files | 639 | 639 |
+| matrix: heap after the edits | 651; 650 | 676; 678 |
+| matrix: heap after one more compile | 642; 641 | 641; 642 |
+
+### What changed
+
+- **Where the 200 ms went.** Completion first ran the compile of the edit, as every request did. That text ends at the dot, so it does not parse. Groovy then parsed it again in ANTLR's slower LL mode, and from Groovy 3, each later phase of the compile parsed it once more. Now a compile skips the later phases of a file that does not parse (`df842c5`). And completion right after a dot no longer waits for the edit's compile (`2646611`). It never answered from that compile: it answers from the last compile that parsed, or from a repaired copy. The compile still runs after its 300 ms delay and publishes the diagnostics.
+- **`m.` right after its edit now takes 20 ms**, down from 223 ms. Other requests, such as hover, still start the edit's compile and wait for it.
+- **Memory is unchanged once settled.** Right after the edits, the heap is about 25 MB higher. The difference is in Groovy's cache of extension methods, which keeps the entries of unreachable class loaders until its next use. The next compile clears them.
 
 ## matrix, 2026-11-25: compiles that reuse the pulled-in sources
 
