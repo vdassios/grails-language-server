@@ -60,6 +60,16 @@ The server skips this compile when the file's last compile that parsed is known 
 
 The classes that a file uses are compiled from source as well. The server finds them through a declaration index of the source roots, which matches exact names, including nested types. It adds each class under its real file path, which is how Grails recognizes artefacts.
 
+The next compile of the file starts from the classes that its last compile pulled in from source, instead of parsing and resolving them again. In a module that uses a sibling module's sources, these classes are most of the work. Completion's compile of a repaired copy starts from them too. The server compiles them again when any of these is true:
+
+- A file that the last compile read has changed, on disk or in your editor, or a class name that it looked up now resolves to another file.
+- The compiler configuration script has changed, because its imports apply to these classes.
+- The new compile ends in another phase, for example after you add `@CompileStatic` to a file that had no static code.
+- One of the files names a class that the open file declares, in its new text or its last one. Its references would still point to the open file's classes from the last compile.
+- The last compile failed, or Groovy reported more than syntax errors.
+
+Errors in the reused files are reported again with each compile that reuses them.
+
 Until the [symbol index](#the-symbol-index) has parsed a file, the declaration index reads the file's names from its text, skipping strings and comments. So, until then, a dollar-slashy string that contains `/*` can hide a class from this scan.
 
 ### Classes from the class loader
