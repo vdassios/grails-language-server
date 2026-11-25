@@ -210,7 +210,7 @@ abstract class GormTest {
       assertEquals("public static " + app.domain + " findBy" + cap(app.first) + "LikeAnd" + cap(app.second) + "IsNull(String " + app.first + ")", hover.split("\n")[1]);
       assertTrue(hover.contains("GORM dynamic finder: `" + app.first + " like ? and " + app.second + " is null`"), hover);
       String list = hover(workspace, service(), text, "findAllByFirst", 1);
-      assertEquals("public static List findAllBy" + cap(app.first) + "(String " + app.first + ")", list.split("\n")[1]);
+      assertEquals("public static List<" + app.domain + "> findAllBy" + cap(app.first) + "(String " + app.first + ")", list.split("\n")[1]);
       assertEquals("public static Integer countBy" + cap(app.first) + "(String " + app.first + ")", hover(workspace, service(), text, "countByFirst", 1).split("\n")[1]);
       // the result is typed: members of the domain class, and of a list
       assertTrue(hover(workspace, service(), text, "one.save", 5).contains(" save("), "one.save()");

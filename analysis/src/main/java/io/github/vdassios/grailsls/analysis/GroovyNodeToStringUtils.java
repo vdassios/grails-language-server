@@ -23,6 +23,7 @@ import org.codehaus.groovy.ast.ASTNode;
 import org.codehaus.groovy.ast.ClassNode;
 import org.codehaus.groovy.ast.ConstructorNode;
 import org.codehaus.groovy.ast.FieldNode;
+import org.codehaus.groovy.ast.GenericsType;
 import org.codehaus.groovy.ast.MethodNode;
 import org.codehaus.groovy.ast.Parameter;
 import org.codehaus.groovy.ast.Variable;
@@ -52,16 +53,18 @@ public class GroovyNodeToStringUtils {
 			builder.append("class ");
 		}
 		builder.append(classNode.getNameWithoutPackage());
+		appendGenerics(builder, classNode.redirect().getGenericsTypes(), true);
 
 		ClassNode superClass = null;
 		try {
-			superClass = classNode.getSuperClass();
+			// unlike getSuperClass(), keeps the type arguments it is extended with
+			superClass = classNode.redirect().getUnresolvedSuperClass();
 		} catch (NoClassDefFoundError e) {
 			// this is fine, we'll just treat it as null
 		}
 		if (superClass != null && !superClass.getName().equals(JAVA_OBJECT)) {
 			builder.append(" extends ");
-			builder.append(superClass.getNameWithoutPackage());
+			builder.append(typeToString(superClass));
 		}
 		return builder.toString();
 	}
@@ -97,8 +100,11 @@ public class GroovyNodeToStringUtils {
 		if (methodNode.isFinal()) {
 			builder.append("final ");
 		}
-		ClassNode returnType = methodNode.getReturnType();
-		builder.append(returnType.getNameWithoutPackage());
+		if (methodNode.getGenericsTypes() != null && methodNode.getGenericsTypes().length > 0) {
+			appendGenerics(builder, methodNode.getGenericsTypes(), true);
+			builder.append(" ");
+		}
+		builder.append(typeToString(methodNode.getReturnType()));
 		builder.append(" ");
 		builder.append(methodNode.getName());
 		builder.append("(");
@@ -147,9 +153,61 @@ public class GroovyNodeToStringUtils {
 		} else {
 			varType = variable.getType();
 		}
-		builder.append(varType.getNameWithoutPackage());
+		builder.append(typeToString(varType));
 		builder.append(" ");
 		builder.append(variable.getName());
 		return builder.toString();
+	}
+
+	/** A type without its package, with its type arguments, such as {@code Map<String, List<? extends Number>>}. */
+	static String typeToString(ClassNode type) {
+		if (type.isArray()) {
+			return typeToString(type.getComponentType()) + "[]";
+		}
+		if (type.isGenericsPlaceHolder()) {
+			return type.getUnresolvedName();
+		}
+		StringBuilder builder = new StringBuilder(type.getNameWithoutPackage());
+		appendGenerics(builder, type.getGenericsTypes(), false);
+		return builder.toString();
+	}
+
+	/**
+	 * Appends type arguments in angle brackets, or nothing when there are none. Where type parameters are declared (a
+	 * class, a generic method), their bounds are shown too: {@code <T extends Number>}.
+	 */
+	private static void appendGenerics(StringBuilder builder, GenericsType[] generics, boolean declared) {
+		if (generics == null || generics.length == 0) {
+			return;
+		}
+		builder.append("<");
+		for (int i = 0; i < generics.length; i++) {
+			if (i > 0) {
+				builder.append(", ");
+			}
+			GenericsType generic = generics[i];
+			if (generic.isPlaceholder() || generic.isWildcard()) {
+				builder.append(generic.isWildcard() ? "?" : generic.getName());
+				if (generic.isWildcard() || declared) {
+					appendBounds(builder, generic);
+				}
+			} else {
+				builder.append(typeToString(generic.getType()));
+			}
+		}
+		builder.append(">");
+	}
+
+	private static void appendBounds(StringBuilder builder, GenericsType generic) {
+		ClassNode[] upper = generic.getUpperBounds();
+		// a class file gives an unbounded type parameter the bound Object
+		if (upper != null && upper.length > 0 && !(upper.length == 1 && upper[0].getName().equals(JAVA_OBJECT))) {
+			builder.append(" extends ");
+			for (int i = 0; i < upper.length; i++) {
+				builder.append(i > 0 ? " & " : "").append(typeToString(upper[i]));
+			}
+		} else if (generic.getLowerBound() != null) {
+			builder.append(" super ").append(typeToString(generic.getLowerBound()));
+		}
 	}
 }

@@ -854,6 +854,26 @@ class GroovyAnalyzerTest {
     assertEquals("public void show(Map options)", hover.split("\n")[1]);
   }
 
+  /** Signatures keep their types' arguments, wildcards and bounds: declared, read from a class file, and inferred. */
+  @Test
+  void hoverShowsTypeArguments() {
+    String path = tmp.resolve("A.groovy").toString();
+    String text = "class Box<T extends Number> extends ArrayList<T> {\n"
+        + "  static List<Map<String, Integer>> rows(List<? extends Number> index, Map<String, ? super Integer> sink) { [] }\n"
+        + "  T first(List<T> items) { items[0] }\n"
+        + "  def run() {\n    List<String> names = ['a']\n    first(names)\n    Collections.emptyList()\n  }\n}\n"
+        + "@groovy.transform.CompileStatic\nclass C {\n  def run(List<String> names) {\n    def sizes = names.collect { it.size() }\n  }\n}\n";
+    assertEquals(List.of(), errors(compile(path, text)));
+    Function<int[], String> signature = at -> analyzer.hover(path, at[0], at[1]).split("\n")[1];
+    assertEquals("class Box<T extends Number> extends ArrayList<T>", signature.apply(new int[] { 0, 7 }));
+    assertEquals("static List<Map<String, Integer>> rows(List<? extends Number> index, Map<String, ? super Integer> sink)",
+        signature.apply(new int[] { 1, 37 }));
+    assertEquals("public T first(List<T> items)", signature.apply(new int[] { 5, 5 }));
+    assertEquals("List<String> names", signature.apply(new int[] { 4, 19 }));
+    assertEquals("public static final <T> List<T> emptyList()", signature.apply(new int[] { 6, 18 }));
+    assertEquals("List<Integer> sizes", signature.apply(new int[] { 12, 9 }), "the type the checker infers");
+  }
+
   /**
    * Groovy 2.5 parses {@code this} to one shared node, also used by the {@code previous()} and {@code next()} it
    * generates for every enum (and, in a Grails controller, by every implicit-this call in an action). Its parent in
