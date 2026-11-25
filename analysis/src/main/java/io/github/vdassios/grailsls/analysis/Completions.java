@@ -89,6 +89,11 @@ public final class Completions {
    * class.
    */
   private ClassNode within;
+  /**
+   * The package of the file completed in, which stands for {@link #within} in {@code import static}, where no class is
+   * ({@link #staticMembers}). Null for the default package, as {@link ClassNode#getPackageName()} gives it.
+   */
+  private String filePackage;
 
   private Completions(ASTNodeVisitor ast, SourceLookup sources, Conventions conventions, Function<String, Map<String, Taglibs.Tag>> namespaces, boolean page) {
     this.ast = ast;
@@ -127,9 +132,15 @@ public final class Completions {
     return completions;
   }
 
-  /** The static members of a class whose names start with a prefix: {@code import static a.B.m}. */
-  static Completions staticMembers(ASTNodeVisitor ast, ClassNode type, String prefix) {
+  /**
+   * The static members of a class whose names start with a prefix that a file of a package may import:
+   * {@code import static a.B.m}.
+   *
+   * @param filePackage the file's package, null for the default package
+   */
+  static Completions staticMembers(ASTNodeVisitor ast, ClassNode type, String prefix, String filePackage) {
     Completions completions = new Completions(ast, null, null, null, false);
+    completions.filePackage = filePackage;
     completions.members(type, true, prefix, new HashSet<>());
     return completions;
   }
@@ -522,7 +533,9 @@ public final class Completions {
    * rules, as {@code groovyc} applies them under static compilation. A private member only when {@code privates}: the
    * receiver's own, in its top-level class. A package-private one in the declaring class's package. A protected one
    * there too, and in a subclass of the declaring class or in a class nested in one, through a receiver of that
-   * subclass unless it is static. Without a class ({@code import static}), every member that is not private.
+   * subclass unless it is static. Without a class ({@code import static}), as {@code javac} allows the import: a public
+   * member, and a package-private or protected one in the file's package ({@link #filePackage}). An import is outside
+   * every class, so a subclass in another package may not import the protected ones it inherits.
    */
   private boolean accessible(int modifiers, ClassNode declaring, ClassNode receiver, boolean privates) {
     if (Modifier.isPublic(modifiers)) {
@@ -531,7 +544,7 @@ public final class Completions {
     if (Modifier.isPrivate(modifiers)) {
       return privates;
     }
-    if (within == null || Objects.equals(declaring.getPackageName(), within.getPackageName())) {
+    if (Objects.equals(declaring.getPackageName(), within == null ? filePackage : within.getPackageName())) {
       return true;
     }
     if (Modifier.isProtected(modifiers)) {

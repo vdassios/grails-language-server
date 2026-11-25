@@ -537,7 +537,7 @@ public final class GroovyAnalyzer implements Analyzer {
         kept = compileCopy(request, line, column, imported.last().isEmpty() ? Completions.placeholder("") : "");
       }
       ClassNode type = kept == null ? null : Imports.staticallyImported(kept.unit, imported.qualifier());
-      Completions found = type == null ? null : Completions.staticMembers(kept.ast(), type, imported.last());
+      Completions found = type == null ? null : Completions.staticMembers(kept.ast(), type, imported.last(), Imports.packageOf(kept.unit, kept.uri));
       // none when the qualifier is no class: import static java.util.Coll names the class java.util
       if (found != null && !found.list().items.isEmpty()) {
         completions.put(request.path, new LastCompletion(found, kept, request.text));

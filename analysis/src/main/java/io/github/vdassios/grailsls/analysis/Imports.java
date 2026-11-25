@@ -1,5 +1,6 @@
 package io.github.vdassios.grailsls.analysis;
 
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -114,6 +115,17 @@ final class Imports {
         if (imported.getType() != null && imported.getType().getName().equals(className)) {
           return imported.getType();
         }
+      }
+    }
+    return null;
+  }
+
+  /** The package of a document of a compile, as {@link ClassNode#getPackageName()} gives a class's: null for the default package. */
+  static String packageOf(CompilationUnit unit, URI document) {
+    for (ModuleNode module : unit.getAST().getModules()) {
+      if (module.getContext() != null && document.equals(module.getContext().getSource().getURI())) {
+        String name = module.getPackageName();
+        return name == null || name.isEmpty() ? null : name.endsWith(".") ? name.substring(0, name.length() - 1) : name;
       }
     }
     return null;

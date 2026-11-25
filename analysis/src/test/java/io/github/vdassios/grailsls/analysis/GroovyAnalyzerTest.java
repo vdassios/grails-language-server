@@ -1659,6 +1659,42 @@ class GroovyAnalyzerTest {
   }
 
   /**
+   * {@code import static a.B.m} names only the statics the file's package reaches, as {@code javac} allows them: public
+   * ones, and package-private and protected ones of a class in the same package. A subclass in another package
+   * inherits the protected ones but may not import them. Dynamic code too.
+   */
+  @Test
+  void aStaticImportOffersOnlyTheStaticsTheFilesPackageReaches() throws IOException {
+    index.put("p1.Lib", write("src/p1/Lib.groovy", "package p1\nimport groovy.transform.PackageScope\nclass Lib {\n  public static int puf\n  static int pum() { 1 }\n"
+        + "  @PackageScope static int pkf\n  @PackageScope static int pkm() { 1 }\n  protected static int prf\n  protected static int prm() { 1 }\n"
+        + "  private static int pvf\n  private static int pvm() { 1 }\n}\n"));
+    jarClasses.put("java.util", List.of("java.util.Collections"));
+    List<String> all = List.of("pkf", "pkm", "prf", "prm", "puf", "pum");
+    List<String> publics = List.of("puf", "pum");
+    for (String mode : List.of("", "@groovy.transform.CompileStatic\n")) {
+      String same = tmp.resolve("src/p1/Same.groovy").toString();
+      String sameRest = "\n" + mode + "class Same {}\n";
+      assertEquals(all, sorted(labels(complete(same, "package p1\nimport static p1.Lib." + sameRest, 1, 22))), mode + "the same package");
+      assertEquals(all, sorted(labels(complete(same, "package p1\nimport static p1.Lib.p" + sameRest, 1, 23))), mode + "the same package, typed");
+
+      String other = tmp.resolve("src/p2/Other.groovy").toString();
+      String otherRest = "\n" + mode + "class Other {}\n";
+      assertEquals(publics, sorted(labels(complete(other, "package p2\nimport static p1.Lib." + otherRest, 1, 22))), mode + "another package");
+      assertEquals(publics, sorted(labels(complete(other, "package p2\nimport static p1.Lib.p" + otherRest, 1, 23))), mode + "another package, typed");
+      List<String> jar = labels(complete(other, "package p2\nimport static java.util.Collections.e" + otherRest, 1, 38));
+      assertTrue(jar.contains("emptyList") && !jar.contains("eq"), mode + "a package-private static of a class in a jar: " + jar);
+
+      String sub = tmp.resolve("src/p2/Sub.groovy").toString();
+      String subRest = "\n" + mode + "class Sub extends p1.Lib {}\n";
+      assertEquals(publics, sorted(labels(complete(sub, "package p2\nimport static p1.Lib." + subRest, 1, 22))), mode + "a subclass in another package");
+    }
+  }
+
+  private static List<String> sorted(List<String> labels) {
+    return labels.stream().sorted().collect(Collectors.toList());
+  }
+
+  /**
    * Statically compiled code goes on to instruction selection: the type checker's errors are reported, and the types
    * it infers (closure parameters, flow typing) are what completion and hover use. The other queries still answer.
    */
