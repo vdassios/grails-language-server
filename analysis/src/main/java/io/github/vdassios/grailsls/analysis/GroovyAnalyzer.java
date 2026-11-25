@@ -437,7 +437,8 @@ public final class GroovyAnalyzer implements Analyzer {
     }
     if (found == null) {
       completions.remove(request.path);
-      return CompletionList.EMPTY;
+      // a copy that does not parse either: what is typed next may parse, so the client asks again
+      return kept != null && !kept.parsed ? new CompletionList(List.of(), true) : CompletionList.EMPTY;
     }
     completions.put(request.path, new LastCompletion(found, kept));
     return found.list();

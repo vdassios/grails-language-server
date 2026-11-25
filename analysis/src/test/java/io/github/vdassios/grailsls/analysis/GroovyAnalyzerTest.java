@@ -973,6 +973,16 @@ class GroovyAnalyzerTest {
     }
   }
 
+  /** A list left empty because no copy parses asks again as more is typed: the next text may parse. */
+  @Test
+  void anEmptyCompletionOfATextThatDoesNotParseIsIncomplete() {
+    String path = tmp.resolve("A.groovy").toString();
+    CompletionList list = complete(path, "class A {\n  String name\n  def run() {\n    name.\n  }\n  def x = )\n}\n", 3, 9);
+    assertEquals(List.of(), list.items);
+    assertTrue(list.incomplete);
+    assertFalse(complete(path, "class A {\n  String name\n  def run() {\n    name.\n  }\n}\n", 3, 9).incomplete, "a list of a copy that parses is complete");
+  }
+
   /** A completion's labels, and whether it compiled: the flag is checked before each compile phase. */
   private static final class Answer {
     final List<String> labels;
