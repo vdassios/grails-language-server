@@ -167,10 +167,11 @@ public final class GroovyAnalyzer implements Analyzer {
       return pages.compile(request);
     }
     long start = System.nanoTime();
+    Kept donor = donor(request);
     units.remove(request.path);
     completions.remove(request.path);
     List<Diagnostic> diagnostics = new ArrayList<>();
-    Kept kept = run(request, diagnostics);
+    Kept kept = run(request, diagnostics, donor);
     if (kept.cancelled) {
       return new CompileResult(List.of(), true, kept.sources, millisSince(start));
     }
@@ -183,18 +184,29 @@ public final class GroovyAnalyzer implements Analyzer {
 
   /** Compiles a document to its last phase ({@link #lastPhase}), each phase only if the request is not cancelled. */
   Kept run(CompileRequest request, List<Diagnostic> diagnostics) {
+    return run(request, diagnostics, null);
+  }
+
+  /** Compiles a Groovy document, starting with the sources {@code donor} pulled in ({@link #donor}), or null. */
+  private Kept run(CompileRequest request, List<Diagnostic> diagnostics, Kept donor) {
     // sources a class file named before they were converted (PathResolver): compiled again with them there from the
     // start. Each further compile has at least one more of them, so this ends
     Set<String> early = new LinkedHashSet<>();
+    Kept from = donor;
     while (true) {
       List<Diagnostic> found = new ArrayList<>();
       int known = early.size();
+      Kept reused = from;
       Kept kept;
       try {
-        kept = parserCache.parsing(() -> runUnit(request, found, early));
+        kept = parserCache.parsing(() -> runUnit(request, found, early, reused));
       } finally {
         caches.clear();
         parserCache.trim();
+      }
+      if (kept == null) {
+        from = null; // the donor's sources cannot be reused: compiled again
+        continue;
       }
       if (kept.cancelled || early.size() == known) {
         diagnostics.addAll(found);
@@ -203,13 +215,22 @@ public final class GroovyAnalyzer implements Analyzer {
     }
   }
 
-  private Kept runUnit(CompileRequest request, List<Diagnostic> diagnostics, Set<String> early) {
+  /**
+   * One compile of a document; null when it started with {@code donor}'s sources and finds after conversion that they
+   * cannot be reused ({@link Pulled#fits}).
+   */
+  private Kept runUnit(CompileRequest request, List<Diagnostic> diagnostics, Set<String> early, Kept donor) {
     empty(output, false);
     CompilerConfiguration config = configuration();
     // the configuration script runs after the server's own settings, as groovyc runs it after its options
     int scriptPhase = configurationScript == null ? -1 : configurationScript.apply(config, request.path);
     if (configurationScript != null && scriptPhase < 0) {
       config = configuration();
+    }
+    // its imports apply to the pulled-in sources: a donor's compiled with another script are compiled again
+    Object script = scriptPhase < 0 ? null : configurationScript.script();
+    if (donor != null && donor.pulled.script != script) {
+      donor = null;
     }
     GroovyClassLoader loader = new GroovyClassLoader(parent, config, false);
     // source lookup goes through the resolver only, never through the loader (no URL-named sources)
@@ -220,6 +241,14 @@ public final class GroovyAnalyzer implements Analyzer {
     Inputs inputs = new Inputs(request.lookup);
     PathResolver resolver = new PathResolver(inputs, document);
     unit.setClassNodeResolver(resolver);
+    if (donor != null) {
+      // past this compile's phases, so Groovy skips them: not parsed, resolved or transformed again
+      inputs.add(donor.inputs);
+      for (SourceUnit source : donor.pulled.sources) {
+        resolver.reuse(unit.addSource(source));
+        unit.getAST().addModule(source.getAST());
+      }
+    }
     early.forEach(path -> resolver.add(path, unit));
 
     // the last phase depends on the document's own annotations, known once it is converted: decided then and kept,
@@ -227,9 +256,10 @@ public final class GroovyAnalyzer implements Analyzer {
     int last = Phases.CONVERSION;
     int phase = Phases.INITIALIZATION;
     Injections injections = null;
+    boolean failed = false;
     for (; phase <= last; phase++) {
       if (request.cancelled.getAsBoolean()) {
-        return new Kept(unit, request.text, document.getSource().getURI(), request.lookup, inputs, false, resolver.sources(), phase - 1, true);
+        return new Kept(unit, request.text, document.getSource().getURI(), request.lookup, inputs, false, resolver.sources(), phase - 1, true, null);
       }
       try {
         unit.compile(phase);
@@ -237,15 +267,19 @@ public final class GroovyAnalyzer implements Analyzer {
         // its messages are in the error collector
       } catch (GroovyBugError | RuntimeException | LinkageError e) {
         diagnostics.add(new Diagnostic(request.path, 0, 0, 0, 0, Diagnostic.ERROR, "internal compiler error in phase " + phase + ": " + e));
+        failed = true;
         break;
       }
       if (phase == Phases.CONVERSION) {
         last = Math.max(lastPhase(document), Math.min(scriptPhase, Phases.INSTRUCTION_SELECTION));
+        if (donor != null && !donor.pulled.fits(document, last, donor.phase)) {
+          return null;
+        }
         injections = Injections.queue(document, inputs, resolver, unit);
       }
     }
     if (early.addAll(resolver.early())) {
-      return new Kept(unit, request.text, document.getSource().getURI(), request.lookup, inputs, false, resolver.sources(), Math.min(phase, last), false);
+      return new Kept(unit, request.text, document.getSource().getURI(), request.lookup, inputs, false, resolver.sources(), Math.min(phase, last), false, null);
     }
     if (injections != null) {
       injections.mark(unit);
@@ -264,8 +298,25 @@ public final class GroovyAnalyzer implements Analyzer {
         // no hints rather than a failed compile
       }
     }
+    if (donor != null) {
+      diagnostics.addAll(donor.pulled.diagnostics); // the reused sources' own, from the compile that converted them
+    }
     boolean parsed = document.getAST() != null && !syntaxError(unit.getErrorCollector(), request.path);
-    return new Kept(unit, request.text, document.getSource().getURI(), request.lookup, inputs, parsed, resolver.sources(), Math.min(phase, last), false);
+    Pulled pulled = failed ? null : Pulled.of(unit, document, request.path, diagnostics, script);
+    return new Kept(unit, request.text, document.getSource().getURI(), request.lookup, inputs, parsed, resolver.sources(), Math.min(phase, last), false, pulled);
+  }
+
+  /**
+   * The compile of the document whose pulled-in sources a new compile may reuse ({@link Pulled#reusable}): the kept
+   * one, else the last that parsed (a text that does not parse may pull in nothing); or null.
+   */
+  private Kept donor(CompileRequest request) {
+    Kept kept = units.get(request.path);
+    if (Pulled.reusable(kept, request.lookup)) {
+      return kept;
+    }
+    Kept parsed = lastParsed.get(request.path);
+    return parsed != kept && Pulled.reusable(parsed, request.lookup) ? parsed : null;
   }
 
   /** The configuration of a compile, before the configuration script. */
@@ -529,7 +580,7 @@ public final class GroovyAnalyzer implements Analyzer {
 
   /** Compiles another text of the document, for one query; null when cancelled. Not kept. */
   private Kept compileCopy(CompileRequest request, String text) {
-    Kept copy = run(new CompileRequest(request.path, text, request.lookup, request.cancelled), new ArrayList<>());
+    Kept copy = run(new CompileRequest(request.path, text, request.lookup, request.cancelled), new ArrayList<>(), donor(request));
     return copy.cancelled ? null : copy;
   }
 
@@ -730,9 +781,11 @@ public final class GroovyAnalyzer implements Analyzer {
     /** The last phase compiled. */
     final int phase;
     final boolean cancelled;
+    /** The sources pulled in, for a later compile of the document to reuse; null when they may not be. */
+    final Pulled pulled;
     private ASTNodeVisitor ast;
 
-    Kept(CompilationUnit unit, String text, URI uri, SourceLookup lookup, Inputs inputs, boolean parsed, int sources, int phase, boolean cancelled) {
+    Kept(CompilationUnit unit, String text, URI uri, SourceLookup lookup, Inputs inputs, boolean parsed, int sources, int phase, boolean cancelled, Pulled pulled) {
       this.unit = unit;
       this.text = text;
       this.uri = uri;
@@ -742,6 +795,7 @@ public final class GroovyAnalyzer implements Analyzer {
       this.sources = sources;
       this.phase = phase;
       this.cancelled = cancelled;
+      this.pulled = pulled;
     }
 
     synchronized ASTNodeVisitor ast() {

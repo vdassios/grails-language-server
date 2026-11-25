@@ -57,6 +57,11 @@ final class PathResolver extends ClassNodeResolver {
     return early;
   }
 
+  /** Records a source in the unit already compiled, reused from another compile ({@link Pulled}). */
+  void reuse(SourceUnit source) {
+    sources.put(source.getName(), source);
+  }
+
   /** Adds a source file to the unit, if it is not there: before the first phase, it is converted with the document. */
   SourceUnit add(String path, CompilationUnit unit) {
     SourceUnit source = sources.get(path);

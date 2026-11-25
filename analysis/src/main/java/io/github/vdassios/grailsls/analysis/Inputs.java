@@ -61,6 +61,14 @@ final class Inputs implements SourceLookup {
     return true;
   }
 
+  /** Records what another compile's lookup answered, for sources reused from that compile ({@link Pulled}). */
+  void add(Inputs other) {
+    other.files.forEach(files::putIfAbsent);
+    other.named.forEach(named::putIfAbsent);
+    other.open.forEach(open::putIfAbsent);
+    other.disk.forEach(disk::putIfAbsent);
+  }
+
   private static String stamp(String path) {
     try {
       BasicFileAttributes attributes = Files.readAttributes(Path.of(path), BasicFileAttributes.class);

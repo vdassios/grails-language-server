@@ -76,6 +76,11 @@ final class ConfigurationScript {
     return last;
   }
 
+  /** The class of the script that {@link #apply} ran last, or null. */
+  Object script() {
+    return compiled;
+  }
+
   /** The script's class, compiled again when the file changed; null when it cannot be read or compiled (reported). */
   private Class<?> compiled() {
     FileTime modified;

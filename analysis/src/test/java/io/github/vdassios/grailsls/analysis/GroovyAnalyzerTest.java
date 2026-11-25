@@ -2,8 +2,10 @@ package io.github.vdassios.grailsls.analysis;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -11,6 +13,7 @@ import java.lang.reflect.Field;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Enumeration;
@@ -1500,5 +1503,145 @@ class GroovyAnalyzerTest {
     SignatureHelp before = analyzer.signatureHelp(new CompileRequest(path, next, lookup, () -> false), 4, 13);
     assertNotNull(before, "a statement on the next line");
     assertEquals(1, before.activeParameter);
+  }
+
+  /** A class of the document's kept compile, by name: its own or pulled in. */
+  private ClassNode keptClass(String path, String className) {
+    return analyzer.unit(path).getAST().getClass(className);
+  }
+
+  /**
+   * A compile reuses the sources the document's last compile pulled in, when they have not changed: with the same
+   * diagnostics (a pulled-in file's included), completion and hover as a compile that reads them again.
+   */
+  @Test
+  void aCompileReusesTheUnchangedSourcesTheLastCompilePulledIn() throws IOException {
+    index.put("lib.Book", write("src/lib/Book.groovy", "package lib\nclass Book {\n  String title\n  Unknown unknown\n  /** Its pages. */\n  int pages() { 1 }\n}\n"));
+    String path = tmp.resolve("src/web/Shop.groovy").toString();
+    String text = "package web\nimport lib.Book\nclass Shop {\n  Missing m\n  def run(Book book) {\n    book.pages()\n  }\n}\n";
+    compile(path, text);
+    ClassNode book = keptClass(path, "lib.Book");
+    String edited = text.replace("book.pages()\n", "book.pages()\n    book.ti\n");
+    CompileResult second = compile(path, edited);
+    assertSame(book, keptClass(path, "lib.Book"), "Book.groovy reused");
+
+    try (GroovyAnalyzer fresh = new GroovyAnalyzer()) {
+      CompileResult expected = fresh.compile(new CompileRequest(path, edited, lookup, () -> false));
+      assertEquals(2, expected.diagnostics.size(), expected.diagnostics.toString());
+      assertEquals(expected.diagnostics.toString(), second.diagnostics.toString());
+      assertEquals(expected.sources, second.sources);
+      assertTrue(fresh.hover(path, 5, 10).contains("Its pages."), fresh.hover(path, 5, 10));
+      assertEquals(fresh.hover(path, 5, 10), analyzer.hover(path, 5, 10));
+      for (int column : new int[] { 9, 11 }) {
+        CompileRequest request = new CompileRequest(path, edited, lookup, () -> false);
+        List<String> labels = labels(fresh.completion(request, 6, column));
+        assertTrue(labels.contains("title"), labels.toString());
+        assertEquals(labels, labels(analyzer.completion(request, 6, column)));
+      }
+    }
+  }
+
+  /** A pulled-in file changed since the last compile, in its open text or on disk, is compiled again. */
+  @Test
+  void anEditedPulledInFileIsCompiledAgain() throws IOException {
+    String book = write("src/lib/Book.groovy", "package lib\nclass Book {\n  String title\n}\n");
+    index.put("lib.Book", book);
+    String path = tmp.resolve("src/web/Shop.groovy").toString();
+    String text = "package web\nimport lib.Book\nclass Shop {\n  Book book\n}\n";
+    compile(path, text);
+    ClassNode first = keptClass(path, "lib.Book");
+
+    open.put(book, "package lib\nclass Book {\n  String title\n  String author\n}\n");
+    compile(path, text);
+    ClassNode opened = keptClass(path, "lib.Book");
+    assertNotSame(first, opened);
+    assertNotNull(opened.getProperty("author"), "open text");
+    compile(path, text);
+    assertSame(opened, keptClass(path, "lib.Book"), "control: unchanged");
+
+    open.remove(book);
+    compile(path, text);
+    ClassNode closed = keptClass(path, "lib.Book");
+    assertNotSame(opened, closed);
+    assertNull(closed.getProperty("author"), "closed: from disk");
+
+    Files.writeString(Path.of(book), "package lib\nclass Book {\n  String title\n  String isbn\n}\n");
+    Files.setLastModifiedTime(Path.of(book), FileTime.fromMillis(Files.getLastModifiedTime(Path.of(book)).toMillis() + 10_000));
+    compile(path, text);
+    assertNotNull(keptClass(path, "lib.Book").getProperty("isbn"), "file changed");
+  }
+
+  /**
+   * A pulled-in file that names a class the document declares (or declared in the last compile) is compiled again:
+   * its references point at the document's classes of the compile that converted it.
+   */
+  @Test
+  void aPulledInFileThatNamesADocumentClassIsCompiledAgain() throws IOException {
+    String path = tmp.resolve("src/web/Shop.groovy").toString();
+    index.put("lib.Book", write("src/lib/Book.groovy", "package lib\nclass Book {\n  web.Shop shop\n}\n"));
+    index.put("web.Shop", path);
+    String text = "package web\nimport lib.Book\nclass Shop {\n  Book book\n}\n";
+    compile(path, text);
+    ClassNode first = keptClass(path, "lib.Book");
+    compile(path, text.replace("Book book", "Book book\n  int count"));
+    ClassNode book = keptClass(path, "lib.Book");
+    assertNotSame(first, book);
+    assertSame(keptClass(path, "web.Shop"), book.getProperty("shop").getType().redirect(), "the document's class of this compile");
+  }
+
+  /** Completion's compile of a repaired copy reuses the sources of the document's compile. */
+  @Test
+  void aCopyCompiledForCompletionReusesThePulledInSources() throws IOException {
+    index.put("lib.Book", write("src/lib/Book.groovy", "package lib\nclass Book {\n  String title\n}\n"));
+    String path = tmp.resolve("src/web/Shop.groovy").toString();
+    String text = "package web\nimport lib.Book\nclass Shop {\n  def run(Book book) {\n    \n  }\n}\n";
+    compile(path, text);
+    ClassNode book = keptClass(path, "lib.Book");
+    String typed = text.replace("    \n", "    book.\n");
+    compile(path, typed);
+    List<String> labels = labels(analyzer.completion(new CompileRequest(path, typed, lookup, () -> false), 4, 9));
+    assertTrue(labels.contains("title"), labels.toString());
+    GroovyAnalyzer.Kept copy = analyzer.completions.get(path).compile;
+    assertNotSame(analyzer.units.get(path), copy, "answered from a copy");
+    assertSame(book, copy.unit.getAST().getClass("lib.Book"));
+  }
+
+  /**
+   * Sources compiled to another last phase are compiled again: a compile to instruction selection would run its
+   * phase on the reused classes, and one to canonicalization would keep what that phase added to them.
+   */
+  @Test
+  void aCompileToAnotherLastPhaseCompilesThePulledInSourcesAgain() throws IOException {
+    index.put("lib.Book", write("src/lib/Book.groovy", "package lib\nclass Book {\n  String title\n}\n"));
+    String path = tmp.resolve("src/web/Shop.groovy").toString();
+    String dynamic = "package web\nimport lib.Book\nclass Shop {\n  Book book\n}\n";
+    String checked = dynamic.replace("class Shop", "@groovy.transform.CompileStatic\nclass Shop");
+    compile(path, dynamic);
+    ClassNode first = keptClass(path, "lib.Book");
+    compile(path, checked);
+    assertEquals(Phases.INSTRUCTION_SELECTION, analyzer.phase(path));
+    ClassNode second = keptClass(path, "lib.Book");
+    assertNotSame(first, second);
+    compile(path, checked);
+    assertSame(second, keptClass(path, "lib.Book"), "control: the same phase");
+    compile(path, dynamic);
+    assertNotSame(second, keptClass(path, "lib.Book"));
+  }
+
+  /** The configuration script's imports apply to the pulled-in sources: when the script changes, they are compiled again. */
+  @Test
+  void aChangedConfigurationScriptCompilesThePulledInSourcesAgain() throws IOException {
+    String script = write("config/imports.groovy", "withConfig(configuration) {\n  imports {\n    normal 'java.util.concurrent.TimeUnit'\n  }\n}\n");
+    String b = write("src/B.groovy", "class B {\n  TimeUnit unit() { TimeUnit.SECONDS }\n}\n");
+    index.put("B", b);
+    String path = tmp.resolve("src/A.groovy").toString();
+    String text = "class A {\n  def run(B b) {\n    b.unit()\n  }\n}\n";
+    try (GroovyAnalyzer configured = new GroovyAnalyzer(getClass().getClassLoader(), (show, message) -> System.err.println(message), script)) {
+      assertEquals(List.of(), errors(configured.compile(new CompileRequest(path, text, lookup, () -> false))));
+      Files.writeString(Path.of(script), "withConfig(configuration) {\n}\n");
+      Files.setLastModifiedTime(Path.of(script), FileTime.fromMillis(Files.getLastModifiedTime(Path.of(script)).toMillis() + 10_000));
+      List<String> errors = errors(configured.compile(new CompileRequest(path, text, lookup, () -> false)));
+      assertTrue(errors.stream().anyMatch(e -> e.startsWith(b) && e.contains("TimeUnit")), errors.toString());
+    }
   }
 }
