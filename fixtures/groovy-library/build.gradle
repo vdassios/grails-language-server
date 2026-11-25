@@ -10,3 +10,8 @@ repositories {
 dependencies {
   implementation "org.codehaus.groovy:groovy:3.0.25"
 }
+
+// main compiles statically without annotations, as in Alipsa/matrix
+tasks.named("compileGroovy") {
+  groovyOptions.configurationScript = file("config/groovy/compileStatic.groovy")
+}

@@ -83,6 +83,8 @@ class FixtureModelTest {
     ModuleRecord root = model.module(":");
     assertEquals("3.0.25", root.groovyVersion);
     assertEquals(List.of("src/main/groovy", "src/main/java"), relative(root, root.sourceSet("main").sourceRoots));
+    assertEquals(Path.of(root.projectDir, "config/groovy/compileStatic.groovy").toString(), root.sourceSet("main").configurationScript);
+    assertNull(root.sourceSet("test").configurationScript);
   }
 
   /**

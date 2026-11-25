@@ -20,3 +20,5 @@ In `grails4/app`, `src/integration-test` uses a class of `src/test`: Grails' plu
 In `grails4/support`, `Clock` uses commons-text, an `implementation` dependency that `app` does not see. A compile in `app` that pulls in `Clock` from source needs it on the loader.
 
 Grails artefacts in both apps' `app` module (M2): a controller, domain classes, a `@Transactional` service and a taglib, with `grails-logging` (Grails's `log`) and the GSP plugin (taglibs). Each taglib injects its service untyped (`def bookService`, `def itemService`).
+
+In `groovy-library`, `compileGroovy` sets a compiler configuration script, `config/groovy/compileStatic.groovy`, which makes every class of `main` `@CompileStatic`, as in [Alipsa/matrix](https://github.com/Alipsa/matrix). `test` has no script.

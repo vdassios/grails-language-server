@@ -47,5 +47,7 @@ public final class ModuleRecord {
      * compile at run time, so taglibs declared only for run time (Grails 7's {@code RenderTagLib}) are read from them.
      */
     public List<String> runtimeOnly = new ArrayList<>();
+    /** The Groovy compile task's {@code groovyOptions.configurationScript}, or null. */
+    public String configurationScript;
   }
 }
