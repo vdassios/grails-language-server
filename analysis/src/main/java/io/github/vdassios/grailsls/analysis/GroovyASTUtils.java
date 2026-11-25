@@ -228,6 +228,10 @@ public class GroovyASTUtils {
                 return enclosingClass;
             }
         }
+        // a class name, Book.: the class itself; the static type checker infers Class<Book> for it
+        if (receiver instanceof ClassExpression) {
+            return receiver.getType();
+        }
         return getTypeOfNode(receiver, astVisitor);
     }
 

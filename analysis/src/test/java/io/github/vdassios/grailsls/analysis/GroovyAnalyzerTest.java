@@ -1373,6 +1373,30 @@ class GroovyAnalyzerTest {
   }
 
   /**
+   * In statically compiled code the type checker infers {@code Class<A>} for a class name. As a receiver, the class
+   * name still stands for the class: {@code A.} offers its static members, and hover, definition, and signature help
+   * find them.
+   */
+  @Test
+  void aClassNameInStaticallyCompiledCodeIsItsClass() {
+    String path = tmp.resolve("A.groovy").toString();
+    String text = "@groovy.transform.CompileStatic\nclass A {\n  static int COUNT = 1\n  static int count(int n) { n }\n  int size() { 2 }\n"
+        + "  def run() {\n    A.count(A.COUNT)\n  }\n}\n";
+    assertEquals(List.of(), errors(compile(path, text)));
+    assertEquals(Phases.INSTRUCTION_SELECTION, analyzer.phase(path));
+    assertNotNull(analyzer.hover(path, 6, 15), "hover on COUNT");
+    assertEquals("int COUNT", analyzer.hover(path, 6, 15).split("\n")[1]);
+    assertEquals(2, analyzer.definition(path, 6, 15).range.startLine, "definition of COUNT");
+    SignatureHelp help = analyzer.signatureHelp(new CompileRequest(path, text, lookup, () -> false), 6, 12);
+    assertNotNull(help, "signature help in A.count(");
+    assertEquals("static int count(int n)", help.signatures.get(0).label);
+
+    List<String> labels = labels(complete(path, text.replace("    A.count", "    A.\n    A.count"), 6, 6));
+    assertTrue(labels.containsAll(List.of("COUNT", "count")), labels.toString());
+    assertFalse(labels.contains("size") || labels.contains("forName"), "instance members and Class's statics: " + labels);
+  }
+
+  /**
    * The type checker runs for every annotation that runs it ({@code @TypeChecked}, Grails's {@code @GrailsTypeChecked}
    * and {@code @GrailsCompileStatic} too), under an aliased import, and on a constructor.
    */
