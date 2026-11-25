@@ -80,6 +80,8 @@ public final class GroovyAnalyzer implements Analyzer {
   /** Parent of each compile's class loader: the module loader that loaded this class. */
   final ClassLoader parent;
   private final LateTransforms lateTransforms;
+  /** The source set's compiler configuration script, or null. */
+  private final ConfigurationScript configurationScript;
   /**
    * The compiles' target directory, emptied before each compile. The server writes no class files, but Grails's
    * global transformation writes {@code META-INF/grails-plugin.xml} and {@code grails.factories} there, and without
@@ -93,11 +95,12 @@ public final class GroovyAnalyzer implements Analyzer {
   private final GspAnalyzer pages;
 
   /**
-   * @param reporter takes {@code true} and a message to show to the user (a feature is off), {@code false} and one only
-   *                 to log (a workaround is off); called from the compile thread
+   * @param reporter            takes {@code true} and a message to show to the user (a feature is off), {@code false}
+   *                            and one only to log (a workaround is off); called from the compile thread
+   * @param configurationScript the source set's compiler configuration script, or null
    */
-  public GroovyAnalyzer(BiConsumer<Boolean, String> reporter) {
-    this(GroovyAnalyzer.class.getClassLoader(), reporter);
+  public GroovyAnalyzer(BiConsumer<Boolean, String> reporter, String configurationScript) {
+    this(GroovyAnalyzer.class.getClassLoader(), reporter, configurationScript);
   }
 
   /** Reporting to stderr, for tests. */
@@ -112,8 +115,14 @@ public final class GroovyAnalyzer implements Analyzer {
 
   /** With another parent loader, for tests. */
   GroovyAnalyzer(ClassLoader parent, BiConsumer<Boolean, String> reporter) {
+    this(parent, reporter, null);
+  }
+
+  /** With another parent loader and a configuration script, for tests. */
+  GroovyAnalyzer(ClassLoader parent, BiConsumer<Boolean, String> reporter, String configurationScript) {
     this.parent = parent;
     this.reports = new Reports(reporter);
+    this.configurationScript = configurationScript == null ? null : new ConfigurationScript(configurationScript, parent, reports);
     this.caches = new TransformCaches(GroovyAnalyzer.class.getClassLoader(), reports);
     this.lateTransforms = new LateTransforms(parent);
     FileTexts texts = new FileTexts();
@@ -195,17 +204,13 @@ public final class GroovyAnalyzer implements Analyzer {
   }
 
   private Kept runUnit(CompileRequest request, List<Diagnostic> diagnostics, Set<String> early) {
-    CompilerConfiguration config = new CompilerConfiguration();
-    config.setSourceEncoding("UTF-8");
     empty(output, false);
-    config.setTargetDirectory(output.toFile());
-    config.addCompilationCustomizers(new AstTestRemover(), new ParseTreeRemover());
-    // attaches Groovydoc comments to nodes for hover (CompilerConfiguration.GROOVYDOC, Groovy 3+; 2.5 has none)
-    config.getOptimizationOptions().put("groovydoc", true);
-    // a name without a class file is not loaded as a class next: of the thousands of names the resolver tries per
-    // compile, almost all exist nowhere, and each such load searched every jar again and threw through four loaders
-    config.getOptimizationOptions().put("classLoaderResolving", false);
-    lateTransforms.disable(config);
+    CompilerConfiguration config = configuration();
+    // the configuration script runs after the server's own settings, as groovyc runs it after its options
+    int scriptPhase = configurationScript == null ? -1 : configurationScript.apply(config, request.path);
+    if (configurationScript != null && scriptPhase < 0) {
+      config = configuration();
+    }
     GroovyClassLoader loader = new GroovyClassLoader(parent, config, false);
     // source lookup goes through the resolver only, never through the loader (no URL-named sources)
     loader.setResourceLoader(name -> null);
@@ -235,7 +240,7 @@ public final class GroovyAnalyzer implements Analyzer {
         break;
       }
       if (phase == Phases.CONVERSION) {
-        last = lastPhase(document);
+        last = Math.max(lastPhase(document), Math.min(scriptPhase, Phases.INSTRUCTION_SELECTION));
         injections = Injections.queue(document, inputs, resolver, unit);
       }
     }
@@ -261,6 +266,21 @@ public final class GroovyAnalyzer implements Analyzer {
     }
     boolean parsed = document.getAST() != null && !syntaxError(unit.getErrorCollector(), request.path);
     return new Kept(unit, request.text, document.getSource().getURI(), request.lookup, inputs, parsed, resolver.sources(), Math.min(phase, last), false);
+  }
+
+  /** The configuration of a compile, before the configuration script. */
+  private CompilerConfiguration configuration() {
+    CompilerConfiguration config = new CompilerConfiguration();
+    config.setSourceEncoding("UTF-8");
+    config.setTargetDirectory(output.toFile());
+    config.addCompilationCustomizers(new AstTestRemover(), new ParseTreeRemover());
+    // attaches Groovydoc comments to nodes for hover (CompilerConfiguration.GROOVYDOC, Groovy 3+; 2.5 has none)
+    config.getOptimizationOptions().put("groovydoc", true);
+    // a name without a class file is not loaded as a class next: of the thousands of names the resolver tries per
+    // compile, almost all exist nowhere, and each such load searched every jar again and threw through four loaders
+    config.getOptimizationOptions().put("classLoaderResolving", false);
+    lateTransforms.disable(config);
+    return config;
   }
 
   /** Whether the document has a syntax error. */

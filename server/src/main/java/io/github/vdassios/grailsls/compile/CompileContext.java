@@ -49,6 +49,8 @@ public final class CompileContext implements AutoCloseable {
   private volatile int javaFilesNotBuilt;
   /** Gradle task that builds this source set's classes, e.g. {@code :app:testClasses}. */
   public final String classesTask;
+  /** The source set's compiler configuration script, or null. */
+  private final String configurationScript;
   /** The workspace's jar entries, read once for every context. */
   private final JarEntries jars;
   /** ANTLR's runtime, shared with the other contexts of the same Groovy jar; null when not shared. Owned by the workspace. */
@@ -64,8 +66,8 @@ public final class CompileContext implements AutoCloseable {
   private boolean closed;
 
   CompileContext(String name, List<Path> ownRoots, List<Path> searchRoots, List<Path> classpath, Map<String, Path> javaClasses,
-      Map<String, List<Path>> resources, int javaFilesNotBuilt, String classesTask, JarEntries jars, AntlrLoader antlr,
-      BiConsumer<Boolean, String> reporter) {
+      Map<String, List<Path>> resources, int javaFilesNotBuilt, String classesTask, String configurationScript, JarEntries jars,
+      AntlrLoader antlr, BiConsumer<Boolean, String> reporter) {
     this.name = name;
     this.ownRoots = List.copyOf(ownRoots);
     this.searchRoots = List.copyOf(searchRoots);
@@ -74,6 +76,7 @@ public final class CompileContext implements AutoCloseable {
     this.resources = Map.copyOf(resources);
     this.javaFilesNotBuilt = javaFilesNotBuilt;
     this.classesTask = classesTask;
+    this.configurationScript = configurationScript;
     this.jars = jars;
     this.antlr = antlr;
     this.reporter = reporter;
@@ -167,7 +170,7 @@ public final class CompileContext implements AutoCloseable {
       try {
         Class<?> type = Class.forName(Analyzer.IMPLEMENTATION, true, loader);
         BiConsumer<Boolean, String> analysisReporter = (show, message) -> reporter.accept(show, name + ": " + message);
-        analyzer = (Analyzer) type.getConstructor(BiConsumer.class).newInstance(analysisReporter);
+        analyzer = (Analyzer) type.getConstructor(BiConsumer.class, String.class).newInstance(analysisReporter, configurationScript);
       } catch (ReflectiveOperationException | LinkageError e) {
         throw new IllegalStateException("cannot load the analysis layer in " + name + ": " + e, e);
       }

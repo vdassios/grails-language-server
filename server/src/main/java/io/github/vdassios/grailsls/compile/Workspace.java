@@ -637,7 +637,7 @@ public final class Workspace implements AutoCloseable {
     }
     AntlrLoader shared = groovyJar == null ? null : antlr.get(groovyJar);
     CompileContext context = new CompileContext(name, own, new ArrayList<>(search), new ArrayList<>(classpath), classFiles, descriptors, notBuilt,
-        classesTask(module.path, sourceSet.name), jars, shared, reporter);
+        classesTask(module.path, sourceSet.name), sourceSet.configurationScript, jars, shared, reporter);
     classOutputs.put(context, output);
     return context;
   }

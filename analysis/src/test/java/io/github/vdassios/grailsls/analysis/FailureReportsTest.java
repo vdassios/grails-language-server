@@ -8,6 +8,7 @@ import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -114,6 +115,43 @@ class FailureReportsTest {
     assertTrue(shown.get(0).startsWith("the tags of 2 taglib classes are unknown: "), shown.get(0));
     assertTrue(shown.get(0).contains("fixture.GoneTagLib") || shown.get(0).contains("fixture.NewTagLib"), shown.get(0));
     assertEquals(List.of(), logged);
+  }
+
+  /**
+   * A configuration script that does not compile or throws is shown once, and files compile without it; once the file
+   * changes, the script is compiled again. A script that is not there (Grails 7 writes its own only when Gradle
+   * compiles) is only logged.
+   */
+  @Test
+  void aConfigurationScriptThatFailsIsShownOnceAndLeftOut() throws Exception {
+    Path script = tmp.resolve("config.groovy");
+    String checked = "class A {\n  int run() { 'x'.nope() }\n}\n";
+    GroovyAnalyzer analyzer = new GroovyAnalyzer(getClass().getClassLoader(), reporter, script.toString());
+    try {
+      assertEquals(List.of(), compile(analyzer, "A.groovy", checked, lookup(Map.of())).diagnostics);
+      assertEquals(List.of(), shown);
+      assertEquals(1, logged.size(), logged.toString());
+      assertTrue(logged.get(0).startsWith("the Groovy configuration script " + script + " (groovyOptions.configurationScript) cannot be read: "), logged.get(0));
+
+      Files.writeString(script, "withConfig(configuration) {\n  ast(\n}\n");
+      assertEquals(List.of(), compile(analyzer, "A.groovy", checked, lookup(Map.of())).diagnostics);
+      assertEquals(List.of(), compile(analyzer, "A.groovy", checked, lookup(Map.of())).diagnostics);
+      assertEquals(1, shown.size(), shown.toString());
+      assertTrue(shown.get(0).startsWith("cannot compile the Groovy configuration script " + script + " (groovyOptions.configurationScript): "), shown.get(0));
+      assertTrue(shown.get(0).endsWith(". Files compile without it."), shown.get(0));
+
+      Files.writeString(script, "import groovy.transform.CompileStatic\nwithConfig(configuration) {\n  ast(CompileStatic)\n}\n");
+      Files.setLastModifiedTime(script, FileTime.fromMillis(Files.getLastModifiedTime(script).toMillis() + 2000));
+      assertEquals(1, compile(analyzer, "A.groovy", checked, lookup(Map.of())).diagnostics.size(), "the script was compiled again");
+
+      Files.writeString(script, "throw new IllegalStateException('no static here')\n");
+      Files.setLastModifiedTime(script, FileTime.fromMillis(Files.getLastModifiedTime(script).toMillis() + 4000));
+      assertEquals(List.of(), compile(analyzer, "A.groovy", checked, lookup(Map.of())).diagnostics);
+      assertEquals(2, shown.size(), shown.toString());
+      assertEquals("cannot run the Groovy configuration script " + script + " (groovyOptions.configurationScript): no static here. Files compile without it.", shown.get(1));
+    } finally {
+      analyzer.close();
+    }
   }
 
   /** A listed class present without its field: logged once; a class not in the project, or a field of later versions only: nothing. */

@@ -349,6 +349,12 @@ class FixtureCompileTest {
       Path shape = file(model, ":", "src/main/groovy/fixture/shapes/Shape.groovy");
       assertEquals("3.0.25", workspace.contextOf(shape).query(Analyzer::groovyVersion).get(60, TimeUnit.SECONDS));
       assertEquals(List.of(), errors(compile(workspace, shape)));
+      // the build's configuration script makes main static, so the type checker reports a missing method
+      String text = Files.readString(shape).replace("        side * side", "        int n = 'x'.nope()\n        side * side");
+      List<String> errors = errors(compile(workspace, shape, text));
+      assertEquals(1, errors.size(), String.valueOf(errors));
+      assertTrue(errors.get(0).endsWith(":15:17: [Static type checking] - Cannot find matching method java.lang.String#nope(). "
+          + "Please check if the declared type is correct and if the method exists."), errors.get(0));
     }
   }
 }

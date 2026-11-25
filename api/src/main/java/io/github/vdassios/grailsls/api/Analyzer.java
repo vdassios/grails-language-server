@@ -16,8 +16,11 @@ import java.util.Map;
 public interface Analyzer extends AutoCloseable {
   /**
    * Binary name of the implementation, loaded by name in each module loader. It has a public constructor taking a
-   * {@code java.util.function.BiConsumer<Boolean, String>}: where the analyzer reports its failures, {@code true} with
-   * those to show to the user (a feature is off), {@code false} with those only to log (a workaround is off).
+   * {@code java.util.function.BiConsumer<Boolean, String>} and a {@code String}. The first is where the analyzer reports
+   * its failures, {@code true} with those to show to the user (a feature is off), {@code false} with those only to log
+   * (a workaround is off). The second is the absolute path of the source set's compiler configuration script
+   * ({@code groovyOptions.configurationScript}), which runs on every compile as {@code groovyc --configscript} runs it,
+   * or null when the source set has none.
    */
   String IMPLEMENTATION = "io.github.vdassios.grailsls.analysis.GroovyAnalyzer";
 
@@ -33,8 +36,10 @@ public interface Analyzer extends AutoCloseable {
 
   /**
    * Compiles one document to canonicalization (on to instruction selection when it has {@code @CompileStatic} or
-   * {@code @GrailsCompileStatic} code, for the types the static type checker infers), with the classes it uses pulled
-   * in from source through {@code lookup}.
+   * {@code @GrailsCompileStatic} code, or when the configuration script adds a customizer of a later phase such as
+   * {@code ast(CompileStatic)}, for the types the static type checker infers), with the classes it uses pulled in from
+   * source through {@code lookup}. Those classes get the script's imports but not its later-phase customizers, so the
+   * type checker reports only on the document.
    * The result is kept for queries on that document until the next compile of it or {@link #forget}.
    */
   CompileResult compile(CompileRequest request);

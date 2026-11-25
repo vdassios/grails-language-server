@@ -24,12 +24,14 @@ import java.util.stream.Collectors;
 
 import org.codehaus.groovy.ast.ClassCodeVisitorSupport;
 import org.codehaus.groovy.ast.ClassNode;
+import org.codehaus.groovy.ast.CompileUnit;
 import org.codehaus.groovy.ast.MethodNode;
 import org.codehaus.groovy.ast.ModuleNode;
 import org.codehaus.groovy.ast.Parameter;
 import org.codehaus.groovy.ast.expr.ClosureExpression;
 import org.codehaus.groovy.control.Phases;
 import org.codehaus.groovy.control.SourceUnit;
+import org.codehaus.groovy.transform.sc.StaticCompilationMetadataKeys;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -1387,6 +1389,33 @@ class GroovyAnalyzerTest {
     // Grails's annotations, by name (no Grails here: an annotation of that name stands in)
     compile(path, "@interface GrailsTypeChecked {}\n@GrailsTypeChecked\nclass A {}\n");
     assertEquals(Phases.INSTRUCTION_SELECTION, analyzer.phase(path));
+  }
+
+  /**
+   * A source set's configuration script (Gradle's {@code groovyOptions.configurationScript}) runs on each compile, as
+   * {@code groovyc --configscript} runs it: {@code ast(CompileStatic)} makes the document statically compiled without
+   * an annotation. Its imports apply to the classes pulled in from source too, but its type checker does not.
+   */
+  @Test
+  void aConfigurationScriptRunsOnEachCompile() throws IOException {
+    String script = write("config/compileStatic.groovy", "import groovy.transform.CompileStatic\nwithConfig(configuration) {\n  ast(CompileStatic)\n"
+        + "  imports {\n    normal 'java.util.concurrent.TimeUnit'\n  }\n}\n");
+    index.put("B", write("src/B.groovy", "class B {\n  TimeUnit unit() { TimeUnit.SECONDS }\n  def count() { this.nope() }\n}\n"));
+    String path = tmp.resolve("src/A.groovy").toString();
+    String text = "class A {\n  long run(B b) {\n    List<String> names = []\n    int cols = names\n    b.unit().toSeconds(1)\n  }\n}\n";
+    try (GroovyAnalyzer configured = new GroovyAnalyzer(getClass().getClassLoader(), (show, message) -> System.err.println(message), script)) {
+      List<String> errors = errors(configured.compile(new CompileRequest(path, text, lookup, () -> false)));
+      assertEquals(1, errors.size(), errors.toString());
+      // flow typing: names holds an ArrayList, written java.util.ArrayList <String> before Groovy 4
+      assertTrue(errors.get(0).matches(".*:4:16: \\[Static type checking\\] - Cannot assign value of type java.util.ArrayList ?<(java.lang.)?String> to variable of type int"), errors.get(0));
+      assertEquals(Phases.INSTRUCTION_SELECTION, configured.phase(path));
+      CompileUnit classes = configured.unit(path).getAST();
+      assertEquals(Boolean.TRUE, classes.getClass("A").getNodeMetaData(StaticCompilationMetadataKeys.STATIC_COMPILE_NODE));
+      assertNull(classes.getClass("B").getNodeMetaData(StaticCompilationMetadataKeys.STATIC_COMPILE_NODE), "B is pulled in, not checked");
+    }
+    // without the script, the same text is dynamic (B's TimeUnit does not resolve then)
+    assertEquals(List.of(), errors(compile(path, text)).stream().filter(e -> e.startsWith(path)).collect(Collectors.toList()));
+    assertEquals(Phases.CANONICALIZATION, analyzer.phase(path));
   }
 
   /**
