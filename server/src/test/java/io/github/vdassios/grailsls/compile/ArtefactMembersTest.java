@@ -266,7 +266,7 @@ abstract class ArtefactMembersTest {
       hovers.put("taglib out", hover(workspace, app().taglib, "out <<", 1));
       // Groovy 4's class files keep parameter names
       String render = app().fixture.equals("grails4") ? "public void render(Map param1)" : "public void render(Map argMap)";
-      assertEquals(Map.of("controller render", render, "service log", "private final static Logger log", "taglib out", "public GrailsPrintWriter getOut()"), hovers);
+      assertEquals(Map.of("controller render", render, "service log", "private static final Logger log", "taglib out", "public GrailsPrintWriter getOut()"), hovers);
     }
   }
 

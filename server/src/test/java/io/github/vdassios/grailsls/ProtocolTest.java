@@ -497,7 +497,7 @@ class ProtocolTest {
     assertEquals(uri, published.getUri());
     assertEquals(List.of("unable to resolve class Missing"), published.getDiagnostics().stream().map(d -> d.getMessage()).collect(java.util.stream.Collectors.toList()));
     Hover hover = server.getTextDocumentService().hover(new HoverParams(new TextDocumentIdentifier(uri), new Position(3, 15))).get(30, TimeUnit.SECONDS);
-    assertEquals("```groovy\nprivate String name\n```", hover == null ? null : hover.getContents().getRight().getValue());
+    assertEquals("```groovy\nString name\n```", hover == null ? null : hover.getContents().getRight().getValue());
   }
 
   /** Documents that are no files ({@code untitled:}, {@code jdt:}) are ignored, and the others still compile. */

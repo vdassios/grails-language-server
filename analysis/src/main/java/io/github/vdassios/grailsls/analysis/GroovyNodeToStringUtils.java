@@ -19,6 +19,8 @@
 ////////////////////////////////////////////////////////////////////////////////
 package io.github.vdassios.grailsls.analysis;
 
+import java.lang.reflect.Modifier;
+
 import org.codehaus.groovy.ast.ASTNode;
 import org.codehaus.groovy.ast.ClassNode;
 import org.codehaus.groovy.ast.ConstructorNode;
@@ -26,6 +28,7 @@ import org.codehaus.groovy.ast.FieldNode;
 import org.codehaus.groovy.ast.GenericsType;
 import org.codehaus.groovy.ast.MethodNode;
 import org.codehaus.groovy.ast.Parameter;
+import org.codehaus.groovy.ast.PropertyNode;
 import org.codehaus.groovy.ast.Variable;
 
 public class GroovyNodeToStringUtils {
@@ -127,24 +130,28 @@ public class GroovyNodeToStringUtils {
 
 	public static String variableToString(Variable variable, ASTNodeVisitor ast) {
 		StringBuilder builder = new StringBuilder();
-		if (variable instanceof FieldNode) {
-			FieldNode fieldNode = (FieldNode) variable;
-			if (fieldNode.isPublic()) {
-				builder.append("public ");
+		PropertyNode property = variable instanceof FieldNode ? propertyOf((FieldNode) variable) : null;
+		if (property != null) {
+			// a use of a property in its class binds to its field
+			variable = property;
+		}
+		if (variable instanceof FieldNode || variable instanceof PropertyNode) {
+			int modifiers = variable.getModifiers();
+			// a property is public and its field private, but source writes neither
+			if (variable instanceof FieldNode) {
+				if (Modifier.isPublic(modifiers)) {
+					builder.append("public ");
+				} else if (Modifier.isProtected(modifiers)) {
+					builder.append("protected ");
+				} else if (Modifier.isPrivate(modifiers)) {
+					builder.append("private ");
+				}
 			}
-			if (fieldNode.isProtected()) {
-				builder.append("protected ");
-			}
-			if (fieldNode.isPrivate()) {
-				builder.append("private ");
-			}
-
-			if (fieldNode.isFinal()) {
-				builder.append("final ");
-			}
-
-			if (fieldNode.isStatic()) {
+			if (Modifier.isStatic(modifiers)) {
 				builder.append("static ");
+			}
+			if (Modifier.isFinal(modifiers)) {
+				builder.append("final ");
 			}
 		}
 		ClassNode varType = null;
@@ -157,6 +164,13 @@ public class GroovyNodeToStringUtils {
 		builder.append(" ");
 		builder.append(variable.getName());
 		return builder.toString();
+	}
+
+	/** The property a field holds, or null for a field you declared (or one read from a class file). */
+	private static PropertyNode propertyOf(FieldNode field) {
+		ClassNode owner = field.getOwner();
+		PropertyNode property = owner == null ? null : GroovyASTUtils.members(() -> owner.getProperty(field.getName()), null);
+		return property != null && property.getField() == field ? property : null;
 	}
 
 	/**

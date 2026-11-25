@@ -928,6 +928,38 @@ class GroovyAnalyzerTest {
   }
 
   /**
+   * A property shows {@code static} and {@code final} as a field does, in the same order as a method. It shows no
+   * visibility, as source writes none: Groovy makes the property public and its field private. A use in the class binds
+   * to the field, and shows the property too.
+   */
+  @Test
+  void aPropertyShowsItsModifiersAsAFieldDoes() {
+    String path = tmp.resolve("A.groovy").toString();
+    String text = "class A {\n  static int COUNT = 1\n  final int FIN = 2\n  static final String SF = 'x'\n  int plain\n"
+        + "  private static int FIELD = 3\n  public static final int PFIELD = 4\n  def run() { COUNT + FIN + plain + FIELD }\n}\n"
+        + "@groovy.transform.CompileStatic\nclass B {\n  static final int TOTAL = 1\n  def run() { TOTAL + A.PFIELD }\n}\n"
+        + "class C {\n  def run() { A.COUNT + A.SF }\n}\n";
+    assertEquals(List.of(), errors(compile(path, text)));
+    Function<int[], String> signature = at -> analyzer.hover(path, at[0], at[1]).split("\n")[1];
+    assertEquals("static int COUNT", signature.apply(new int[] { 1, 14 }));
+    assertEquals("final int FIN", signature.apply(new int[] { 2, 13 }));
+    assertEquals("static final String SF", signature.apply(new int[] { 3, 23 }));
+    assertEquals("int plain", signature.apply(new int[] { 4, 7 }));
+    assertEquals("private static int FIELD", signature.apply(new int[] { 5, 22 }));
+    assertEquals("public static final int PFIELD", signature.apply(new int[] { 6, 27 }));
+    assertEquals("static int COUNT", signature.apply(new int[] { 7, 15 }), "a use in the class, which binds to the field");
+    assertEquals("final int FIN", signature.apply(new int[] { 7, 23 }), "a use in the class, which binds to the field");
+    assertEquals("static final int TOTAL", signature.apply(new int[] { 11, 20 }));
+    assertEquals("static final int TOTAL", signature.apply(new int[] { 12, 15 }), "a use in static code");
+    assertEquals("public static final int PFIELD", signature.apply(new int[] { 12, 25 }), "a use in static code");
+    assertEquals("static int COUNT", signature.apply(new int[] { 15, 17 }), "a use from another class");
+    assertEquals("static final String SF", signature.apply(new int[] { 15, 27 }), "a use from another class");
+    CompletionList list = complete(path, text, 15, 16);
+    Completion count = list.items.stream().filter(c -> c.label.equals("COUNT")).findFirst().orElseThrow();
+    assertEquals("static int COUNT", analyzer.resolveCompletion(path, count.id).detail);
+  }
+
+  /**
    * Groovy 2.5 parses {@code this} to one shared node, also used by the {@code previous()} and {@code next()} it
    * generates for every enum (and, in a Grails controller, by every implicit-this call in an action). Its parent in
    * the node lookup is wherever it was visited last: here the enum after the class.
@@ -1547,7 +1579,7 @@ class GroovyAnalyzerTest {
     assertEquals(List.of(), errors(compile(path, text)));
     assertEquals(Phases.INSTRUCTION_SELECTION, analyzer.phase(path));
     assertNotNull(analyzer.hover(path, 6, 15), "hover on COUNT");
-    assertEquals("int COUNT", analyzer.hover(path, 6, 15).split("\n")[1]);
+    assertEquals("static int COUNT", analyzer.hover(path, 6, 15).split("\n")[1]);
     assertEquals(2, analyzer.definition(path, 6, 15).range.startLine, "definition of COUNT");
     SignatureHelp help = analyzer.signatureHelp(new CompileRequest(path, text, lookup, () -> false), 6, 12);
     assertNotNull(help, "signature help in A.count(");
