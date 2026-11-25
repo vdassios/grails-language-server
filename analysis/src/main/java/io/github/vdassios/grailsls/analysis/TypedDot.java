@@ -42,11 +42,12 @@ final class TypedDot {
 
   /**
    * The receiver of the member access after a dot just typed at a position, in {@code earlier}; null unless it is
-   * provably the receiver a compile of the request's text with {@code repair} inserted at the position would have.
+   * provably the receiver a compile of {@code repaired}, the request's text repaired at the position
+   * ({@link Completions#repaired}), would have.
    *
    * @param parse parses a text of the document only (no class is resolved), null when it does not parse
    */
-  static Expression receiver(Kept earlier, CompileRequest request, int line, int column, String repair, Function<String, SourceUnit> parse) {
+  static Expression receiver(Kept earlier, CompileRequest request, int line, int column, String repaired, Function<String, SourceUnit> parse) {
     String text = request.text;
     int offset = new Lines(text).offset(line, column);
     if (offset == 0 || text.charAt(offset - 1) != '.') {
@@ -66,7 +67,7 @@ final class TypedDot {
         || !earlier.inputs.same(request.lookup)) {
       return null;
     }
-    Expression receiver = receiverInCopy(text.substring(0, offset) + repair + text.substring(offset), line, column, parse);
+    Expression receiver = receiverInCopy(repaired, line, column, parse);
     Range span = receiver == null ? null : NodeRanges.of(receiver);
     // before the first difference, a position is the same in both texts
     if (span == null || new Lines(text).offset(span.endLine, span.endColumn) > prefix) {

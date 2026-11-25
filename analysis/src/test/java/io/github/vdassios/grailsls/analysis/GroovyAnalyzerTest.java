@@ -952,6 +952,27 @@ class GroovyAnalyzerTest {
     assertTrue(labels(complete(path, closed, 3, column)).contains("toUpperCase"), "a string the line closes later is not closed again");
   }
 
+  /**
+   * A block, bracket or parenthesis opened before the position and left open (a method being written before its
+   * closing brace) is closed in the copy, on a line after the position's; braces in strings and comments do not count.
+   */
+  @Test
+  void completionInABlockLeftOpenClosesItInTheCopy() {
+    String path = tmp.resolve("A.groovy").toString();
+    String start = "class A {\n  String name\n  def run() {\n";
+    for (String rest : List.of("    name.\n}\n", "    name.", "    name.\n  def other() {}\n}\n", "    name.\n    int x = 1\n}\n", "    [1].each { n ->\n      name.\n  }\n}\n",
+        "    def x = [name.\n  }\n}\n", "    println(name.)\n}\n", "    def s = '{' // {\n    /* { */ name.\n}\n")) {
+      String text = start + rest;
+      String[] lines = text.split("\n", -1);
+      int line = 3;
+      while (!lines[line].contains("name.")) {
+        line++;
+      }
+      CompletionList list = complete(path, text, line, lines[line].indexOf("name.") + 5);
+      assertTrue(labels(list).contains("toUpperCase"), rest + ": " + labels(list));
+    }
+  }
+
   /** A completion's labels, and whether it compiled: the flag is checked before each compile phase. */
   private static final class Answer {
     final List<String> labels;

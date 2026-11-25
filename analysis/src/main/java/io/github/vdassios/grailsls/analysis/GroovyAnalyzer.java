@@ -419,20 +419,20 @@ public final class GroovyAnalyzer implements Analyzer {
     Conventions conventions = conventions(request.lookup, request.path);
     Function<String, Map<String, Taglibs.Tag>> tags = namespaces(request.lookup);
     Completions found = kept == null ? null : Completions.at(kept.ast(), kept.uri, request.lookup, conventions, tags, false, line, column, request.text);
-    // the text does not parse at the position: a copy with a name typed there, and a string closed that the line
-    // leaves open (render(view: 'sh)
-    String repair = Completions.repair(typed, lineAfter(request.text, line, column));
+    // the text does not parse at the position: a copy with a name typed there, a string closed that the line leaves
+    // open (render(view: 'sh), and blocks closed that the text leaves open (a method before its closing brace)
+    String repaired = Completions.repaired(request.text, new Lines(request.text).offset(line, column), Completions.repair(typed, lineAfter(request.text, line, column)));
     if (found == null) {
       // after a dot just typed: the receiver's members, from the last compile that parsed, when it has the receiver
       Kept earlier = lastParsed.get(request.path);
-      Expression receiver = earlier == null ? null : TypedDot.receiver(earlier, request, line, column, repair, copy -> parserCache.parsing(() -> parsed(request.path, copy)));
+      Expression receiver = earlier == null ? null : TypedDot.receiver(earlier, request, line, column, repaired, copy -> parserCache.parsing(() -> parsed(request.path, copy)));
       if (receiver != null) {
         kept = earlier;
         found = Completions.afterDot(earlier.ast(), tags, receiver);
       }
     }
     if (found == null) {
-      kept = compileCopy(request, line, column, repair);
+      kept = compileCopy(request, repaired);
       found = kept == null ? null : Completions.at(kept.ast(), kept.uri, request.lookup, conventions, tags, false, line, column, request.text);
     }
     if (found == null) {
@@ -503,7 +503,11 @@ public final class GroovyAnalyzer implements Analyzer {
   /** Compiles the document with text inserted at a position, for one query; null when cancelled. Not kept. */
   private Kept compileCopy(CompileRequest request, int line, int column, String insert) {
     int offset = new Lines(request.text).offset(line, column);
-    String text = request.text.substring(0, offset) + insert + request.text.substring(offset);
+    return compileCopy(request, request.text.substring(0, offset) + insert + request.text.substring(offset));
+  }
+
+  /** Compiles another text of the document, for one query; null when cancelled. Not kept. */
+  private Kept compileCopy(CompileRequest request, String text) {
     Kept copy = run(new CompileRequest(request.path, text, request.lookup, request.cancelled), new ArrayList<>());
     return copy.cancelled ? null : copy;
   }

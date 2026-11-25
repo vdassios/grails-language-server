@@ -280,6 +280,11 @@ final class SourceText {
     return "=([{,:;~!&|?+-*%<>^".indexOf(last) >= 0;
   }
 
+  /** Blanks comments and string and character literals, keeping offsets and line ends. */
+  static String blank(String source) {
+    return blank(source, null);
+  }
+
   /** Blanks comments and string and character literals, keeping line ends; notes the documentation comments, unless null. */
   private static String blank(String source, List<int[]> comments) {
     char[] chars = source.toCharArray();

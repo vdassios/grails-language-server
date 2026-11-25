@@ -157,6 +157,46 @@ public final class Completions {
   }
 
   /**
+   * A copy of a text with a repair inserted at an offset ({@link #repair}), and with what closes the blocks, brackets
+   * and parentheses opened up to the end of the offset's line that the text after it leaves open, on a line of their
+   * own after that line: a method being written before its closing brace gets one there. Closing brackets after the
+   * line close the outermost ones (the class's last brace closes the class). Strings and comments are skipped
+   * ({@link SourceText#blank}). Groovy 2.5 needs the line break after a method's brace before the next member.
+   */
+  static String repaired(String text, int offset, String repair) {
+    String copy = text.substring(0, offset) + repair + text.substring(offset);
+    String code = SourceText.blank(copy);
+    int end = code.indexOf('\n', offset + repair.length());
+    end = end < 0 ? code.length() : end;
+    StringBuilder open = new StringBuilder();
+    for (int i = 0; i < end; i++) {
+      char c = code.charAt(i);
+      if (c == '{' || c == '(' || c == '[') {
+        open.append(c == '{' ? '}' : c == '(' ? ')' : ']');
+      } else if ((c == '}' || c == ')' || c == ']') && open.length() > 0) {
+        open.setLength(open.length() - 1);
+      }
+    }
+    int depth = 0;
+    for (int i = end; i < code.length() && open.length() > 0; i++) {
+      char c = code.charAt(i);
+      if (c == '{' || c == '(' || c == '[') {
+        depth++;
+      } else if (c == '}' || c == ')' || c == ']') {
+        if (depth > 0) {
+          depth--;
+        } else {
+          open.deleteCharAt(0);
+        }
+      }
+    }
+    if (open.length() == 0) {
+      return copy;
+    }
+    return copy.substring(0, end) + "\n" + open.reverse() + copy.substring(end);
+  }
+
+  /**
    * When a line's text leaves a string open, what closes it and the parentheses and brackets opened before it on the
    * line ({@code render(view: 'sh} → {@code ')}); else null. Triple quotes and escapes are not considered.
    */
