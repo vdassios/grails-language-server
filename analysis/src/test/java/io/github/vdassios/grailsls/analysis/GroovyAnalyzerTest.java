@@ -881,6 +881,35 @@ class GroovyAnalyzerTest {
   }
 
   /**
+   * Hover, signature help, and completion details write a nested class as source does ({@code Map.Entry}), not by its
+   * binary name ({@code Map$Entry}): from a class file and from the compile, nested twice, and with type arguments. An
+   * anonymous class has no name to write, so it keeps its binary one.
+   */
+  @Test
+  void nestedClassesShowAsSourceWritesThem() {
+    String path = tmp.resolve("A.groovy").toString();
+    String text = "package p\n@groovy.transform.CompileStatic\nclass A {\n  static class Outer {\n    static class In<T> {\n"
+        + "      In<T> self(Map.Entry<String, T> entry) { this }\n    }\n  }\n"
+        + "  Map.Entry<String, Integer> first(Map<String, Integer> map) {\n    Outer.In<Integer> deep = new Outer.In<Integer>()\n"
+        + "    deep.self(null)\n    def simple = new AbstractMap.SimpleEntry<String, Integer>('a', 1)\n    def anon = new Runnable() { void run() {} }\n"
+        + "    map.entrySet().first()\n  }\n}\n";
+    assertEquals(List.of(), errors(compile(path, text)));
+    Function<int[], String> signature = at -> analyzer.hover(path, at[0], at[1]).split("\n")[1];
+    assertEquals("public Map.Entry<String, Integer> first(Map<String, Integer> map)", signature.apply(new int[] { 8, 30 }));
+    assertEquals("A.Outer.In<Integer> deep", signature.apply(new int[] { 9, 23 }));
+    assertEquals("public A.Outer.In<T> self(Map.Entry<String, T> entry)", signature.apply(new int[] { 10, 10 }));
+    assertEquals("class A.Outer.In<T>", analyzer.hover(path, 4, 18).split("\n")[2], "the class, after its package");
+    assertEquals("AbstractMap.SimpleEntry<String, Integer> simple", signature.apply(new int[] { 11, 9 }));
+    assertEquals("A$1 anon", signature.apply(new int[] { 12, 9 }));
+    SignatureHelp help = analyzer.signatureHelp(new CompileRequest(path, text, lookup, () -> false), 11, 62);
+    List<String> labels = help.signatures.stream().map(s -> s.label).collect(Collectors.toList());
+    assertTrue(labels.stream().anyMatch(label -> label.startsWith("java.util.AbstractMap.SimpleEntry(Map.Entry<?, ?> ")), labels.toString());
+    CompletionList list = complete(path, text, 13, 8);
+    Completion entrySet = list.items.stream().filter(c -> c.label.equals("entrySet")).findFirst().orElseThrow();
+    assertEquals("public Set<Map.Entry<K, V>> entrySet()", analyzer.resolveCompletion(path, entrySet.id).detail);
+  }
+
+  /**
    * Groovy 2.5 parses {@code this} to one shared node, also used by the {@code previous()} and {@code next()} it
    * generates for every enum (and, in a Grails controller, by every implicit-this call in an action). Its parent in
    * the node lookup is wherever it was visited last: here the enum after the class.

@@ -52,7 +52,7 @@ public class GroovyNodeToStringUtils {
 		} else {
 			builder.append("class ");
 		}
-		builder.append(classNode.getNameWithoutPackage());
+		builder.append(sourceName(classNode.getNameWithoutPackage()));
 		appendGenerics(builder, classNode.redirect().getGenericsTypes(), true);
 
 		ClassNode superClass = null;
@@ -71,7 +71,7 @@ public class GroovyNodeToStringUtils {
 
 	public static String constructorToString(ConstructorNode constructorNode, ASTNodeVisitor ast) {
 		StringBuilder builder = new StringBuilder();
-		builder.append(constructorNode.getDeclaringClass().getName());
+		builder.append(sourceName(constructorNode.getDeclaringClass().getName()));
 		builder.append("(");
 		builder.append(parametersToString(constructorNode.getParameters(), ast));
 		builder.append(")");
@@ -159,7 +159,10 @@ public class GroovyNodeToStringUtils {
 		return builder.toString();
 	}
 
-	/** A type without its package, with its type arguments, such as {@code Map<String, List<? extends Number>>}. */
+	/**
+	 * A type without its package, as source writes it, with its type arguments, such as
+	 * {@code Map.Entry<String, List<? extends Number>>}.
+	 */
 	static String typeToString(ClassNode type) {
 		if (type.isArray()) {
 			return typeToString(type.getComponentType()) + "[]";
@@ -167,9 +170,25 @@ public class GroovyNodeToStringUtils {
 		if (type.isGenericsPlaceHolder()) {
 			return type.getUnresolvedName();
 		}
-		StringBuilder builder = new StringBuilder(type.getNameWithoutPackage());
+		StringBuilder builder = new StringBuilder(sourceName(type.getNameWithoutPackage()));
 		appendGenerics(builder, type.getGenericsTypes(), false);
 		return builder.toString();
+	}
+
+	/**
+	 * A binary class name as source writes it: the {@code $} before a nested class's name becomes a dot, so
+	 * {@code Map$Entry} is {@code Map.Entry}. A class file's node does not know its outer class, so this goes by the
+	 * name. A {@code $} that no letter follows stays: an anonymous or local class has no name to write
+	 * ({@code Sampler$1}), nor has a closure's class ({@code Sampler$_split_closure1}).
+	 */
+	static String sourceName(String binary) {
+		StringBuilder name = new StringBuilder(binary);
+		for (int i = 1; i < name.length() - 1; i++) {
+			if (name.charAt(i) == '$' && name.charAt(i - 1) != '.' && Character.isLetter(name.charAt(i + 1))) {
+				name.setCharAt(i, '.');
+			}
+		}
+		return name.toString();
 	}
 
 	/**
