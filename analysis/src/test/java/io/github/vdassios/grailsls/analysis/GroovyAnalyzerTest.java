@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -894,6 +895,52 @@ class GroovyAnalyzerTest {
     Location definition = analyzer.definition(path, 2, 20);
     assertNotNull(definition);
     assertEquals(1, definition.range.startLine);
+  }
+
+  /**
+   * A call without a receiver to a static method of the class: dynamic Groovy makes it a
+   * {@code StaticMethodCallExpression}, and static compilation a call on the class. Hover, definition, signature help,
+   * and the call's type find the method in both, from an instance method, a static one, and as another call's receiver.
+   */
+  @Test
+  void anImplicitThisStaticCallFindsItsMethod() {
+    String path = tmp.resolve("A.groovy").toString();
+    String body = "class A {\n  /** Repeats. */\n  static String count(int n) { 'x' * n }\n  String size() { count(1) }\n  static String twice() {\n"
+        + "    def d = count(2)\n    count(3).trim()\n  }\n}\n";
+    BiFunction<Integer, Integer, String> hover = (line, column) -> {
+      String markdown = analyzer.hover(path, line, column);
+      return markdown == null ? null : markdown.split("\n")[1];
+    };
+    BiFunction<Integer, Integer, String> definition = (line, column) -> {
+      Location location = analyzer.definition(path, line, column);
+      return location == null ? null : String.valueOf(location.range.startLine);
+    };
+    Map<String, String> expected = new java.util.LinkedHashMap<>();
+    expected.put("hover in an instance method", "static String count(int n)");
+    expected.put("hover in a static method", "static String count(int n)");
+    expected.put("hover on the first letter of a receiver", "static String count(int n)");
+    expected.put("hover on the last letter of a receiver", "static String count(int n)");
+    expected.put("hover on the variable it sets", "String d");
+    expected.put("hover on the method called on its result", "public String trim()");
+    expected.put("definition in an instance method", "2");
+    expected.put("definition of a receiver", "2");
+    expected.put("signature help", "static String count(int n)");
+    for (String annotation : List.of("", "@groovy.transform.CompileStatic ")) {
+      String text = annotation + body;
+      assertEquals(List.of(), errors(compile(path, text)), annotation);
+      Map<String, String> found = new java.util.LinkedHashMap<>();
+      found.put("hover in an instance method", hover.apply(3, 19));
+      found.put("hover in a static method", hover.apply(5, 14));
+      found.put("hover on the first letter of a receiver", hover.apply(6, 4));
+      found.put("hover on the last letter of a receiver", hover.apply(6, 8));
+      found.put("hover on the variable it sets", hover.apply(5, 8));
+      found.put("hover on the method called on its result", hover.apply(6, 14));
+      found.put("definition in an instance method", definition.apply(3, 19));
+      found.put("definition of a receiver", definition.apply(6, 4));
+      SignatureHelp help = analyzer.signatureHelp(new CompileRequest(path, text, lookup, () -> false), 5, 18);
+      found.put("signature help", help == null ? null : help.signatures.get(help.activeSignature).label);
+      assertEquals(expected, found, annotation.isEmpty() ? "dynamic" : annotation);
+    }
   }
 
   @Test

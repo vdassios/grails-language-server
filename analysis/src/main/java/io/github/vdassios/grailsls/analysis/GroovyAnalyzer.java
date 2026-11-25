@@ -324,7 +324,7 @@ public final class GroovyAnalyzer implements Analyzer {
     CompilerConfiguration config = new CompilerConfiguration();
     config.setSourceEncoding("UTF-8");
     config.setTargetDirectory(output.toFile());
-    config.addCompilationCustomizers(new AstTestRemover(), new ParseTreeRemover());
+    config.addCompilationCustomizers(new AstTestRemover(), new ParseTreeRemover(), new CallPositions());
     // attaches Groovydoc comments to nodes for hover (CompilerConfiguration.GROOVYDOC, Groovy 3+; 2.5 has none)
     config.getOptimizationOptions().put("groovydoc", true);
     // a name without a class file is not loaded as a class next: of the thousands of names the resolver tries per

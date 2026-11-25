@@ -564,7 +564,14 @@ public class ASTNodeVisitor extends ClassCodeVisitorSupport {
 	public void visitMethodCallExpression(MethodCallExpression node) {
 		pushASTNode(node);
 		try {
-			super.visitMethodCallExpression(node);
+			if (node.isImplicitThis() && node.getObjectExpression() instanceof ClassExpression) {
+				// static compilation's call on the class for a call without a receiver: the class is not in the source,
+				// but from Groovy 4 it has an empty span at the call's start, which would hide the call's name
+				node.getMethod().visit(this);
+				node.getArguments().visit(this);
+			} else {
+				super.visitMethodCallExpression(node);
+			}
 		} finally {
 			popASTNode();
 		}

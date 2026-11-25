@@ -49,6 +49,7 @@ import org.codehaus.groovy.ast.expr.MethodCall;
 import org.codehaus.groovy.ast.expr.MapExpression;
 import org.codehaus.groovy.ast.expr.MethodCallExpression;
 import org.codehaus.groovy.ast.expr.PropertyExpression;
+import org.codehaus.groovy.ast.expr.StaticMethodCallExpression;
 import org.codehaus.groovy.ast.expr.TupleExpression;
 import org.codehaus.groovy.ast.expr.VariableExpression;
 import org.codehaus.groovy.ast.stmt.ExpressionStatement;
@@ -139,6 +140,9 @@ public class GroovyASTUtils {
             return tryToResolveOriginalClassNode(importNode.getType(), strict, astVisitor);
         } else if (node instanceof MethodNode) {
             return node;
+        } else if (node instanceof StaticMethodCallExpression) {
+            // a call without a receiver to a static method of the class, in dynamic code: it has no node for its name
+            return GroovyASTUtils.getMethodFromCallExpression((StaticMethodCallExpression) node, astVisitor);
         } else if (node instanceof ConstantExpression && parentNode != null) {
             if (parentNode instanceof MethodCallExpression) {
                 MethodCallExpression methodCallExpression = (MethodCallExpression) parentNode;
@@ -254,13 +258,12 @@ public class GroovyASTUtils {
         } else if (node instanceof ConstructorCallExpression) {
             ConstructorCallExpression expression = (ConstructorCallExpression) node;
             return expression.getType();
-        } else if (node instanceof MethodCallExpression) {
-            MethodCallExpression expression = (MethodCallExpression) node;
-            MethodNode methodNode = GroovyASTUtils.getMethodFromCallExpression(expression, astVisitor);
+        } else if (node instanceof MethodCallExpression || node instanceof StaticMethodCallExpression) {
+            MethodNode methodNode = GroovyASTUtils.getMethodFromCallExpression((MethodCall) node, astVisitor);
             if (methodNode != null) {
                 return methodNode.getReturnType();
             }
-            return expression.getType();
+            return ((Expression) node).getType();
         } else if (node instanceof PropertyExpression) {
             PropertyExpression expression = (PropertyExpression) node;
             PropertyNode propNode = GroovyASTUtils.getPropertyFromExpression(expression, astVisitor);
@@ -379,6 +382,10 @@ public class GroovyASTUtils {
                     }
                 }
             }
+        } else if (node instanceof StaticMethodCallExpression) {
+            StaticMethodCallExpression call = (StaticMethodCallExpression) node;
+            return members(() -> call.getOwnerType().getMethods(call.getMethod()).stream().filter(MethodNode::isStatic)
+                    .collect(Collectors.toList()), Collections.emptyList());
         } else if (node instanceof ConstructorCallExpression) {
             ConstructorCallExpression constructorCallExpr = (ConstructorCallExpression) node;
             ClassNode constructorType = constructorCallExpr.getType();
