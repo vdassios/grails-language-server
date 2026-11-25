@@ -35,7 +35,7 @@ Resolution runs in the background, with a timeout. `grails/reloadProject` runs i
 
 ## Compiling a file
 
-The server compiles each open file on its own, up to Groovy's canonicalization phase. If the file does not parse, the compile stops after parsing it and reports its syntax errors.
+The server compiles each open file on its own, up to Groovy's canonicalization phase. If the file does not parse, the compile stops after parsing it and reports its syntax errors. A file with only errors that Groovy finds after parsing, such as an unresolved class or a static type checker error, still counts as parsed. So signature help answers from its compile, and completion after a dot can too.
 
 If the file has code under `@CompileStatic`, `@TypeChecked`, or their Grails variants, the compile goes on to the instruction selection phase. This applies when the annotation is on a class, a method, or a constructor, and also when it is imported under an alias. The static type checker then reports its errors, and its inferred types feed completion and hover. Examples of inferred types are the types of closure parameters and flow typing. The checker infers `Class<Book>` for a class name such as `Book`, but before a dot the name still stands for the class: `Book.` offers `Book`'s static members, not `Class`'s.
 
