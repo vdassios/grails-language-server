@@ -252,6 +252,10 @@ The server extracts the source file once, as a read-only file under `<cacheDir>/
 
 A method that a class gets from a trait takes you to the trait's source. For example, Grails's `render` goes to `ResponseRenderer.groovy`, and `save` and `list` go to `GormEntity.groovy`. A method or property of one of your project's traits takes you to that trait's file.
 
+### Groovy extension methods
+
+You call a Groovy extension method, such as `take` on a `List`, without its first parameter. Signature help and hover show it that way. Go to definition takes you to the static method that declares it, and its doc comment comes from there. That method is in `DefaultGroovyMethods` or another class in Groovy's sources jar, or in your project's own extension class.
+
 ### Doc comments
 
 Hover, completion item details, and signature help show the declaration's doc comment. Groovy 2.5 does not keep comments on its syntax tree. So for your project's own sources on Groovy 2.5, the server reads the comment from the text that the file was compiled from.
