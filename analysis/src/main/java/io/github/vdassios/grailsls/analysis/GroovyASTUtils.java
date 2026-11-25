@@ -54,6 +54,8 @@ import org.codehaus.groovy.ast.expr.StaticMethodCallExpression;
 import org.codehaus.groovy.ast.expr.TupleExpression;
 import org.codehaus.groovy.ast.expr.VariableExpression;
 import org.codehaus.groovy.ast.stmt.ExpressionStatement;
+import org.codehaus.groovy.transform.stc.ExtensionMethodNode;
+import org.codehaus.groovy.transform.stc.StaticTypeCheckingSupport;
 import org.codehaus.groovy.transform.stc.StaticTypeCheckingVisitor;
 import org.codehaus.groovy.transform.stc.StaticTypesMarker;
 
@@ -367,8 +369,16 @@ public class GroovyASTUtils {
             ClassNode leftType = getTypeOfReceiver(methodCallExpr.getObjectExpression(), methodCallExpr, astVisitor);
             String name = methodCallExpr.getMethod().getText();
             List<MethodNode> methods = leftType == null ? Collections.emptyList() : members(() -> leftType.getMethods(name), Collections.emptyList());
+            // Groovy's extension methods: after the type's own, and after the delegates' for a call without a receiver
+            List<MethodNode> extensions = leftType == null ? Collections.emptyList()
+                    : extensionMethods(leftType, name, methodCallExpr.getObjectExpression() instanceof ClassExpression, methods, astVisitor);
             if (!methods.isEmpty()) {
-                return methods;
+                if (extensions.isEmpty()) {
+                    return methods;
+                }
+                List<MethodNode> all = new ArrayList<>(methods);
+                all.addAll(extensions);
+                return all;
             }
             // a GORM dynamic finder: no class declares it
             Gorm.Finder finder = Gorm.finder(methodCallExpr, astVisitor);
@@ -384,6 +394,7 @@ public class GroovyASTUtils {
                     }
                 }
             }
+            return extensions;
         } else if (node instanceof StaticMethodCallExpression) {
             StaticMethodCallExpression call = (StaticMethodCallExpression) node;
             return members(() -> call.getOwnerType().getMethods(call.getMethod()).stream().filter(MethodNode::isStatic)
@@ -397,6 +408,61 @@ public class GroovyASTUtils {
             }
         }
         return Collections.emptyList();
+    }
+
+    /**
+     * Groovy's extension methods by a name that a receiver of a type has, as the static type checker finds them: those of
+     * {@code DefaultGroovyMethods} and of the extension modules on the compile's class path, each without its first
+     * parameter, which is the receiver. The static ones for a class name, the others for an instance. Of those with the
+     * same parameters, only the one for the nearest type, and none that one of the type's own methods has.
+     */
+    private static List<MethodNode> extensionMethods(ClassNode type, String name, boolean statics, List<MethodNode> own, ASTNodeVisitor astVisitor) {
+        ClassLoader loader = astVisitor.getClassLoader();
+        if (loader == null) {
+            return Collections.emptyList();
+        }
+        List<MethodNode> found = new ArrayList<>();
+        for (MethodNode method : members(() -> Extensions.find(loader, type, name), Collections.<MethodNode>emptySet())) {
+            if (!(method instanceof ExtensionMethodNode) || ((ExtensionMethodNode) method).isStaticExtension() != statics
+                    || own.stream().anyMatch(other -> sameParameters(other, method))) {
+                continue;
+            }
+            MethodNode same = found.stream().filter(other -> sameParameters(other, method)).findFirst().orElse(null);
+            if (same == null) {
+                found.add(method);
+            } else if (nearer((ExtensionMethodNode) method, (ExtensionMethodNode) same)) {
+                found.set(found.indexOf(same), method);
+            }
+        }
+        return found;
+    }
+
+    private static boolean sameParameters(MethodNode one, MethodNode other) {
+        Parameter[] ones = one.getParameters();
+        Parameter[] others = other.getParameters();
+        if (ones.length != others.length) {
+            return false;
+        }
+        for (int i = 0; i < ones.length; i++) {
+            if (!ones[i].getType().equals(others[i].getType())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** Whether an extension method is for a nearer type than another: {@code take(List, int)} than {@code take(Iterable, int)}. */
+    private static boolean nearer(ExtensionMethodNode method, ExtensionMethodNode other) {
+        ClassNode self = method.getExtensionMethodNode().getParameters()[0].getType();
+        ClassNode otherSelf = other.getExtensionMethodNode().getParameters()[0].getType();
+        return !self.equals(otherSelf) && StaticTypeCheckingSupport.implementsInterfaceOrIsSubclassOf(self, otherSelf);
+    }
+
+    /** Reaches {@code findDGMMethodsForClassNode}, which is protected on Groovy 2.5 and public later. */
+    private abstract static class Extensions extends StaticTypeCheckingSupport {
+        static Set<MethodNode> find(ClassLoader loader, ClassNode type, String name) {
+            return findDGMMethodsForClassNode(loader, type, name);
+        }
     }
 
     /** The {@code @DelegatesTo} types of the closures around a node, innermost first. */

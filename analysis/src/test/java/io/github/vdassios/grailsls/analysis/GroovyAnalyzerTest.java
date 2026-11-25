@@ -867,6 +867,57 @@ class GroovyAnalyzerTest {
     assertTrue(documented.contains("public boolean startsWith(String arg0, int arg1): The same, from an offset."), documented.toString());
   }
 
+  /**
+   * A Groovy extension method, such as {@code DefaultGroovyMethods.take(List, int)}, is called without its first
+   * parameter. Signature help lists it as it is called, once for each parameter list (the overload for the nearest
+   * type), after the type's own methods, and a class name gets the static ones ({@code Thread.start}). Hover shows it
+   * the same way, and its comment and definition come from the extension class's source.
+   */
+  @Test
+  void signatureHelpListsGroovyExtensionMethodsAsTheyAreCalled() throws IOException {
+    String dgm = write("groovy/org/codehaus/groovy/runtime/DefaultGroovyMethods.java", "package org.codehaus.groovy.runtime;\n\n"
+        + "public class DefaultGroovyMethods {\n  /** The first {@code num} elements. */\n  public static <T> List<T> take(List<T> self, int num) { return null; }\n}\n");
+    classSources.put("org.codehaus.groovy.runtime.DefaultGroovyMethods", dgm);
+    String path = tmp.resolve("A.groovy").toString();
+    String body = "class A {\n  def run(List<Integer> nums) {\n    nums.take(1)\n    nums.inject(0, { a, b -> a })\n    Thread.start('t') { }\n"
+        + "    nums.size()\n  }\n}\n";
+    for (String text : List.of(body, "@groovy.transform.CompileStatic " + body)) {
+      String where = text == body ? "dynamic" : "static";
+      compile(path, text);
+      SignatureHelp take = analyzer.signatureHelp(new CompileRequest(path, text, lookup, () -> false), 2, 14);
+      assertNotNull(take, where + ": nums.take(");
+      assertEquals(1, take.signatures.size(), where + ": the List overload only, not Iterable's too: " + labels(take));
+      assertTrue(take.signatures.get(0).label.matches("public <T> List<T> take\\(int \\w+\\)"), where + ": " + labels(take));
+      assertEquals("The first `num` elements.", take.signatures.get(0).documentation, where);
+      assertEquals(0, take.activeParameter, where);
+      String hover = analyzer.hover(path, 2, 10);
+      assertNotNull(hover, where + ": hover on take");
+      assertTrue(hover.split("\n")[1].matches("public <T> List<T> take\\(int \\w+\\)"), where + ": " + hover);
+      assertTrue(hover.endsWith("The first `num` elements."), where + ": " + hover);
+      assertEquals(dgm, analyzer.definition(path, 2, 10).path, where);
+      assertEquals(4, analyzer.definition(path, 2, 10).range.startLine, where);
+
+      SignatureHelp inject = analyzer.signatureHelp(new CompileRequest(path, text, lookup, () -> false), 3, 18);
+      assertNotNull(inject, where + ": nums.inject(0, ");
+      assertEquals(inject.signatures.size(), labels(inject).stream().distinct().count(), where + ": each parameter list once: " + labels(inject));
+      assertEquals(1, inject.activeParameter, where);
+      assertTrue(inject.signatures.get(inject.activeSignature).label.matches(".* inject\\(U \\w+, Closure<V> \\w+\\)"), where + ": " + labels(inject));
+
+      SignatureHelp start = analyzer.signatureHelp(new CompileRequest(path, text, lookup, () -> false), 4, 17);
+      assertNotNull(start, where + ": Thread.start(");
+      assertTrue(labels(start).contains("public void start()"), where + ": " + labels(start));
+      assertTrue(start.signatures.get(start.activeSignature).label.matches("public static Thread start\\(String \\w+, Closure \\w+\\)"), where + ": " + labels(start));
+      assertNull(start.signatures.get(start.activeSignature).documentation, where + ": not Thread's own start");
+
+      SignatureHelp size = analyzer.signatureHelp(new CompileRequest(path, text, lookup, () -> false), 5, 14);
+      assertEquals(List.of("public int size()"), labels(size), where + ": List's own size, not also DefaultGroovyMethods.size(Iterable)");
+    }
+  }
+
+  private static List<String> labels(SignatureHelp help) {
+    return help == null ? null : help.signatures.stream().map(signature -> signature.label).collect(Collectors.toList());
+  }
+
   /** Grails's idiom: render(view: 'x'), save(flush: true). Named arguments arrive as one map. */
   @Test
   void hoverOnACallWithNamedArgumentsPicksTheMapOverload() {

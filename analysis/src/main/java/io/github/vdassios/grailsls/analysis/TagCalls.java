@@ -13,6 +13,7 @@ import org.codehaus.groovy.ast.expr.MethodCall;
 import org.codehaus.groovy.ast.expr.MethodCallExpression;
 import org.codehaus.groovy.ast.expr.TupleExpression;
 import org.codehaus.groovy.ast.expr.VariableExpression;
+import org.codehaus.groovy.transform.stc.ExtensionMethodNode;
 
 /**
  * Tags called as methods: {@code g.link(controller: 'book')} and {@code ns.tag(...)} in Groovy and in page code, where
@@ -64,7 +65,8 @@ final class TagCalls {
     if (namespace != null) {
       return namespace.get(name);
     }
-    if (page && call.isImplicitThis() && GroovyASTUtils.getMethodOverloadsFromCallExpression(call, ast).isEmpty()) {
+    // a Groovy extension method by the tag's name (collect, each, findAll on Object) does not hide the tag
+    if (page && call.isImplicitThis() && GroovyASTUtils.getMethodOverloadsFromCallExpression(call, ast).stream().allMatch(ExtensionMethodNode.class::isInstance)) {
       return pageTags(namespaces).get(name);
     }
     return null;

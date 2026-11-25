@@ -30,6 +30,7 @@ import org.codehaus.groovy.ast.MethodNode;
 import org.codehaus.groovy.ast.Parameter;
 import org.codehaus.groovy.ast.PropertyNode;
 import org.codehaus.groovy.ast.Variable;
+import org.codehaus.groovy.transform.stc.ExtensionMethodNode;
 
 public class GroovyNodeToStringUtils {
 	private static final String JAVA_OBJECT = "java.lang.Object";
@@ -96,7 +97,8 @@ public class GroovyNodeToStringUtils {
 			builder.append("private ");
 		}
 
-		if (methodNode.isStatic()) {
+		// a Groovy extension method is static in its class, and called on an instance unless it is a static extension
+		if (methodNode.isStatic() && !(methodNode instanceof ExtensionMethodNode && !((ExtensionMethodNode) methodNode).isStaticExtension())) {
 			builder.append("static ");
 		}
 

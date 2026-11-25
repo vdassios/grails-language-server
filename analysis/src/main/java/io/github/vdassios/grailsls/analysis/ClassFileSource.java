@@ -18,6 +18,7 @@ import org.codehaus.groovy.ast.PropertyNode;
 import org.codehaus.groovy.ast.expr.ClassExpression;
 import org.codehaus.groovy.ast.expr.Expression;
 import org.codehaus.groovy.control.SourceUnit;
+import org.codehaus.groovy.transform.stc.ExtensionMethodNode;
 
 import io.github.vdassios.grailsls.api.Range;
 import io.github.vdassios.grailsls.api.SourceLookup;
@@ -46,6 +47,10 @@ final class ClassFileSource {
 
   /** Null when the node is no class or member, and when its class has no source on disk. */
   static ClassFileSource of(ASTNode node, SourceLookup lookup) {
+    if (node instanceof ExtensionMethodNode) {
+      // a Groovy extension method: the static method of its extension class, with the receiver as first parameter
+      node = ((ExtensionMethodNode) node).getExtensionMethodNode();
+    }
     ClassNode owner = owner(node);
     if (owner == null) {
       return null;

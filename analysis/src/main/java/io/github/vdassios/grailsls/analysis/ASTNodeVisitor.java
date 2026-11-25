@@ -101,10 +101,17 @@ public class ASTNodeVisitor extends ClassCodeVisitorSupport {
 	}
 
 	private SourceUnit sourceUnit;
+	/** The class loader of the source last visited: the compile's, which the static type checker uses. */
+	private ClassLoader classLoader;
 
 	@Override
 	protected SourceUnit getSourceUnit() {
 		return sourceUnit;
+	}
+
+	/** The class loader the visited source was compiled with, or null before a visit. */
+	public ClassLoader getClassLoader() {
+		return classLoader;
 	}
 
 	private Stack<ASTNode> stack = new Stack<>();
@@ -287,6 +294,7 @@ public class ASTNodeVisitor extends ClassCodeVisitorSupport {
 
 	public void visitSourceUnit(SourceUnit unit) {
 		sourceUnit = unit;
+		classLoader = unit.getClassLoader();
 		URI uri = sourceUnit.getSource().getURI();
 		nodesByURI.put(uri, new ArrayList<>());
 		classNodesByURI.put(uri, new ArrayList<>());
