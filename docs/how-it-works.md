@@ -35,13 +35,13 @@ Resolution runs in the background, with a timeout. `grails/reloadProject` runs i
 
 ## Compiling a file
 
-The server compiles each open file on its own, up to Groovy's canonicalization phase.
+The server compiles each open file on its own, up to Groovy's canonicalization phase. If the file does not parse, the compile stops after parsing it and reports its syntax errors.
 
 If the file has code under `@CompileStatic`, `@TypeChecked`, or their Grails variants, the compile goes on to the instruction selection phase. This applies when the annotation is on a class, a method, or a constructor, and also when it is imported under an alias. The static type checker then reports its errors, and its inferred types feed completion and hover. Examples of inferred types are the types of closure parameters and flow typing. The checker infers `Class<Book>` for a class name such as `Book`, but before a dot the name still stands for the class: `Book.` offers `Book`'s static members, not `Class`'s.
 
 If the source set has a compiler configuration script, the server runs it on every compile, as `groovyc --configscript` does. A script such as `withConfig(configuration) { ast(CompileStatic) }` makes the whole file static, so the compile goes on to instruction selection too. The script's imports apply to every class in the compile, including the classes pulled in from source. Its customizers that run after canonicalization, such as `ast(CompileStatic)`, apply only to the open file, so the type checker reports only on that file. When the script file changes, the server reads it again. If the script fails to compile or run, the server shows the error once and compiles without it. If the file does not exist, for example the script that the Grails 7 Gradle plugin writes when the build runs, the server only logs it.
 
-After an edit, the server waits 300 ms, then compiles the file again. It cancels any compile that is still running.
+After an edit, the server waits 300 ms, then compiles the file again. It cancels any compile that is still running. A request that arrives during those 300 ms, such as hover, starts the compile at once and waits for it, so that it answers about your new text. Completion right after a dot does not wait (see [Completion after a dot](#completion-after-a-dot)).
 
 ### Cancellation
 
@@ -55,6 +55,8 @@ The server skips this compile when the file's last compile that parsed is known 
 
 - The two texts differ only after the receiver, on the receiver's line, by at most a member access.
 - The sources that the last compile read have not changed. As for any kept compile, classes from the class loader are not checked.
+
+Completion right after a dot never answers from the compile of your edit, because that text does not parse. So it does not wait for that compile's 300 ms delay. The compile still runs after the delay and publishes the diagnostics. If the compile has already started, completion waits for it, as other requests do.
 
 ### Classes from source
 
