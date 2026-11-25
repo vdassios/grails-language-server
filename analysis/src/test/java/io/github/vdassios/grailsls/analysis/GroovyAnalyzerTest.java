@@ -1181,6 +1181,51 @@ class GroovyAnalyzerTest {
     assertTrue(outerClass.containsAll(List.of("secret", "hide")), "the outer class's, from a nested class: " + outerClass);
   }
 
+  /**
+   * Package-private and protected members are offered where Java's rules allow them, as {@code groovyc} applies them
+   * under static compilation: package-private ones in the declaring class's package, protected ones there and in its
+   * subclasses, an instance member in a subclass only through a receiver of that subclass. Dynamic code too.
+   */
+  @Test
+  void packagePrivateAndProtectedMembersAreOfferedOnlyWhereTheyAreAccessible() throws IOException {
+    index.put("p1.Lib", write("src/p1/Lib.groovy", "package p1\nimport groovy.transform.PackageScope\nclass Lib {\n  String title\n  @PackageScope int pf\n  @PackageScope int pm() { 1 }\n"
+        + "  protected int prf\n  protected int prm() { 1 }\n  @PackageScope static int spm() { 1 }\n  protected static int sprm() { 1 }\n  int open() { 1 }\n}\n"));
+    List<String> hidden = List.of("pf", "pm", "prf", "prm", "spm", "sprm");
+    for (String mode : List.of("", "@groovy.transform.CompileStatic\n")) {
+      String same = tmp.resolve("src/p1/Same.groovy").toString();
+      String sameText = "package p1\n" + mode + "class Same {\n  def run(Lib l) {\n    %s\n  }\n}\n";
+      int line = mode.isEmpty() ? 3 : 4;
+      List<String> samePackage = labels(complete(same, String.format(sameText, "l."), line, 6));
+      assertTrue(samePackage.containsAll(List.of("pf", "pm", "prf", "prm", "open")), mode + "the same package: " + samePackage);
+      List<String> samePackageStatics = labels(complete(same, String.format(sameText, "Lib."), line, 8));
+      assertTrue(samePackageStatics.containsAll(List.of("spm", "sprm")), mode + "the same package: " + samePackageStatics);
+
+      String other = tmp.resolve("src/p2/Other.groovy").toString();
+      String otherText = "package p2\nimport p1.Lib\n" + mode + "class Other {\n  def run(Lib l) {\n    %s\n  }\n}\n";
+      List<String> otherPackage = labels(complete(other, String.format(otherText, "l."), line + 1, 6));
+      assertTrue(otherPackage.contains("open") && otherPackage.stream().noneMatch(hidden::contains), mode + "another package: " + otherPackage);
+      List<String> otherPackageStatics = labels(complete(other, String.format(otherText, "Lib."), line + 1, 8));
+      assertTrue(otherPackageStatics.stream().noneMatch(hidden::contains), mode + "another package: " + otherPackageStatics);
+      Answer typedDot = afterTypedDot(other, String.format(otherText, "l.title"), String.format(otherText, "l."), line + 1);
+      assertFalse(typedDot.compiled);
+      assertTrue(typedDot.labels.contains("open") && typedDot.labels.stream().noneMatch(hidden::contains), mode + "answered from the last compile that parsed: " + typedDot.labels);
+
+      String sub = tmp.resolve("src/p2/Sub.groovy").toString();
+      String subText = "package p2\nimport p1.Lib\n" + mode + "class Sub extends Lib {\n  def run(Lib l, Sub s) {\n    %s\n  }\n  static class Nested {\n    def run(Sub s) {\n      %s\n    }\n  }\n}\n";
+      List<String> throughSubclass = labels(complete(sub, String.format(subText, "s.", "s"), line + 1, 6));
+      assertTrue(throughSubclass.containsAll(List.of("prf", "prm", "open")), mode + "a subclass, through itself: " + throughSubclass);
+      assertFalse(throughSubclass.contains("pf") || throughSubclass.contains("pm"), mode + "a subclass in another package: " + throughSubclass);
+      List<String> throughSuperclass = labels(complete(sub, String.format(subText, "l.", "s"), line + 1, 6));
+      assertTrue(throughSuperclass.contains("open") && throughSuperclass.stream().noneMatch(hidden::contains), mode + "a subclass, through the superclass: " + throughSuperclass);
+      List<String> subclassStatics = labels(complete(sub, String.format(subText, "Lib.", "s"), line + 1, 8));
+      assertTrue(subclassStatics.contains("sprm") && !subclassStatics.contains("spm"), mode + "a subclass, static: " + subclassStatics);
+      List<String> inherited = labels(complete(sub, String.format(subText, "p", "s"), line + 1, 5));
+      assertTrue(inherited.containsAll(List.of("prf", "prm")) && !inherited.contains("pf") && !inherited.contains("pm"), mode + "a subclass, without a receiver: " + inherited);
+      List<String> fromNested = labels(complete(sub, String.format(subText, "s", "s."), line + 5, 8));
+      assertTrue(fromNested.contains("prm") && !fromNested.contains("pm"), mode + "a subclass's nested class: " + fromNested);
+    }
+  }
+
   @Test
   void afterAClassNameOnlyStaticMembers() {
     String path = tmp.resolve("A.groovy").toString();

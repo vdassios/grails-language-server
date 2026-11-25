@@ -19,12 +19,14 @@
 ////////////////////////////////////////////////////////////////////////////////
 package io.github.vdassios.grailsls.analysis;
 
+import java.lang.reflect.Modifier;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.regex.Pattern;
@@ -83,8 +85,8 @@ public final class Completions {
   /** The items include finder names, whose next steps depend on what is typed next. */
   private boolean finderSteps;
   /**
-   * The top-level class of the code completed in: private members are offered of it and of its nested classes only,
-   * where the static type checker allows them. Null outside a class: none are.
+   * The class of the code completed in, which decides which members it can reach ({@link #accessible}). Null outside a
+   * class.
    */
   private ClassNode within;
 
@@ -112,7 +114,7 @@ public final class Completions {
       return null;
     }
     Completions completions = new Completions(ast, sources, conventions, namespaces, page);
-    completions.within = enclosingTopLevel(offsetNode, ast);
+    completions.within = enclosingClass(offsetNode, ast);
     completions.populate(offsetNode, line, column, text);
     return completions;
   }
@@ -120,7 +122,7 @@ public final class Completions {
   /** The members of a receiver, as {@link #at} gives them after its dot with nothing typed after it ({@link TypedDot}). */
   static Completions afterDot(ASTNodeVisitor ast, Function<String, Map<String, Taglibs.Tag>> namespaces, Expression receiver) {
     Completions completions = new Completions(ast, null, null, namespaces, false);
-    completions.within = enclosingTopLevel(receiver, ast);
+    completions.within = enclosingClass(receiver, ast);
     completions.fromReceiver(receiver, receiver, "");
     return completions;
   }
@@ -132,8 +134,8 @@ public final class Completions {
     return completions;
   }
 
-  private static ClassNode enclosingTopLevel(ASTNode node, ASTNodeVisitor ast) {
-    return GroovyASTUtils.topLevel((ClassNode) GroovyASTUtils.getEnclosingNodeOfType(node, ClassNode.class, ast));
+  private static ClassNode enclosingClass(ASTNode node, ASTNodeVisitor ast) {
+    return (ClassNode) GroovyASTUtils.getEnclosingNodeOfType(node, ClassNode.class, ast);
   }
 
   /** The text to insert at the position when it does not parse: a name, or a constructor call after {@code new}. */
@@ -471,15 +473,15 @@ public final class Completions {
   }
 
   /**
-   * Properties and fields, then methods, of a type and its supertypes, nearest first; overloads once. Private members
-   * of supertypes are left out, and so are those of the type outside its top-level class ({@link #within}) and the
-   * members of a class whose members cannot be loaded.
+   * Properties and fields, then methods, of a type and its supertypes, nearest first; overloads once. Members the code
+   * completed in cannot reach are left out ({@link #accessible}), and so are the members of a class whose members
+   * cannot be loaded.
    *
    * @param statics true for static members only, false for the others, null for all
    */
   private void members(ClassNode type, Boolean statics, String prefix, Set<String> names) {
     List<ClassNode> hierarchy = hierarchy(type);
-    boolean privates = within != null && within.equals(GroovyASTUtils.topLevel(type.redirect()));
+    boolean privates = within != null && GroovyASTUtils.topLevel(within).equals(GroovyASTUtils.topLevel(type.redirect()));
     for (ClassNode current : hierarchy) {
       for (PropertyNode property : GroovyASTUtils.members(current::getProperties, List.<PropertyNode>of())) {
         if (statics == null || property.isStatic() == statics) {
@@ -489,7 +491,7 @@ public final class Completions {
     }
     for (ClassNode current : hierarchy) {
       for (FieldNode field : GroovyASTUtils.members(current::getFields, List.<FieldNode>of())) {
-        if ((statics == null || field.isStatic() == statics) && (current == type && privates || !field.isPrivate())) {
+        if ((statics == null || field.isStatic() == statics) && accessible(field.getModifiers(), current, type, current == type && privates)) {
           add(field.getName(), Completion.Kind.FIELD, field, prefix, names);
         }
       }
@@ -497,7 +499,8 @@ public final class Completions {
     List<MethodNode> methods = new ArrayList<>();
     for (ClassNode current : hierarchy) {
       for (MethodNode method : GroovyASTUtils.members(current::getMethods, List.<MethodNode>of())) {
-        if ((statics == null || method.isStatic() == statics) && (current == type && privates || !method.isPrivate()) && !method.isSynthetic()) {
+        if ((statics == null || method.isStatic() == statics) && accessible(method.getModifiers(), current, type, current == type && privates)
+            && !method.isSynthetic()) {
           methods.add(method);
         }
       }
@@ -512,6 +515,33 @@ public final class Completions {
     for (MethodNode method : methods) {
       add(method.getName(), Completion.Kind.METHOD, method, prefix, names);
     }
+  }
+
+  /**
+   * Whether the code completed in ({@link #within}) reaches a member of a class through a receiver of a type, by Java's
+   * rules, as {@code groovyc} applies them under static compilation. A private member only when {@code privates}: the
+   * receiver's own, in its top-level class. A package-private one in the declaring class's package. A protected one
+   * there too, and in a subclass of the declaring class or in a class nested in one, through a receiver of that
+   * subclass unless it is static. Without a class ({@code import static}), every member that is not private.
+   */
+  private boolean accessible(int modifiers, ClassNode declaring, ClassNode receiver, boolean privates) {
+    if (Modifier.isPublic(modifiers)) {
+      return true;
+    }
+    if (Modifier.isPrivate(modifiers)) {
+      return privates;
+    }
+    if (within == null || Objects.equals(declaring.getPackageName(), within.getPackageName())) {
+      return true;
+    }
+    if (Modifier.isProtected(modifiers)) {
+      for (ClassNode site = within; site != null; site = site.getOuterClass()) {
+        if (site.isDerivedFrom(declaring) && (Modifier.isStatic(modifiers) || receiver.isDerivedFrom(site))) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   /** {@code errors} for {@code getErrors()}, {@code dirty} for {@code boolean isDirty()}; null for other methods. */
