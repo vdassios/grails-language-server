@@ -21,6 +21,7 @@ When it starts, the server runs your project's Gradle wrapper with an init scrip
 - the build directory
 - the sibling modules
 - the Groovy version
+- the compiler configuration script of each source set, if its Groovy compile task sets `groovyOptions.configurationScript`
 
 The server does not record the `.java` files that are compiled together with Groovy. Instead, it finds them in the source roots each time it applies the model.
 
@@ -37,6 +38,8 @@ Resolution runs in the background, with a timeout. `grails/reloadProject` runs i
 The server compiles each open file on its own, up to Groovy's canonicalization phase.
 
 If the file has code under `@CompileStatic`, `@TypeChecked`, or their Grails variants, the compile goes on to the instruction selection phase. This applies when the annotation is on a class, a method, or a constructor, and also when it is imported under an alias. The static type checker then reports its errors, and its inferred types feed completion and hover. Examples of inferred types are the types of closure parameters and flow typing.
+
+If the source set has a compiler configuration script, the server runs it on every compile, as `groovyc --configscript` does. A script such as `withConfig(configuration) { ast(CompileStatic) }` makes the whole file static, so the compile goes on to instruction selection too. The script's imports apply to every class in the compile, including the classes pulled in from source. Its customizers that run after canonicalization, such as `ast(CompileStatic)`, apply only to the open file, so the type checker reports only on that file. When the script file changes, the server reads it again. If the script fails to compile or run, the server shows the error once and compiles without it. If the file does not exist, for example the script that the Grails 7 Gradle plugin writes when the build runs, the server only logs it.
 
 After an edit, the server waits 300 ms, then compiles the file again. It cancels any compile that is still running.
 
@@ -129,7 +132,7 @@ A new project model closes every module's class loader. The server stops Groovy 
 
 ## Trust
 
-Resolving your project runs its Gradle build scripts, and compiling a Grails project runs its AST transformations. Both run your project's code inside the server. So the server does neither until your editor sends `initializationOptions.trusted = true`.
+Resolving your project runs its Gradle build scripts, and compiling runs its AST transformations and compiler configuration scripts. All of them run your project's code inside the server. So the server does none of this until your editor sends `initializationOptions.trusted = true`.
 
 The server also takes these precautions:
 
