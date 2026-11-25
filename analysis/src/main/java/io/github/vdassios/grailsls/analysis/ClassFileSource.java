@@ -45,7 +45,10 @@ final class ClassFileSource {
     this.documentation = documentation;
   }
 
-  /** Null when the node is no class or member, and when its class has no source on disk. */
+  /**
+   * Null when the node is no class or member, and when its class has no source on disk: a sources jar's, the JDK's, or
+   * the workspace's when the compile read the class from its class file.
+   */
   static ClassFileSource of(ASTNode node, SourceLookup lookup) {
     if (node instanceof ExtensionMethodNode) {
       // a Groovy extension method: the static method of its extension class, with the receiver as first parameter
@@ -65,7 +68,13 @@ final class ClassFileSource {
       text = path == null ? null : StringReaderSourceWithURI.text(unit);
     } else {
       int nested = name.indexOf('$', name.lastIndexOf('.') + 1);
-      path = lookup == null ? null : lookup.classSource(nested < 0 ? name : name.substring(0, nested));
+      String topLevel = nested < 0 ? name : name.substring(0, nested);
+      path = lookup == null ? null : lookup.classSource(topLevel);
+      if (path == null && lookup != null) {
+        // a class of the workspace's sources that the compile did not need, read from its class file: the extension
+        // class of a project's own extension method
+        path = lookup.fileOf(topLevel);
+      }
       try {
         text = path == null ? null : new String(Files.readAllBytes(Paths.get(path)), StandardCharsets.UTF_8);
       } catch (IOException e) {

@@ -914,6 +914,30 @@ class GroovyAnalyzerTest {
     }
   }
 
+  /**
+   * A project's own extension class, such as matrix-core's {@code RowExtension}, comes to the compile from its class
+   * file, as Groovy finds extension methods through the class loader. Its comment and definition come from the source the
+   * workspace declares it in.
+   */
+  @Test
+  void anExtensionMethodOfTheWorkspaceGoesToItsSource() throws IOException {
+    String extension = write("src/org/codehaus/groovy/runtime/DefaultGroovyMethods.groovy", "package org.codehaus.groovy.runtime\n\n"
+        + "class DefaultGroovyMethods {\n  /** The first {@code num} elements. */\n  static <T> List<T> take(List<T> self, int num) { null }\n}\n");
+    index.put("org.codehaus.groovy.runtime.DefaultGroovyMethods", extension);
+    String path = tmp.resolve("A.groovy").toString();
+    String body = "class A {\n  def run(List<Integer> nums) {\n    nums.take(1)\n  }\n}\n";
+    for (String text : List.of(body, "@groovy.transform.CompileStatic " + body)) {
+      String where = text == body ? "dynamic" : "static";
+      compile(path, text);
+      SignatureHelp take = analyzer.signatureHelp(new CompileRequest(path, text, lookup, () -> false), 2, 14);
+      assertNotNull(take, where + ": nums.take(");
+      assertEquals("The first `num` elements.", take.signatures.get(0).documentation, where);
+      assertTrue(analyzer.hover(path, 2, 10).endsWith("The first `num` elements."), where);
+      assertEquals(extension, analyzer.definition(path, 2, 10).path, where);
+      assertEquals(4, analyzer.definition(path, 2, 10).range.startLine, where);
+    }
+  }
+
   private static List<String> labels(SignatureHelp help) {
     return help == null ? null : help.signatures.stream().map(signature -> signature.label).collect(Collectors.toList());
   }
