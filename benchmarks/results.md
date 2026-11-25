@@ -2,6 +2,7 @@
 
 This page gives measured figures for the server, newest first:
 
+- [matrix, 2026-11-25](#matrix-2026-11-25-compiles-that-reuse-the-pulled-in-sources): a plain Groovy library outside the corpus, before and after compiles started reusing the sources that the last compile pulled in.
 - [Fixtures, 2026-11-23](#fixtures-2026-11-23-before-and-after-the-latency-work): the server's own fixture projects, before and after the latency work.
 - [rundeck, 2026-11-24](#rundeck-2026-11-24-after-the-latency-work): rundeck measured again after the latency work, on server `1706504`.
 - [Corpus, 2026-11-18](#corpus-2026-11-18-against-the-performance-target): the five public projects of [corpus.md](corpus.md), on server `7224fc6`.
@@ -19,6 +20,50 @@ This is a goal, not a promise. Both fixtures are well within it. On the corpus:
 - First diagnostics miss it on the larger projects: mdm-core, mod-agreements, rundeck, and hoist-core.
 - Resident memory misses it on rundeck.
 - Completion after a typed dot missed it on the same four projects on 2026-11-18. rundeck, the only one measured since, now meets it (p90 59 ms).
+
+## matrix, 2026-11-25: compiles that reuse the pulled-in sources
+
+- **Commits.** Before: server `240c467`. After: `d4ab1f0`.
+- **Project.** [Alipsa/matrix](https://github.com/Alipsa/matrix) at `c598eee`, a plain Groovy library on Groovy 6.0.0 and JDK 21.0.13 (Amazon Corretto). `matrix-stats` has 118 Groovy files and uses the sources of `matrix-core` (47 files, including `Matrix.groovy` at 4,959 lines). Its compiler configuration script makes every file static, so each compile goes on to instruction selection.
+- **Machine.** The same as for the fixtures below. Mains power, with sleep prevented.
+- **Method.** A script drives the fat jar over stdio, the way an editor does. It opens `matrix-stats/src/main/groovy/se/alipsa/matrix/stats/Sampler.groovy` and adds a method `void f(Matrix m)` with an empty body. It then types `m.col` into that body, one edit per character. Each completion is timed from request to answer. "Right after its edit" sends the request just after the edit, as an editor does while you type. "After its diagnostics" waits for the edit's compile first. A compile is timed from the edit to its diagnostics, minus the 300 ms delay after an edit. The script is not in the repository.
+- **Units.** Times are in milliseconds, as the median of 5. Every completion gave the same items before and after: 126 for `m.`, 19 for `m.c`, 10 for `m.co`, and 8 for `m.col`.
+
+| Latency | Before | After |
+|---|---|---|
+| Compile after an edit that keeps the text | 1139 | 19 |
+| `m.`, right after its edit | 1100 | 206 |
+| `m.c`, right after its edit | 927 | 4 |
+| `m.co`, right after its edit | 943 | 4 |
+| `m.col`, right after its edit | 941 | 4 |
+| `m.`, after its diagnostics | 965 | 6 |
+
+The memory figures come from two runs of each version, separated by `;`. Where both runs gave the same figure, it is given once. On matrix, the same script opens `Sampler.groovy`, then nine more files of `matrix-stats`, then types `m.col` ten times, with a completion after each character. Heap is in MB after three garbage collections (`jcmd`). The fixture figures come from `LatencyTest.keptFilesRepeatsAndClose`, run alone (see [Memory](#memory-ten-files-kept-repeated-compiles-close)).
+
+| Memory | Before | After |
+|---|---|---|
+| matrix: heap with ten files | 639 | 639 |
+| matrix: heap after the edits | 657; 654 | 651; 654 |
+| matrix: RSS with ten files | 1909; 1926 | 1987; 2028 |
+| matrix: RSS after the edits | 2125; 1864 | 2038; 2036 |
+| grails4: heap with ten files | 38 | 38 |
+| grails4: heap after 50 repeats of the median file | 38 | 39 |
+| grails4: heap after 50 repeats of the slowest file | 42 | 39 |
+| grails4: repeat x50, median file (median / p90 ms) | 5 / 7; 5 / 7 | 5 / 7; 5 / 8 |
+| grails4: repeat x50, slowest file (median / p90 ms) | 10 / 21; 11 / 20 | 4 / 7; 4 / 7 |
+| grails4: RSS with ten files | 211; 230 | 245; 267 |
+| grails7: heap with ten files | 42 | 42 |
+| grails7: heap after 50 repeats of the median file | 47 | 43 |
+| grails7: heap after 50 repeats of the slowest file | 47 | 43 |
+| grails7: repeat x50, median file (median / p90 ms) | 11 / 15; 13 / 20 | 5 / 10; 5 / 7 |
+| grails7: repeat x50, slowest file (median / p90 ms) | 8 / 12; 9 / 16 | 4 / 7; 4 / 8 |
+| grails7: RSS with ten files | 222; 241 | 249; 247 |
+
+### What changed
+
+- **Where the time went.** Each compile of `Sampler.groovy` parsed and resolved again the 39 other source files that it pulls in, such as `Matrix.groovy` and the classes that it uses. That took about 1 s, whether the compile was for diagnostics or for the repaired copy that completion compiles after a dot. Now each compile starts from the classes of the file's last compile when they are unchanged (see [Classes from source](../docs/how-it-works.md#classes-from-source)).
+- **`m.` right after its edit still takes about 200 ms.** Completion first runs the compile of the edit, as every query does. That text ends at the dot, so it does not parse. Groovy then parses it again in ANTLR's slower LL mode, which takes most of the 200 ms. The repaired copy compiles in 5 to 7 ms, and the list takes under 1 ms. This is within the 300 ms target.
+- **Memory is unchanged within the variation.** A reused class is shared by the last compile and the next one, not copied. The live heap stays flat on matrix and over the fixtures' repeats. RSS varies between runs because the JVM keeps the memory it has committed. On grails7, the class loader is not collected after close in either version, because the test runs on JDK 17 (see [Known problems found](#known-problems-found)).
 
 ## Fixtures, 2026-11-23: before and after the latency work
 
