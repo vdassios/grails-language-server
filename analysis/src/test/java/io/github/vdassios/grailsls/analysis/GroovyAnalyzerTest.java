@@ -1071,6 +1071,33 @@ class GroovyAnalyzerTest {
     assertEquals(List.of("greet"), bare, "a name in a method: the enclosing class and its supertypes, not their private members");
   }
 
+  /**
+   * A class's private members are offered only in code of the top-level class that declares it, nested classes
+   * included: where the static type checker accepts them ({@code No such property} from any other class).
+   */
+  @Test
+  void privateMembersAreOfferedOnlyInsideTheirTopLevelClass() throws IOException {
+    index.put("Book", write("src/Book.groovy", "class Book {\n  String title\n  private int pages\n  private static int count\n  private void grow() {}\n  static int total() { 1 }\n}\n"));
+    String path = tmp.resolve("src/A.groovy").toString();
+    List<String> fromOutside = labels(complete(path, "class A {\n  def run(Book b) {\n    b.\n  }\n}\n", 2, 6));
+    assertTrue(fromOutside.contains("title"), fromOutside.toString());
+    assertFalse(fromOutside.contains("pages") || fromOutside.contains("grow"), "another class's private members: " + fromOutside);
+    List<String> statics = labels(complete(path, "class A {\n  def run() {\n    Book.\n  }\n}\n", 2, 9));
+    assertTrue(statics.contains("total"), statics.toString());
+    assertFalse(statics.contains("count"), "another class's private static members: " + statics);
+    Answer typedDot = afterTypedDot(path, "class A {\n  def run(Book b) {\n    b.title\n  }\n}\n", "class A {\n  def run(Book b) {\n    b.\n  }\n}\n", 2);
+    assertFalse(typedDot.compiled);
+    assertTrue(typedDot.labels.contains("title") && !typedDot.labels.contains("pages"), "answered from the last compile that parsed: " + typedDot.labels);
+
+    String own = "class A {\n  private int secret\n  private void hide() {}\n  def run(A a, Inner i) {\n    %s\n  }\n  static class Inner {\n    private int nested\n    def run(A a) {\n      %s\n    }\n  }\n}\n";
+    List<String> sameClass = labels(complete(path, String.format(own, "a.", "a"), 4, 6));
+    assertTrue(sameClass.containsAll(List.of("secret", "hide")), "the class's own: " + sameClass);
+    List<String> nestedClass = labels(complete(path, String.format(own, "i.", "a"), 4, 6));
+    assertTrue(nestedClass.contains("nested"), "a nested class's, from the outer class: " + nestedClass);
+    List<String> outerClass = labels(complete(path, String.format(own, "a", "a."), 9, 8));
+    assertTrue(outerClass.containsAll(List.of("secret", "hide")), "the outer class's, from a nested class: " + outerClass);
+  }
+
   @Test
   void afterAClassNameOnlyStaticMembers() {
     String path = tmp.resolve("A.groovy").toString();

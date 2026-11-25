@@ -82,8 +82,11 @@ public final class Completions {
   private boolean incomplete;
   /** The items include finder names, whose next steps depend on what is typed next. */
   private boolean finderSteps;
-  /** Leaves out the private members of the type itself too: it is seen from another class. */
-  private boolean fromOutside;
+  /**
+   * The top-level class of the code completed in: private members are offered of it and of its nested classes only,
+   * where the static type checker allows them. Null outside a class: none are.
+   */
+  private ClassNode within;
 
   private Completions(ASTNodeVisitor ast, SourceLookup sources, Conventions conventions, Function<String, Map<String, Taglibs.Tag>> namespaces, boolean page) {
     this.ast = ast;
@@ -109,6 +112,7 @@ public final class Completions {
       return null;
     }
     Completions completions = new Completions(ast, sources, conventions, namespaces, page);
+    completions.within = enclosingTopLevel(offsetNode, ast);
     completions.populate(offsetNode, line, column, text);
     return completions;
   }
@@ -116,6 +120,7 @@ public final class Completions {
   /** The members of a receiver, as {@link #at} gives them after its dot with nothing typed after it ({@link TypedDot}). */
   static Completions afterDot(ASTNodeVisitor ast, Function<String, Map<String, Taglibs.Tag>> namespaces, Expression receiver) {
     Completions completions = new Completions(ast, null, null, namespaces, false);
+    completions.within = enclosingTopLevel(receiver, ast);
     completions.fromReceiver(receiver, receiver, "");
     return completions;
   }
@@ -123,9 +128,12 @@ public final class Completions {
   /** The static members of a class whose names start with a prefix: {@code import static a.B.m}. */
   static Completions staticMembers(ASTNodeVisitor ast, ClassNode type, String prefix) {
     Completions completions = new Completions(ast, null, null, null, false);
-    completions.fromOutside = true;
     completions.members(type, true, prefix, new HashSet<>());
     return completions;
+  }
+
+  private static ClassNode enclosingTopLevel(ASTNode node, ASTNodeVisitor ast) {
+    return GroovyASTUtils.topLevel((ClassNode) GroovyASTUtils.getEnclosingNodeOfType(node, ClassNode.class, ast));
   }
 
   /** The text to insert at the position when it does not parse: a name, or a constructor call after {@code new}. */
@@ -424,12 +432,14 @@ public final class Completions {
 
   /**
    * Properties and fields, then methods, of a type and its supertypes, nearest first; overloads once. Private members
-   * of supertypes are left out, and so are the members of a class whose members cannot be loaded.
+   * of supertypes are left out, and so are those of the type outside its top-level class ({@link #within}) and the
+   * members of a class whose members cannot be loaded.
    *
    * @param statics true for static members only, false for the others, null for all
    */
   private void members(ClassNode type, Boolean statics, String prefix, Set<String> names) {
     List<ClassNode> hierarchy = hierarchy(type);
+    boolean privates = within != null && within.equals(GroovyASTUtils.topLevel(type.redirect()));
     for (ClassNode current : hierarchy) {
       for (PropertyNode property : GroovyASTUtils.members(current::getProperties, List.<PropertyNode>of())) {
         if (statics == null || property.isStatic() == statics) {
@@ -439,7 +449,7 @@ public final class Completions {
     }
     for (ClassNode current : hierarchy) {
       for (FieldNode field : GroovyASTUtils.members(current::getFields, List.<FieldNode>of())) {
-        if ((statics == null || field.isStatic() == statics) && (current == type && !fromOutside || !field.isPrivate())) {
+        if ((statics == null || field.isStatic() == statics) && (current == type && privates || !field.isPrivate())) {
           add(field.getName(), Completion.Kind.FIELD, field, prefix, names);
         }
       }
@@ -447,7 +457,7 @@ public final class Completions {
     List<MethodNode> methods = new ArrayList<>();
     for (ClassNode current : hierarchy) {
       for (MethodNode method : GroovyASTUtils.members(current::getMethods, List.<MethodNode>of())) {
-        if ((statics == null || method.isStatic() == statics) && (current == type && !fromOutside || !method.isPrivate()) && !method.isSynthetic()) {
+        if ((statics == null || method.isStatic() == statics) && (current == type && privates || !method.isPrivate()) && !method.isSynthetic()) {
           methods.add(method);
         }
       }
