@@ -240,7 +240,9 @@ public class GroovyASTUtils {
         if (receiver instanceof ClassExpression) {
             return receiver.getType();
         }
-        return getTypeOfNode(receiver, astVisitor);
+        // a primitive, x in int x; x.intValue(), has the methods of its boxed type, as Groovy calls them; void has none
+        ClassNode type = getTypeOfNode(receiver, astVisitor);
+        return type != null && ClassHelper.isPrimitiveType(type) && !ClassHelper.VOID_TYPE.equals(type) ? ClassHelper.getWrapper(type) : type;
     }
 
     public static ClassNode getTypeOfNode(ASTNode node, ASTNodeVisitor astVisitor) {

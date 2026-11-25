@@ -1097,6 +1097,51 @@ class GroovyAnalyzerTest {
     }
   }
 
+  /**
+   * A receiver of primitive type, a variable, a call's result, or a literal, has the methods of its boxed type, as
+   * Groovy calls them: its own ({@code intValue}) and its extension methods ({@code upto}). Hover, the call's type,
+   * signature help, and completion find them, in dynamic and static code. The receiver itself keeps its primitive type.
+   */
+  @Test
+  void aPrimitiveReceiverHasTheMethodsOfItsBoxedType() {
+    String path = tmp.resolve("A.groovy").toString();
+    String body = "class A {\n  static int count(int n) { n }\n  void run() {\n    int x = 1\n    def d = x.intValue()\n"
+        + "    count(3).byteValue()\n    5.shortValue()\n    true.booleanValue()\n    x.equals(2)\n    7.upto(9) { }\n  }\n}\n";
+    BiFunction<Integer, Integer, String> hover = (line, column) -> {
+      String markdown = analyzer.hover(path, line, column);
+      return markdown == null ? null : markdown.split("\n")[1];
+    };
+    Map<String, String> expected = new java.util.LinkedHashMap<>();
+    expected.put("a variable", "public int intValue()");
+    expected.put("a call's result", "public byte byteValue()");
+    expected.put("an int literal", "public short shortValue()");
+    expected.put("a boolean literal", "public boolean booleanValue()");
+    expected.put("the receiver", "int x");
+    expected.put("the variable the call sets", "int d");
+    expected.put("signature help", "public boolean equals(Object");
+    expected.put("signature help of an extension method", "public void upto(Number");
+    for (String annotation : List.of("", "@groovy.transform.CompileStatic ")) {
+      String text = annotation + body;
+      assertEquals(List.of(), errors(compile(path, text)), annotation);
+      Map<String, String> found = new java.util.LinkedHashMap<>();
+      found.put("a variable", hover.apply(4, 15));
+      found.put("a call's result", hover.apply(5, 14));
+      found.put("an int literal", hover.apply(6, 7));
+      found.put("a boolean literal", hover.apply(7, 10));
+      found.put("the receiver", hover.apply(4, 12));
+      found.put("the variable the call sets", hover.apply(4, 8));
+      SignatureHelp equals = analyzer.signatureHelp(new CompileRequest(path, text, lookup, () -> false), 8, 13);
+      found.put("signature help", equals == null ? null : equals.signatures.get(equals.activeSignature).label.replaceAll(" \\w+\\)$", ""));
+      SignatureHelp upto = analyzer.signatureHelp(new CompileRequest(path, text, lookup, () -> false), 9, 11);
+      found.put("signature help of an extension method", upto == null ? null : upto.signatures.get(upto.activeSignature).label.replaceAll(" \\w+, .*", ""));
+      assertEquals(expected, found, annotation.isEmpty() ? "dynamic" : annotation);
+      for (String receiver : List.of("x.", "count(2).", "9.int")) {
+        String typed = text.replace("    7.upto", "    " + receiver + "\n    7.upto");
+        assertTrue(labels(complete(path, typed, 9, 4 + receiver.length())).contains("intValue"), annotation + receiver);
+      }
+    }
+  }
+
   @Test
   void symbolsAreTheDocumentsDeclarationsOnly() throws IOException {
     String other = write("src/Other.groovy", "class Other { String x }\n");
