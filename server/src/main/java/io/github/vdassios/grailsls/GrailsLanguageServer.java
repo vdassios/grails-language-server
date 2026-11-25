@@ -84,6 +84,7 @@ import io.github.vdassios.grailsls.api.Symbol;
 import io.github.vdassios.grailsls.compile.AnalysisJar;
 import io.github.vdassios.grailsls.compile.CompileService;
 import io.github.vdassios.grailsls.compile.Documents;
+import io.github.vdassios.grailsls.compile.Documents.Document;
 import io.github.vdassios.grailsls.compile.Workspace;
 import io.github.vdassios.grailsls.index.SourceWatcher;
 import io.github.vdassios.grailsls.index.SymbolIndex;
@@ -224,21 +225,33 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
     if (context == null || context.getTriggerKind() != CompletionTriggerKind.TriggerCharacter || !":".equals(context.getTriggerCharacter())) {
       return true;
     }
-    if (!path.endsWith(".gsp")) {
+    String before = path.endsWith(".gsp") ? lineBefore(text, line, character) : null;
+    if (before == null) {
       return false;
     }
+    Matcher m = TAG_NAMESPACE.matcher(before);
+    int from = before.lastIndexOf('<');
+    return from >= 0 && m.region(from, before.length()).matches();
+  }
+
+  /**
+   * Whether a completion in a Groovy file is right after a dot. Its text does not parse, so it is answered from the
+   * last compile that parsed or from a compile of a repaired copy, never from the compile of the text: it need not
+   * wait for that compile ({@link CompileService#queryText(String, Object, boolean, java.util.function.BiFunction)}).
+   */
+  static boolean afterDot(String path, String text, int line, int character) {
+    String before = path.endsWith(".gsp") ? null : lineBefore(text, line, character);
+    return before != null && before.endsWith(".");
+  }
+
+  /** The text of a line before a position, or null when the position is not in the text. */
+  private static String lineBefore(String text, int line, int character) {
     int start = 0;
     for (int i = 0; i < line && start >= 0; i++) {
       start = text.indexOf('\n', start);
       start = start < 0 ? -1 : start + 1;
     }
-    if (start < 0 || start + character > text.length()) {
-      return false;
-    }
-    String before = text.substring(start, start + character);
-    Matcher m = TAG_NAMESPACE.matcher(before);
-    int from = before.lastIndexOf('<');
-    return from >= 0 && m.region(from, before.length()).matches();
+    return start < 0 || start + character > text.length() ? null : text.substring(start, start + character);
   }
 
   /**
@@ -510,7 +523,10 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
       String uri = params.getTextDocument().getUri();
       Position at = params.getPosition();
       io.github.vdassios.grailsls.api.CompletionList none = io.github.vdassios.grailsls.api.CompletionList.EMPTY;
-      return CompileService.mapped(compiles.queryText(uri, none, (analyzer, request) -> answers(params.getContext(), request.path, request.text, at.getLine(), at.getCharacter())
+      Path path = Documents.path(uri);
+      Document document = path == null ? null : compiles.documents().get(path);
+      boolean beforeCompile = document != null && afterDot(document.path.toString(), document.text, at.getLine(), at.getCharacter());
+      return CompileService.mapped(compiles.queryText(uri, none, beforeCompile, (analyzer, request) -> answers(params.getContext(), request.path, request.text, at.getLine(), at.getCharacter())
           ? analyzer.completion(request, at.getLine(), at.getCharacter())
           : none),
           list -> Either.forRight(completionList(uri, list)));
@@ -524,7 +540,8 @@ public class GrailsLanguageServer implements LanguageServer, LanguageClientAware
         return CompletableFuture.completedFuture(item);
       }
       int id = data.get("id").getAsInt();
-      return CompileService.mapped(compiles.query(data.get("uri").getAsString(), null, (analyzer, path) -> analyzer.resolveCompletion(path, id)), detail -> {
+      // the item is of the last completion, which the analyzer keeps with the compile it came from
+      return CompileService.mapped(compiles.queryText(data.get("uri").getAsString(), null, true, (analyzer, request) -> analyzer.resolveCompletion(request.path, id)), detail -> {
         if (detail != null) {
           item.setDetail(detail.detail);
           if (detail.documentation != null) {

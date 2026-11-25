@@ -169,7 +169,9 @@ public final class GroovyAnalyzer implements Analyzer {
     long start = System.nanoTime();
     Kept donor = donor(request);
     units.remove(request.path);
-    completions.remove(request.path);
+    // a completion answered before the compile of its text (right after a dot) still resolves after it, because the
+    // client still shows its items. One of an older text is dropped
+    completions.computeIfPresent(request.path, (path, last) -> request.text.equals(last.text) ? last : null);
     List<Diagnostic> diagnostics = new ArrayList<>();
     Kept kept = run(request, diagnostics, donor);
     if (kept.cancelled) {
@@ -516,7 +518,7 @@ public final class GroovyAnalyzer implements Analyzer {
       // a copy that does not parse either: what is typed next may parse, so the client asks again
       return kept != null && !kept.parsed ? new CompletionList(List.of(), true) : CompletionList.EMPTY;
     }
-    completions.put(request.path, new LastCompletion(found, kept));
+    completions.put(request.path, new LastCompletion(found, kept, request.text));
     return found.list();
   }
 
@@ -536,7 +538,7 @@ public final class GroovyAnalyzer implements Analyzer {
       Completions found = type == null ? null : Completions.staticMembers(kept.ast(), type, imported.last());
       // none when the qualifier is no class: import static java.util.Coll names the class java.util
       if (found != null && !found.list().items.isEmpty()) {
-        completions.put(request.path, new LastCompletion(found, kept));
+        completions.put(request.path, new LastCompletion(found, kept, request.text));
         return found.list();
       }
     }
@@ -812,22 +814,28 @@ public final class GroovyAnalyzer implements Analyzer {
     }
   }
 
-  /** A completion's items' declarations, with the compile they are of; or, for a page's tags, their documentation by id. */
+  /**
+   * A completion's items' declarations, with the compile they are of; or, for a page's tags, their documentation by id.
+   * With the document's text the completion was about.
+   */
   static final class LastCompletion {
     final Completions completions;
     final Kept compile;
     final List<CompletionDetail> details;
+    final String text;
 
-    LastCompletion(Completions completions, Kept compile) {
+    LastCompletion(Completions completions, Kept compile, String text) {
       this.completions = completions;
       this.compile = compile;
       this.details = null;
+      this.text = text;
     }
 
-    LastCompletion(List<CompletionDetail> details) {
+    LastCompletion(List<CompletionDetail> details, String text) {
       this.completions = null;
       this.compile = null;
       this.details = details;
+      this.text = text;
     }
   }
 

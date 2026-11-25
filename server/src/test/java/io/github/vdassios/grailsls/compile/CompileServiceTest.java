@@ -30,6 +30,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import io.github.vdassios.grailsls.api.Completion;
+import io.github.vdassios.grailsls.api.CompletionDetail;
+import io.github.vdassios.grailsls.api.CompletionList;
 import io.github.vdassios.grailsls.api.Symbol;
 import io.github.vdassios.grailsls.project.ModuleRecord;
 import io.github.vdassios.grailsls.project.ModuleRecord.SourceSetRecord;
@@ -463,6 +466,45 @@ class CompileServiceTest {
     } finally {
       stop(slow);
     }
+  }
+
+  /**
+   * Completion right after a dot answers before the edit's compile, which keeps its debounce delay. Its items resolve
+   * before and after that compile; the compile still publishes its diagnostics, and a query that does not opt in
+   * still waits for it. A compile publishes before the queries waiting for it go on, so an empty queue right after an
+   * answer means the compile has not run.
+   */
+  @Test
+  void aQueryBeforeCompileLeavesThePendingCompileInItsDelay() throws Exception {
+    CompileService slow = new CompileService(published::add, 60_000);
+    try {
+      slow.setWorkspace(workspace());
+      slow.open(uri("A.groovy"), "class A {\n  String name\n  def run() {\n    name\n  }\n}\n", 1);
+      assertEquals(List.of(), messages(next()));
+      Position end = new Position(3, 8);
+      slow.change(uri("A.groovy"), List.of(new TextDocumentContentChangeEvent(new Range(end, end), 0, ".")), 2);
+
+      CompletionList list = slow.queryText(uri("A.groovy"), null, true, (analyzer, request) -> analyzer.completion(request, 3, 9)).get(10, TimeUnit.SECONDS);
+      Completion upper = list.items.stream().filter(c -> c.label.equals("toUpperCase")).findFirst().orElseThrow();
+      assertNull(published.poll(), "answered before the compile");
+      String detail = resolve(slow, upper.id);
+      assertTrue(detail != null && detail.startsWith("public String toUpperCase("), detail);
+      assertNull(published.poll(), "resolved before the compile");
+
+      symbols(slow, "A.groovy");
+      PublishDiagnosticsParams after = published.poll();
+      assertNotNull(after, "another query runs the compile first, which publishes its diagnostics");
+      assertEquals(2, after.getVersion());
+      assertEquals(1, after.getDiagnostics().size(), messages(after).toString());
+      assertEquals(detail, resolve(slow, upper.id), "the compile of the same text keeps the completion");
+    } finally {
+      stop(slow);
+    }
+  }
+
+  private String resolve(CompileService compiles, int id) throws Exception {
+    CompletionDetail detail = compiles.queryText(uri("A.groovy"), null, true, (analyzer, request) -> analyzer.resolveCompletion(request.path, id)).get(10, TimeUnit.SECONDS);
+    return detail == null ? null : detail.detail;
   }
 
   @Test

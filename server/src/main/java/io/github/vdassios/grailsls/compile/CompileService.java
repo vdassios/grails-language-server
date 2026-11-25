@@ -158,12 +158,22 @@ public final class CompileService {
    * compile a copy of it (completion, signature help).
    */
   public <T> CompletableFuture<T> queryText(String uri, T none, BiFunction<Analyzer, CompileRequest, T> query) {
+    return queryText(uri, none, false, query);
+  }
+
+  /**
+   * Like {@link #queryText(String, Object, BiFunction)}. With {@code beforeCompile}, a query on a document whose
+   * compile is still in its debounce delay runs at once, and the compile keeps its delay: for a query that answers
+   * about the current text without that compile (completion right after a dot, whose text does not parse) or reads
+   * nothing it changes (resolving a completion item). A compile that has started is waited for, as by any query.
+   */
+  public <T> CompletableFuture<T> queryText(String uri, T none, boolean beforeCompile, BiFunction<Analyzer, CompileRequest, T> query) {
     Path path = Documents.path(uri);
     if (path == null) {
       return CompletableFuture.completedFuture(none);
     }
     CompletableFuture<T> answer = new CompletableFuture<>();
-    afterCompiles(path, () -> {
+    afterCompiles(path, beforeCompile, () -> {
       Workspace current = workspace;
       Document document = documents.get(path);
       CompileContext context = current == null || document == null || answer.isDone() ? null : current.contextOf(path);
@@ -205,14 +215,15 @@ public final class CompileService {
     });
   }
 
-  private <T> CompletableFuture<T> afterCompiles(Path path, Supplier<CompletableFuture<T>> query) {
+  private <T> CompletableFuture<T> afterCompiles(Path path, boolean beforeCompile, Supplier<CompletableFuture<T>> query) {
     Pending task = pending.get(path);
-    if (task == null) {
+    // a compile that starts after this check runs on the module's thread before the query, which then waits for it
+    if (task == null || beforeCompile && !task.started.get()) {
       return query.get();
     }
     task.startNow(() -> run(path, task));
     // an edit during the compile replaces it: wait for that one too
-    return task.done.thenCompose(done -> afterCompiles(path, query));
+    return task.done.thenCompose(done -> afterCompiles(path, beforeCompile, query));
   }
 
   /**

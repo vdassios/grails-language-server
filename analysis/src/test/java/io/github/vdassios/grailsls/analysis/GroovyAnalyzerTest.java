@@ -1343,7 +1343,7 @@ class GroovyAnalyzerTest {
   }
 
   @Test
-  void resolveGivesTheSignatureAndDocumentationUntilTheNextCompile() {
+  void resolveGivesTheSignatureAndDocumentationUntilACompileOfAnotherText() {
     String path = tmp.resolve("A.groovy").toString();
     String text = "class A {\n  /** Counts things. */\n  int count(String what) { 1 }\n  def run() {\n    cou\n  }\n}\n";
     CompletionList list = complete(path, text, 4, 7);
@@ -1354,7 +1354,30 @@ class GroovyAnalyzerTest {
     assertEquals("public int count(String what)", detail.detail);
     assertEquals("Counts things.", detail.documentation);
     compile(path, text);
+    assertEquals("public int count(String what)", analyzer.resolveCompletion(path, count.id).detail, "a compile of the same text");
+    compile(path, text.replace("cou\n", "coun\n"));
     assertNull(analyzer.resolveCompletion(path, count.id));
+  }
+
+  /**
+   * Completion right after a dot answers before the compile of its text (CompileService), whose text does not parse.
+   * The client still shows the items after that compile, so they still resolve.
+   */
+  @Test
+  void aCompletionAnsweredBeforeTheCompileOfItsTextResolvesAfterIt() {
+    String path = tmp.resolve("A.groovy").toString();
+    String template = "class A {\n  String name\n  def run() {\n    %s\n  }\n}\n";
+    compile(path, String.format(template, "name"));
+    String typed = String.format(template, "name.");
+    CompletionList list = analyzer.completion(new CompileRequest(path, typed, lookup, () -> false), 3, 9);
+    Completion upper = list.items.stream().filter(c -> c.label.equals("toUpperCase")).findFirst().orElseThrow();
+    assertTrue(analyzer.resolveCompletion(path, upper.id).detail.startsWith("public String toUpperCase("));
+    compile(path, typed);
+    CompletionDetail detail = analyzer.resolveCompletion(path, upper.id);
+    assertNotNull(detail, "the compile of the completion's text keeps it");
+    assertTrue(detail.detail.startsWith("public String toUpperCase("), detail.detail);
+    compile(path, String.format(template, "name.t"));
+    assertNull(analyzer.resolveCompletion(path, upper.id), "the compile of another text drops it");
   }
 
   @Test

@@ -338,7 +338,7 @@ final class GspAnalyzer {
     CompletionList tags = views.completion(request, scan, line, column, details);
     if (!tags.items.isEmpty()) {
       if (!details.isEmpty()) {
-        groovy.completions.put(request.path, new LastCompletion(details));
+        groovy.completions.put(request.path, new LastCompletion(details, request.text));
       }
       return tags;
     }
@@ -352,7 +352,7 @@ final class GspAnalyzer {
       int[] at = compiled.at;
       Completions found = Completions.at(compiled.kept.ast(), compiled.kept.uri, request.lookup, null, namespaces, true, at[0], at[1], compiled.translation.groovy);
       if (found != null) {
-        groovy.completions.put(request.path, new LastCompletion(found, compiled.kept));
+        groovy.completions.put(request.path, new LastCompletion(found, compiled.kept, request.text));
         return onPage(found.list(), compiled.translation);
       }
     }
