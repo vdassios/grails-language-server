@@ -259,6 +259,7 @@ public final class GroovyAnalyzer implements Analyzer {
     int phase = Phases.INITIALIZATION;
     Injections injections = null;
     boolean failed = false;
+    boolean parsed = false;
     for (; phase <= last; phase++) {
       if (request.cancelled.getAsBoolean()) {
         return new Kept(unit, request.text, document.getSource().getURI(), request.lookup, inputs, false, resolver.sources(), phase - 1, true, null);
@@ -278,6 +279,8 @@ public final class GroovyAnalyzer implements Analyzer {
         break;
       }
       if (phase == Phases.CONVERSION) {
+        // decided now: the resolver and the static type checker report their errors as syntax errors too
+        parsed = document.getAST() != null && !syntaxError(unit.getErrorCollector(), request.path);
         last = Math.max(lastPhase(document), Math.min(scriptPhase, Phases.INSTRUCTION_SELECTION));
         if (donor != null && !donor.pulled.fits(document, last, donor.phase)) {
           return null;
@@ -308,7 +311,6 @@ public final class GroovyAnalyzer implements Analyzer {
     if (donor != null) {
       diagnostics.addAll(donor.pulled.diagnostics); // the reused sources' own, from the compile that converted them
     }
-    boolean parsed = document.getAST() != null && !syntaxError(unit.getErrorCollector(), request.path);
     Pulled pulled = failed ? null : Pulled.of(unit, document, request.path, diagnostics, script);
     return new Kept(unit, request.text, document.getSource().getURI(), request.lookup, inputs, parsed, resolver.sources(), Math.min(phase, last), false, pulled);
   }
@@ -341,7 +343,7 @@ public final class GroovyAnalyzer implements Analyzer {
     return config;
   }
 
-  /** Whether the document has a syntax error. */
+  /** Whether the document has a syntax error, or, after parsing, another error Groovy reports as one. */
   @SuppressWarnings("unchecked") // Groovy 2.5 returns raw lists
   private static boolean syntaxError(ErrorCollector collector, String documentPath) {
     for (Object error : collector.getErrors() == null ? List.of() : (List<Object>) collector.getErrors()) {
@@ -781,7 +783,7 @@ public final class GroovyAnalyzer implements Analyzer {
     final SourceLookup lookup;
     /** What the compile read through the lookup. */
     final Inputs inputs;
-    /** Whether the document parsed. */
+    /** Whether the document parsed: it has an AST, and no error by the end of conversion. */
     final boolean parsed;
     /** Sources the compile read: the document and those pulled in. */
     final int sources;

@@ -1691,6 +1691,23 @@ class GroovyAnalyzerTest {
     assertEquals(1, before.activeParameter);
   }
 
+  /**
+   * Groovy reports the static type checker's errors and unresolved classes as syntax errors too, after the text
+   * parsed: signature help answers from the compile of such a text, as from one without errors.
+   */
+  @Test
+  void signatureHelpInATextWithATypeCheckerErrorOrAnUnresolvedClass() {
+    String path = tmp.resolve("A.groovy").toString();
+    for (String error : List.of("    int n = 'x'.toList()\n", "    Nope nope = null\n")) {
+      String text = "@groovy.transform.CompileStatic\nclass A {\n  void show(String text, int times) {}\n  def run() {\n    show('x', 2)\n"
+          + error + "  }\n}\n";
+      assertEquals(1, errors(compile(path, text)).size(), error);
+      SignatureHelp help = analyzer.signatureHelp(new CompileRequest(path, text, lookup, () -> false), 4, 14);
+      assertNotNull(help, error);
+      assertEquals(1, help.activeParameter);
+    }
+  }
+
   /** A class of the document's kept compile, by name: its own or pulled in. */
   private ClassNode keptClass(String path, String className) {
     return analyzer.unit(path).getAST().getClass(className);
